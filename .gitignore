@@ -1,0 +1,22 @@
+# Visual Studio
+.vs/
+.vscode/
+*.ipch
+*.obj
+*.pdb
+*.log
+*.tlog
+*.user
+*.suo
+
+# Builds
+build/
+bin/
+out/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.ninja
+*.dir

@@ -1,0 +1,10 @@
+CMake Error at CMakeLists.txt:5 (project):
+  Generator
+
+    Visual Studio 17 2022
+
+  could not find any instance of Visual Studio.
+
+
+
+-- Configuring incomplete, errors occurred!
