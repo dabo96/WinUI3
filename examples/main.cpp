@@ -7,10 +7,11 @@
 #include "UI/Widgets.h"
 #include "Theme/FluentTheme.h"
 #include <iostream>
+#include "App.h"
 using namespace FluentUI;
 
 // Variables globales para el estado de la aplicación
-struct DemoState {
+/*struct DemoState {
     // Widgets básicos
     int clickCount = 0;
     bool checkboxValue = false;
@@ -381,16 +382,16 @@ void ShowRendererTab(DemoState& state, UIContext* ctx) {
     // Avanzar el cursor para que los siguientes widgets no se superpongan
     Spacing(150);
 }
-
+*/
 int main(int, char**) {
-    SDL_Init(SDL_INIT_VIDEO);
+    //SDL_Init(SDL_INIT_VIDEO);
 
-    SDL_Window* window = SDL_CreateWindow("FluentGUI Demo - Complete Showcase", 
-                                          1200, 1000, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+    //SDL_Window* window = SDL_CreateWindow("FluentGUI Demo - Complete Showcase", 
+              //                            1200, 1000, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     
     // Crear contexto UI
-    UIContext* ctx = CreateContext(window);
-    if (!ctx) {
+    //UIContext* ctx = CreateContext(window);
+    /*if (!ctx) {
         SDL_DestroyWindow(window);
         SDL_Quit();
         return -1;
@@ -403,7 +404,7 @@ int main(int, char**) {
 
     bool running = true;
     SDL_Event e;
-    DemoState state;
+    //DemoState state;
     
     uint64_t lastTime = SDL_GetTicks();
     
@@ -416,7 +417,7 @@ int main(int, char**) {
         "Temas",
         "Renderer"
     };
-    
+    std::string textInput = "";
     while (running) {
         // Calcular deltaTime
         uint64_t currentTime = SDL_GetTicks();
@@ -443,10 +444,10 @@ int main(int, char**) {
         NewFrame(deltaTime);
 
         // Guardar referencia para dibujar primitivas después
-        Vec2 menuBarEndPos = Vec2(0, 0);
+        //Vec2 menuBarEndPos = Vec2(0, 0);
 
         // Menu Bar
-        if (BeginMenuBar()) {
+        /*if (BeginMenuBar()) {
             if (BeginMenu("File")) {
                 if (MenuItem("New")) {
                     std::cout << "File > New" << std::endl;
@@ -485,7 +486,7 @@ int main(int, char**) {
         Label("FluentGUI - Demo Completo", std::nullopt, TypographyStyle::Title);
         Separator();
         
-        if (BeginTabView("MainTabs", &state.activeTab, mainTabs, Vec2(0, 900))) {
+        /*if (BeginTabView("MainTabs", &state.activeTab, mainTabs, Vec2(0, 900))) {
             switch (state.activeTab) {
                 case 0: ShowWidgetsBasicTab(state); break;
                 case 1: ShowInputControlsTab(state); break;
@@ -496,6 +497,9 @@ int main(int, char**) {
             }
         }
         EndTabView();
+
+        
+        TextInput("Name", &textInput, 250.0f);
         
         EndVertical();
         
@@ -511,6 +515,9 @@ int main(int, char**) {
     DestroyContext();
     SDL_StopTextInput(window);
     SDL_DestroyWindow(window);
-    SDL_Quit();
+    SDL_Quit();*/
+
+    App app("FluentGUI Demo - Complete Showcase");
+    app.Run();
     return 0;
 }

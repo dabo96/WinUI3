@@ -1640,8 +1640,17 @@ bool TextInput(const std::string &label, std::string *value, float width,
   std::string idStr = "TXT:" + label;
   uint32_t id = GenerateId(idStr.c_str());
 
-  auto stringEntry = ctx->stringStates.try_emplace(id, "");
-  std::string &textRef = value ? *value : stringEntry.first->second;
+  // Si value no es nullptr, usar su valor directamente
+  // Si value es nullptr, usar el valor almacenado en stringStates
+  std::string* textPtr = value;
+  if (!textPtr) {
+    auto stringEntry = ctx->stringStates.try_emplace(id, "");
+    textPtr = &stringEntry.first->second;
+  }
+  
+  // Asegurar que textPtr apunta al valor correcto
+  std::string &textRef = *textPtr;
+  
   auto caretIt = ctx->caretPositions.try_emplace(id, textRef.size());
   size_t &caret = caretIt.first->second;
   caret = std::min(caret, textRef.size());
@@ -1672,6 +1681,8 @@ bool TextInput(const std::string &label, std::string *value, float width,
   if (hasFocus) {
     const std::string &inputText = ctx->input.TextInputBuffer();
     if (!inputText.empty()) {
+      // Insertar el texto en la posición del cursor
+      // textRef es una referencia, así que modifica directamente *value o stringStates
       textRef.insert(caret, inputText);
       caret += inputText.size();
       valueChanged = true;

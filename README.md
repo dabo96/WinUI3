@@ -143,6 +143,7 @@ cmake --build .
 ## 📚 Documentación
 
 - **API_REFERENCE.md**: Referencia completa de la API
+- **GUIA_USO_VISUAL_STUDIO.md**: Guía completa para usar FluentGUI en Visual Studio
 - **PLAN_DE_TRABAJO.md**: Plan completo de desarrollo
 - **CHANGELOG.md**: Historial de cambios y versiones
 - **RELEASE_NOTES_v1.0.md**: Notas detalladas de la versión 1.0

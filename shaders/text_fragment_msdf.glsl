@@ -44,12 +44,12 @@ void main()
     
     // Calculate smoothing width for antialiasing
     // Smaller values = sharper edges, larger values = smoother edges
-    // We use a tighter range for crisper text while maintaining smooth antialiasing
-    float smoothing = max(screenPxRange * 0.5, 0.3);
+    // Reducimos el smoothing para texto más nítido
+    float smoothing = max(screenPxRange * 0.4, 0.25);
     
     // Cap the smoothing to prevent over-blurring
-    // This ensures text remains sharp even at very large sizes
-    smoothing = min(smoothing, 0.3);
+    // Reducimos el límite máximo para texto más nítido
+    smoothing = min(smoothing, 0.25);
     
     // Convert signed distance to alpha using smoothstep
     // MSDF stores: 0.5 at edge, >0.5 inside, <0.5 outside
@@ -58,8 +58,8 @@ void main()
     
     // Apply contrast enhancement for sharper appearance
     // This steepens the alpha transition without causing artifacts
-    // Using a power curve for natural sharpening
-    alpha = pow(alpha, 0.92); // Slight gamma correction for sharper edges
+    // Usamos un valor más bajo para mayor nitidez
+    alpha = pow(alpha, 0.88); // Mayor contraste para texto más nítido
     
     // Additional edge enhancement for maximum crispness
     // Apply selective sharpening only near the edge to avoid artifacts

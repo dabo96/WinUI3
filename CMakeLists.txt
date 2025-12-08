@@ -25,8 +25,8 @@ find_package(Freetype CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(SDL3_image REQUIRED)
 
-# Example executable
-add_executable(FluentUIExample examples/main.cpp)
+# Example executable (includes App.cpp since main.cpp uses App class)
+add_executable(FluentUIExample examples/main.cpp examples/App.cpp)
 target_include_directories(FluentUIExample PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 file(COPY ${CMAKE_SOURCE_DIR}/shaders DESTINATION ${CMAKE_BINARY_DIR})

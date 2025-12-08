@@ -19,6 +19,14 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "../external/stb_image.h"
 
+// Definir constantes de anisotropía si no están disponibles en GLAD
+#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
+#endif
+#ifndef GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
+#endif
+
 namespace FluentUI {
     bool PathExists(const std::filesystem::path& path)
     {
@@ -221,8 +229,17 @@ namespace FluentUI {
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, atlasWidth, atlasHeight, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            // Usar GL_LINEAR para minificación y GL_LINEAR para magnificación para mejor calidad
+            // pero con mejor configuración para texto nítido
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            // Mejorar la nitidez con configuración de aniso (si está disponible)
+            // Intentar usar anisotropía si está disponible (manejar error silenciosamente si no)
+            GLfloat maxAniso = 1.0f;
+            glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maxAniso);
+            if (maxAniso > 1.0f) {
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, std::min(maxAniso, 2.0f));
+            }
             GLint swizzleMask[] = { GL_RED, GL_RED, GL_RED, GL_RED };
             glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzleMask);
             glBindTexture(GL_TEXTURE_2D, 0);
@@ -275,8 +292,16 @@ namespace FluentUI {
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, dynamicAtlasWidth, dynamicAtlasHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            // Para MSDF, GL_LINEAR es correcto pero con mejor configuración
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            // Mejorar la nitidez con configuración de aniso (si está disponible)
+            // Intentar usar anisotropía si está disponible (manejar error silenciosamente si no)
+            GLfloat maxAniso = 1.0f;
+            glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maxAniso);
+            if (maxAniso > 1.0f) {
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, std::min(maxAniso, 2.0f));
+            }
             glBindTexture(GL_TEXTURE_2D, 0);
             
             // Initialize packing state
@@ -767,6 +792,7 @@ namespace FluentUI {
              float scale = fontSize / emSize;
              
              // Calculate baseline: pos.y is top-left, we need to offset by ascender
+             // Asegurar que haya suficiente espacio para descenders
              float ascender = msdfFont->GetAscender();
              if (ascender <= 0 && fontLoaded) {
                  ascender = fontAscent / emSize; // Use FreeType ascender if available
@@ -774,6 +800,17 @@ namespace FluentUI {
              if (ascender <= 0) {
                  ascender = 0.8f; // Default ascender ratio
              }
+             // Calcular descender para asegurar espacio suficiente
+             float descender = 0.0f;
+             if (fontLoaded && fontDescent < 0) {
+                 descender = std::abs(fontDescent) / emSize; // Descender es negativo en FreeType
+             }
+             if (descender <= 0) {
+                 descender = 0.2f; // Default descender ratio
+             }
+             // La baseline se calcula desde pos.y (parte superior) más el ascender
+             // Los descenders se extienden por debajo de la baseline y están incluidos en el bitmap del glifo
+             // Ajustar pos.y para incluir espacio para descenders si es necesario
              float baseline = pos.y + ascender * fontSize;
              
              float xpos = pos.x;
@@ -839,6 +876,8 @@ namespace FluentUI {
                 
                 if (useDynamicMSDF && dynamicGlyph) {
                     // Use dynamically generated MSDF glyph
+                    // bearing.y es la distancia desde la baseline hasta la parte superior del glifo
+                    // Para glifos con descenders, el bitmap se extiende por debajo de la baseline
                     x0 = xpos + dynamicGlyph->bearing.x * scale;
                     y0 = baseline - dynamicGlyph->bearing.y * scale;
                     w = dynamicGlyph->size.x * scale;
@@ -846,17 +885,27 @@ namespace FluentUI {
                     u0 = dynamicGlyph->uv0.x; v0 = dynamicGlyph->uv0.y;
                     u1 = dynamicGlyph->uv1.x; v1 = dynamicGlyph->uv1.y;
                     
+                    // Alinear solo X a píxeles enteros para mejor nitidez horizontal
+                    // NO redondear Y para mantener la alineación vertical correcta
+                    x0 = std::round(x0);
+                    
                     // Use dynamic atlas texture instead of pre-generated
                     glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, dynamicMSDFAtlasTexture);
                 } else {
                     // Use pre-generated MSDF glyph
+                    // bearing.y es la distancia desde la baseline hasta la parte superior del glifo
+                    // Para glifos con descenders, el bitmap se extiende por debajo de la baseline
                     x0 = xpos + glyph->bearing.x * scale;
                     y0 = baseline - glyph->bearing.y * scale;
                     w = glyph->planeBounds.x * scale;
                     h = glyph->planeBounds.y * scale;
                     u0 = glyph->uv0.x; v0 = glyph->uv0.y;
                     u1 = glyph->uv1.x; v1 = glyph->uv1.y;
+                    
+                    // Alinear solo X a píxeles enteros para mejor nitidez horizontal
+                    // NO redondear Y para mantener la alineación vertical correcta
+                    x0 = std::round(x0);
                 }
                 
                 // Skip if size is invalid
@@ -939,7 +988,9 @@ namespace FluentUI {
                 penX += GetKerning(prevCodepoint, codepoint) * scale;
             }
 
-            float xpos = penX + glyph->bearing.x * scale;
+            // Alinear solo X a píxeles enteros para mejor nitidez horizontal
+            // NO redondear Y para mantener la alineación vertical correcta
+            float xpos = std::round(penX + glyph->bearing.x * scale);
             float ypos = baseline - glyph->bearing.y * scale;
             float w = glyph->size.x * scale;
             float h = glyph->size.y * scale;
@@ -1147,9 +1198,11 @@ namespace FluentUI {
             return true;
         }
 
-        // Usar FT_LOAD_TARGET_LIGHT para antialiasing suave y de alta calidad
+        // Usar FT_LOAD_TARGET_NORMAL para mejor nitidez y contraste
+        // FT_LOAD_TARGET_NORMAL proporciona mejor nitidez que LIGHT
+        // FT_LOAD_FORCE_AUTOHINT puede mejorar la legibilidad en tamaños pequeños
         if (FT_Load_Char(fontFace, static_cast<FT_ULong>(codepoint), 
-            FT_LOAD_RENDER | FT_LOAD_TARGET_LIGHT))
+            FT_LOAD_RENDER | FT_LOAD_TARGET_NORMAL | FT_LOAD_FORCE_AUTOHINT))
         {
             std::cerr << "No se pudo cargar el glifo: " << codepoint << std::endl;
             return false;

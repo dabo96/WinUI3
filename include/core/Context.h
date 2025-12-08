@@ -1,3 +1,8 @@
+#pragma once
+
+#ifndef FLUENTGUI_CONTEXT_H
+#define FLUENTGUI_CONTEXT_H
+
 #include "Animation.h"
 #include "Math/Color.h"
 #include "Math/Vec2.h"
@@ -303,3 +308,5 @@ void NewFrame(float deltaTime = 0.016f);
 void Render();
 
 } // namespace FluentUI
+
+#endif // FLUENTGUI_CONTEXT_H
