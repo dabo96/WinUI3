@@ -3,6 +3,7 @@ add_library(FluentUI
     Core/Renderer.cpp
     "Core/Element.cpp"
     "Core/FontMSDF.cpp"
+    "Core/MSDFGenerator.cpp"
     UI/Widgets.cpp
     Theme/FluentTheme.cpp
  "Core/InputState.cpp" "Core/Panel.cpp" "Core/Button.cpp")

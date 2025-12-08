@@ -43,9 +43,15 @@ namespace FluentUI {
         // Borders
         inline const Color Border = Color(0.8f, 0.8f, 0.8f, 1.0f);
         inline const Color BorderDark = Color(0.3f, 0.3f, 0.3f, 1.0f);
+        inline const Color BorderLight = Color(0.9f, 0.9f, 0.9f, 1.0f);
         
-        // Container-specific borders
-        inline const Color ContainerBorderDark = Color(0.55f, 0.55f, 0.55f, 1.0f);
+        // Container-specific borders - más visibles
+        inline const Color ContainerBorderDark = Color(0.4f, 0.4f, 0.4f, 1.0f);  // Borde más visible en tema oscuro
+        inline const Color ContainerBorderLight = Color(0.7f, 0.7f, 0.7f, 1.0f); // Borde para tema claro
+        
+        // Container backgrounds - más distintivos
+        inline const Color ContainerBackgroundDark = Color(0.16f, 0.16f, 0.16f, 1.0f);  // Fondo ligeramente más claro que background
+        inline const Color ContainerBackgroundLight = Color(0.96f, 0.96f, 0.96f, 1.0f); // Fondo ligeramente más oscuro que background
 
         // Estados
         inline const Color Disabled = Color(0.7f, 0.7f, 0.7f, 1.0f);

@@ -42,6 +42,11 @@ namespace FluentUI {
         float GetPixelRange() const { return pixelRange; }
         float GetAscender() const { return ascender; }
         bool IsLoaded() const { return loaded; }
+        
+        // Shader access for shared use with dynamic MSDF
+        GLuint GetShaderProgram() const { return shaderProgram; }
+        void BindShaderOnly(const float* projectionMatrix);
+        void UnbindShader();
 
     private:
         bool LoadTexture(const std::string& imagePath);

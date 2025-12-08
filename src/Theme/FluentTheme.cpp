@@ -45,9 +45,17 @@ namespace FluentUI {
             PanelStyle panel;
             if (darkTheme)
             {
-                panel.background = FluentColors::SurfaceDark;
+                // Fondo más claro que el background para mejor contraste (como Windows Settings)
+                panel.background = FluentColors::ContainerBackgroundDark;
+                // Hacer el fondo aún más distintivo
+                panel.background = Color(
+                    panel.background.r * 1.12f,
+                    panel.background.g * 1.12f,
+                    panel.background.b * 1.12f,
+                    1.0f
+                );
                 panel.headerBackground = FluentColors::SurfaceAltDark;
-                panel.borderColor = FluentColors::ContainerBorderDark;
+                panel.borderColor = FluentColors::ContainerBorderDark;  // Para uso futuro si se necesita
                 panel.headerText = MakeTextStyle(16.0f, FontWeight::SemiBold, FluentColors::TextPrimaryDark);
                 panel.titleButton.normal = FluentColors::AccentHover;
                 panel.titleButton.hover = FluentColors::Accent;
@@ -56,9 +64,17 @@ namespace FluentUI {
             }
             else
             {
-                panel.background = FluentColors::Surface;
+                // Fondo más oscuro que el background para mejor contraste
+                panel.background = FluentColors::ContainerBackgroundLight;
+                // Hacer el fondo aún más distintivo
+                panel.background = Color(
+                    panel.background.r * 0.94f,
+                    panel.background.g * 0.94f,
+                    panel.background.b * 0.94f,
+                    1.0f
+                );
                 panel.headerBackground = FluentColors::SurfaceAlt;
-                panel.borderColor = FluentColors::Border;
+                panel.borderColor = FluentColors::ContainerBorderLight;  // Para uso futuro si se necesita
                 panel.headerText = MakeTextStyle(16.0f, FontWeight::SemiBold, FluentColors::TextPrimary);
                 panel.titleButton.normal = FluentColors::Accent;
                 panel.titleButton.hover = FluentColors::AccentHover;
@@ -66,7 +82,7 @@ namespace FluentUI {
                 panel.titleButton.disabled = Color(FluentColors::Accent.r, FluentColors::Accent.g, FluentColors::Accent.b, 0.4f);
             }
 
-            panel.borderWidth = 1.0f;
+            panel.borderWidth = 0.0f;  // Sin borde visible - solo contraste de fondo
             panel.cornerRadius = 10.0f;
             panel.shadowOpacity = 0.4f;
             panel.shadowOffsetY = 8.0f;

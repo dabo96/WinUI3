@@ -84,6 +84,30 @@ namespace FluentUI {
         glUseProgram(0);
     }
 
+    void FontMSDF::BindShaderOnly(const float* projectionMatrix) {
+        if (shaderProgram == 0) {
+            CreateShader(); // Create shader if not already created
+        }
+        if (shaderProgram == 0) return;
+
+        glUseProgram(shaderProgram);
+        
+        if (projectionUniform >= 0) {
+            glUniformMatrix4fv(projectionUniform, 1, GL_FALSE, projectionMatrix);
+        }
+        
+        // Set pixel range - use stored value or default to 4.0 for dynamic MSDF
+        // Dynamic MSDF uses 4.0 pixel range by default
+        float rangeToUse = pixelRange > 0 ? pixelRange : 4.0f;
+        if (pxRangeUniform >= 0) {
+            glUniform1f(pxRangeUniform, rangeToUse);
+        }
+    }
+
+    void FontMSDF::UnbindShader() {
+        glUseProgram(0);
+    }
+
     bool FontMSDF::LoadTexture(const std::string& imagePath) {
         std::cout << "Loading MSDF texture: " << imagePath << std::endl;
         

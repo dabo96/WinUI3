@@ -6,6 +6,7 @@
 #include "RippleEffect.h"
 #include <SDL3/SDL.h>
 #include "Theme/Style.h"
+#include <map>
 
 
 namespace FluentUI {
@@ -130,8 +131,8 @@ struct UIContext {
     int activeTab = 0;
     Vec2 tabBarSize{0.0f, 0.0f};
     bool initialized = false;
-    // Scroll soportado para contenido del tab
-    Vec2 scrollOffset{0.0f, 0.0f};
+    // Scroll soportado para contenido del tab - un scrollOffset por cada tab
+    std::map<int, Vec2> tabScrollOffsets; // Mapa de índice de tab -> scrollOffset
     Vec2 contentSize{0.0f, 0.0f};
     Vec2 viewSize{0.0f, 0.0f};
     bool draggingScrollbar = false;

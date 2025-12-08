@@ -176,9 +176,27 @@ static Vec2 ResolveAbsolutePosition(UIContext *ctx, const Vec2 &desiredPos,
   if (!ctx)
     return desiredPos;
   
-  // Por ahora devolvemos la posición deseada directamente
-  // TODO: Implementar lógica de resolución de posición absoluta si es necesario
-  return desiredPos;
+  // Las posiciones absolutas son relativas al viewport (esquina superior izquierda = 0,0)
+  // No deben ser afectadas por layouts o offsets acumulados
+  Vec2 resolvedPos = desiredPos;
+  
+  // Asegurar que la posición no sea negativa (ajustar al borde del viewport si es necesario)
+  // Esto previene que widgets se rendericen fuera de la vista cuando se usan coordenadas negativas
+  Vec2 viewport = ctx->renderer.GetViewportSize();
+  
+  // Si el widget se sale por la izquierda o arriba, ajustarlo al borde
+  if (resolvedPos.x < 0.0f) {
+    resolvedPos.x = 0.0f;
+  }
+  if (resolvedPos.y < 0.0f) {
+    resolvedPos.y = 0.0f;
+  }
+  
+  // Opcionalmente, si el widget se sale completamente por la derecha o abajo, 
+  // podríamos ajustarlo, pero es mejor dejar que el usuario controle esto
+  // ya que algunos widgets pueden estar intencionalmente parcialmente fuera del viewport
+  
+  return resolvedPos;
 }
 
 static void RegisterOccupiedArea(UIContext *ctx, const Vec2 &pos,
@@ -719,9 +737,14 @@ struct ScrollViewFrameContext {
   float scrollbarWidth;
   bool layoutPushed;
   bool useAbsolutePos;
+  Vec2 savedCursor;
+  Vec2 savedLastItemPos;
+  Vec2 savedLastItemSize;
 };
 
 static std::vector<ScrollViewFrameContext> scrollViewStack;
+// Flag estático para rastrear si el scroll ya fue consumido en este frame
+static bool scrollConsumedThisFrame = false;
 
 // MenuBar constants
 static constexpr float MENUBAR_HEIGHT = 32.0f;
@@ -893,7 +916,6 @@ bool BeginPanel(const std::string &id, const Vec2 &desiredSize,
 
   Color panelColor = panelStyle.background;
   Color titleColor = panelStyle.headerBackground;
-  Color borderColor = panelStyle.borderColor;
 
   if (!state.minimized) {
     if (panelStyle.shadowOpacity > 0.0f) {
@@ -926,10 +948,7 @@ bool BeginPanel(const std::string &id, const Vec2 &desiredSize,
 
   ctx->renderer.DrawRectFilled(state.position, titleSize, titleColor,
                                panelStyle.cornerRadius);
-  Vec2 borderSize =
-      state.minimized ? Vec2(state.size.x, titleHeight) : state.size;
-  ctx->renderer.DrawRect(state.position, borderSize, borderColor,
-                         panelStyle.cornerRadius);
+  // Sin borde visible - solo contraste de fondo como en Windows 11 Settings
 
   Vec2 titleTextPos(state.position.x + panelStyle.padding.x,
                     state.position.y +
@@ -1215,17 +1234,23 @@ bool Checkbox(const std::string &label, bool *value, const Vec2 &pos) {
 
   const PanelStyle &panelStyle = ctx->style.panel;
   const ColorState &toggleAccent = ctx->style.button.background;
-  Color boxFill = hover ? panelStyle.headerBackground : panelStyle.background;
-  // Relleno
+  
+  // Fondo del checkbox - contraste sutil sin borde
+  Color boxFill = panelStyle.background;
+  if (hover) {
+    boxFill = panelStyle.headerBackground;
+  }
+  // Hacer el fondo más distintivo según el tema para mejor visibilidad (sin borde)
+  bool isDarkTheme = (ctx->style.backgroundColor.r < 0.5f);
+  if (isDarkTheme) {
+    boxFill = Color(boxFill.r * 1.15f, boxFill.g * 1.15f, boxFill.b * 1.15f, 1.0f);
+  } else {
+    boxFill = Color(boxFill.r * 0.92f, boxFill.g * 0.92f, boxFill.b * 0.92f, 1.0f);
+  }
+  
+  // Relleno sin borde - solo contraste de fondo
   ctx->renderer.DrawRectFilled(boxPos, boxSize, boxFill,
                                panelStyle.cornerRadius * 0.5f);
-  // Borde visible - usar color Fluent más contrastante
-  // Usar un color de borde que sea visible tanto en tema claro como oscuro
-  Color borderColor = FluentColors::BorderDark;
-  borderColor.a =
-      0.6f; // Opacidad para que sea visible pero no demasiado fuerte
-  ctx->renderer.DrawRect(boxPos, boxSize, borderColor,
-                         panelStyle.cornerRadius * 0.5f);
 
   if (currentValue) {
     Vec2 innerPos(boxPos.x + 4.0f, boxPos.y + 4.0f);
@@ -1298,9 +1323,21 @@ bool RadioButton(const std::string &label, int *value, int optionValue,
   const PanelStyle &panelStyle = ctx->style.panel;
   const ColorState &accentState = ctx->style.button.background;
 
-  // Círculo exterior con borde visible
-  Color circleBorder = panelStyle.borderColor;
-  ctx->renderer.DrawCircle(circleCenter, radius, circleBorder, false);
+  // Fondo del radio button - contraste sutil sin borde
+  Color circleFill = panelStyle.background;
+  if (hover) {
+    circleFill = panelStyle.headerBackground;
+  }
+  // Hacer el fondo más distintivo según el tema para mejor visibilidad (sin borde)
+  bool isDarkTheme = (ctx->style.backgroundColor.r < 0.5f);
+  if (isDarkTheme) {
+    circleFill = Color(circleFill.r * 1.15f, circleFill.g * 1.15f, circleFill.b * 1.15f, 1.0f);
+  } else {
+    circleFill = Color(circleFill.r * 0.92f, circleFill.g * 0.92f, circleFill.b * 0.92f, 1.0f);
+  }
+  
+  // Círculo de fondo con contraste (sin borde)
+  ctx->renderer.DrawCircle(circleCenter, radius, circleFill, true);
 
   // Dibujar círculo interior si está seleccionado
   if (isSelected) {
@@ -1671,22 +1708,33 @@ bool TextInput(const std::string &label, std::string *value, float width,
   ctx->renderer.DrawText(widgetPos, label, labelStyle.color,
                          labelStyle.fontSize);
 
-  Color borderColor = hasFocus ? accentState.normal : panelStyle.borderColor;
+  // Fondo más distintivo para TextInput - sin borde visible (solo focus)
   Color bgColor = panelStyle.background;
-  ctx->renderer.DrawRectFilled(fieldPos, fieldSize, borderColor,
+  bool isDarkTheme = (ctx->style.backgroundColor.r < 0.5f);
+  if (isDarkTheme) {
+    bgColor = Color(bgColor.r * 1.12f, bgColor.g * 1.12f, bgColor.b * 1.12f, 1.0f);
+  } else {
+    bgColor = Color(bgColor.r * 0.94f, bgColor.g * 0.94f, bgColor.b * 0.94f, 1.0f);
+  }
+  
+  // Solo mostrar borde cuando tiene focus
+  if (hasFocus) {
+    Color focusColor = FluentColors::Accent;
+    focusColor.a = 0.4f;
+    Vec2 focusOffset(1.5f, 1.5f);
+    ctx->renderer.DrawRectFilled(fieldPos - focusOffset,
+                                 fieldSize + focusOffset * 2.0f, focusColor,
+                                 panelStyle.cornerRadius + 1.5f);
+    bgColor = accentState.hover;
+    bgColor.a = 0.15f;
+  }
+  
+  ctx->renderer.DrawRectFilled(fieldPos, fieldSize, bgColor,
                                panelStyle.cornerRadius);
-  Vec2 innerPos(fieldPos.x + 1.0f, fieldPos.y + 1.0f);
-  Vec2 innerSize(fieldSize.x - 2.0f, fieldSize.y - 2.0f);
-  if (innerSize.x < 0.0f)
-    innerSize.x = 0.0f;
-  if (innerSize.y < 0.0f)
-    innerSize.y = 0.0f;
-  ctx->renderer.DrawRectFilled(innerPos, innerSize, bgColor,
-                               panelStyle.cornerRadius * 0.8f);
 
   Vec2 textSize = ctx->renderer.MeasureText(textRef, inputTextStyle.fontSize);
   float textPadding = panelStyle.padding.x * 0.5f;
-  float availableWidth = innerSize.x - textPadding * 2.0f;
+  float availableWidth = fieldSize.x - textPadding * 2.0f;
   float caretOffset =
       ctx->renderer
           .MeasureText(textRef.substr(0, caret), inputTextStyle.fontSize)
@@ -1699,15 +1747,15 @@ bool TextInput(const std::string &label, std::string *value, float width,
   scroll =
       std::clamp(scroll, 0.0f, std::max(0.0f, textSize.x - availableWidth));
 
-  Vec2 textPos(innerPos.x + textPadding - scroll,
-               innerPos.y + (innerSize.y - inputTextStyle.fontSize) * 0.5f);
+  Vec2 textPos(fieldPos.x + textPadding - scroll,
+               fieldPos.y + (fieldSize.y - inputTextStyle.fontSize) * 0.5f);
   ctx->renderer.DrawText(textPos, textRef, inputTextStyle.color,
                          inputTextStyle.fontSize);
 
   if (hasFocus && ((ctx->frame / 30) % 2 == 0)) {
-    float caretX = textPos.x + caretOffset - scroll;
-    Vec2 caretPos(caretX, innerPos.y + textPadding * 0.5f);
-    Vec2 caretSize(1.5f, innerSize.y - textPadding);
+    float caretX = textPos.x + caretOffset;
+    Vec2 caretPos(caretX, fieldPos.y + textPadding * 0.5f);
+    Vec2 caretSize(1.5f, fieldSize.y - textPadding);
     ctx->renderer.DrawRectFilled(caretPos, caretSize, accentState.normal, 0.0f);
   }
 
@@ -1805,30 +1853,32 @@ bool ComboBox(const std::string &label, int *currentItem,
   // Actualizar estado
   boolEntry.first->second = isOpen;
 
-  // Dibujar campo
-  Color fieldBg =
-      hoverField ? panelStyle.headerBackground : panelStyle.background;
+  // Dibujar campo con fondo más distintivo - sin borde visible
+  Color fieldBg = panelStyle.background;
+  if (hoverField) {
+    fieldBg = panelStyle.headerBackground;
+  }
+  // Hacer el fondo más distintivo según el tema (sin borde)
+  bool isDarkTheme = (ctx->style.backgroundColor.r < 0.5f);
+  if (isDarkTheme) {
+    fieldBg = Color(fieldBg.r * 1.12f, fieldBg.g * 1.12f, fieldBg.b * 1.12f, 1.0f);
+  } else {
+    fieldBg = Color(fieldBg.r * 0.94f, fieldBg.g * 0.94f, fieldBg.b * 0.94f, 1.0f);
+  }
+  
+  // Solo mostrar borde cuando tiene focus
   if (hasFocus) {
+    Color focusColor = FluentColors::Accent;
+    focusColor.a = 0.4f;
+    Vec2 focusOffset(1.5f, 1.5f);
+    ctx->renderer.DrawRectFilled(fieldPos - focusOffset,
+                                 fieldSize + focusOffset * 2.0f, focusColor,
+                                 panelStyle.cornerRadius + 1.5f);
     fieldBg = accentState.hover;
-    fieldBg.a = 0.2f;
+    fieldBg.a = 0.15f;
   }
   ctx->renderer.DrawRectFilled(fieldPos, fieldSize, fieldBg,
                                panelStyle.cornerRadius);
-
-  // Borde de focus
-  if (hasFocus) {
-    Color focusColor = FluentColors::Accent;
-    focusColor.a = 0.6f;
-    Vec2 focusOffset(2.0f, 2.0f);
-    ctx->renderer.DrawRectFilled(fieldPos - focusOffset,
-                                 fieldSize + focusOffset * 2.0f, focusColor,
-                                 panelStyle.cornerRadius + 2.0f);
-    ctx->renderer.DrawRectFilled(fieldPos, fieldSize, fieldBg,
-                                 panelStyle.cornerRadius);
-  }
-
-  ctx->renderer.DrawRect(fieldPos, fieldSize, panelStyle.borderColor,
-                         panelStyle.cornerRadius);
 
   // Texto seleccionado
   Vec2 textPadding(panelStyle.padding.x, panelStyle.padding.y);
@@ -1889,6 +1939,11 @@ bool BeginScrollView(const std::string &id, const Vec2 &size,
   if (!ctx)
     return false;
 
+  // Resetear el flag de scroll consumido al inicio del primer ScrollView del frame
+  if (scrollViewStack.empty()) {
+    scrollConsumedThisFrame = false;
+  }
+
   std::string key = "SCROLLVIEW:" + id;
   uint32_t scrollViewId = GenerateId(key.c_str());
   auto &state = ctx->scrollViewStates[scrollViewId];
@@ -1930,11 +1985,18 @@ bool BeginScrollView(const std::string &id, const Vec2 &size,
 
   const PanelStyle &panelStyle = ctx->style.panel;
 
-  // Dibujar fondo del scroll view
-  ctx->renderer.DrawRectFilled(scrollViewPos, size, panelStyle.background,
+  // Dibujar fondo del scroll view con contraste más pronunciado - sin borde
+  Color scrollBg = panelStyle.background;
+  bool isDarkTheme = (ctx->style.backgroundColor.r < 0.5f);
+  if (isDarkTheme) {
+    // Más claro que el fondo para mejor contraste
+    scrollBg = Color(scrollBg.r * 1.15f, scrollBg.g * 1.15f, scrollBg.b * 1.15f, 1.0f);
+  } else {
+    // Más oscuro que el fondo para mejor contraste
+    scrollBg = Color(scrollBg.r * 0.92f, scrollBg.g * 0.92f, scrollBg.b * 0.92f, 1.0f);
+  }
+  ctx->renderer.DrawRectFilled(scrollViewPos, size, scrollBg,
                                panelStyle.cornerRadius);
-  ctx->renderer.DrawRect(scrollViewPos, size, panelStyle.borderColor,
-                         panelStyle.cornerRadius);
 
   // Calcular área de contenido (reservar espacio para scrollbar)
   Vec2 availableSize(size.x - scrollbarWidth, size.y - scrollbarWidth);
@@ -1944,27 +2006,45 @@ bool BeginScrollView(const std::string &id, const Vec2 &size,
                        availableSize.y - panelStyle.padding.y * 2.0f);
 
   // Manejar scroll con rueda del mouse
+  // Solo procesar scroll si el mouse está sobre el área de contenido de este ScrollView
+  // y este ScrollView es el más anidado (está en el tope de la pila después de agregarlo)
   float mouseX = ctx->input.MouseX();
   float mouseY = ctx->input.MouseY();
-  bool hoverScrollView =
-      (mouseX >= scrollViewPos.x && mouseX <= scrollViewPos.x + size.x &&
-       mouseY >= scrollViewPos.y && mouseY <= scrollViewPos.y + size.y);
   
-  if (hoverScrollView) {
+  // Verificar hover sobre el área de contenido (no solo el ScrollView completo)
+  bool hoverContentArea = 
+      (mouseX >= contentAreaPos.x && mouseX <= contentAreaPos.x + contentAreaSize.x &&
+       mouseY >= contentAreaPos.y && mouseY <= contentAreaPos.y + contentAreaSize.y);
+  
+  // Agregar este ScrollView a la pila primero para poder verificar si es el más anidado
+  // (temporalmente, antes de agregarlo al final)
+  
+  // Solo procesar scroll si el hover está sobre el área de contenido Y 
+  // el scroll no ha sido consumido aún (esto asegura que solo el primero en procesarse lo haga)
+  // Como los ScrollViews más anidados se procesan primero, esto naturalmente hace que solo
+  // el más anidado procese el scroll
+  if (hoverContentArea && !scrollConsumedThisFrame) {
     float wheelY = ctx->input.MouseWheelY();
     if (std::abs(wheelY) > 0.001f) {
       float scrollSpeed = 30.0f;
       // El límite se calculará en EndScrollView cuando sepamos contentSize
       state.scrollOffset.y -= wheelY * scrollSpeed;
       state.scrollOffset.y = std::max(0.0f, state.scrollOffset.y);
+      scrollConsumedThisFrame = true; // Marcar como consumido
     }
     float wheelX = ctx->input.MouseWheelX();
     if (std::abs(wheelX) > 0.001f) {
       float scrollSpeed = 30.0f;
       state.scrollOffset.x -= wheelX * scrollSpeed;
       state.scrollOffset.x = std::max(0.0f, state.scrollOffset.x);
+      scrollConsumedThisFrame = true; // Marcar como consumido
     }
   }
+  
+  // También verificar hover sobre el ScrollView completo para otros propósitos
+  bool hoverScrollView =
+      (mouseX >= scrollViewPos.x && mouseX <= scrollViewPos.x + size.x &&
+       mouseY >= scrollViewPos.y && mouseY <= scrollViewPos.y + size.y);
 
   // Manejar interacción del mouse con scrollbar (usando contentSize del frame anterior)
   // Esto permite que el scrollbar funcione ANTES de dibujar el contenido
@@ -2083,6 +2163,11 @@ bool BeginScrollView(const std::string &id, const Vec2 &size,
   // Aplicar clipping al área de contenido
   ctx->renderer.PushClipRect(contentAreaPos, contentAreaSize);
 
+  // Guardar cursor y estado antes de modificarlo
+  Vec2 savedCursor = ctx->cursorPos;
+  Vec2 savedLastItemPos = ctx->lastItemPos;
+  Vec2 savedLastItemSize = ctx->lastItemSize;
+
   // Configurar el cursor para el contenido (ajustado por scroll)
   ctx->cursorPos = contentAreaPos - state.scrollOffset;
   ctx->lastItemPos = ctx->cursorPos;
@@ -2105,6 +2190,9 @@ bool BeginScrollView(const std::string &id, const Vec2 &size,
   frameCtx.scrollbarWidth = scrollbarWidth;
   frameCtx.layoutPushed = true;
   frameCtx.useAbsolutePos = state.useAbsolutePos;
+  frameCtx.savedCursor = savedCursor;
+  frameCtx.savedLastItemPos = savedLastItemPos;
+  frameCtx.savedLastItemSize = savedLastItemSize;
   scrollViewStack.push_back(frameCtx);
 
   // Actualizar scrollOffset externo si se proporciona
@@ -2147,6 +2235,12 @@ void EndScrollView() {
 
   // Remover clipping
   ctx->renderer.PopClipRect();
+
+  // Restaurar cursor original antes de avanzarlo
+  // Esto evita que el scrollOffset afecte a widgets fuera del ScrollView
+  ctx->cursorPos = frameCtx.savedCursor;
+  ctx->lastItemPos = frameCtx.savedLastItemPos;
+  ctx->lastItemSize = frameCtx.savedLastItemSize;
 
   const PanelStyle &panelStyle = ctx->style.panel;
 
@@ -2297,9 +2391,15 @@ void EndScrollView() {
   }
 
   // Avanzar cursor si NO se usa posición absoluta
+  // El cursor ya fue restaurado arriba, así que avanzar desde allí
   if (!frameCtx.useAbsolutePos) {
+    // Usar la posición del ScrollView como lastItemPos para el avance correcto
     ctx->lastItemPos = frameCtx.position;
+    // El cursor ya está restaurado, así que AdvanceCursor avanzará desde él
     AdvanceCursor(ctx, frameCtx.size);
+  } else {
+    // Si usa posición absoluta, solo restaurar el cursor sin avanzarlo
+    // El cursor ya fue restaurado arriba
   }
 }
 
@@ -2379,24 +2479,32 @@ bool BeginTabView(const std::string &id, int *activeTab,
     contentSize.y = 0.0f;
 
   // Dibujar fondo del TabView PRIMERO - esto debe renderizarse antes que los
-  // widgets
-  ctx->renderer.DrawRectFilled(tabViewPos, tabViewSize, panelStyle.background,
+  // widgets - con contraste sin borde
+  Color tabViewBg = panelStyle.background;
+  bool isDarkTheme = (ctx->style.backgroundColor.r < 0.5f);
+  if (isDarkTheme) {
+    // Más claro que el fondo para mejor contraste
+    tabViewBg = Color(tabViewBg.r * 1.15f, tabViewBg.g * 1.15f, tabViewBg.b * 1.15f, 1.0f);
+  } else {
+    // Más oscuro que el fondo para mejor contraste
+    tabViewBg = Color(tabViewBg.r * 0.92f, tabViewBg.g * 0.92f, tabViewBg.b * 0.92f, 1.0f);
+  }
+  ctx->renderer.DrawRectFilled(tabViewPos, tabViewSize, tabViewBg,
                                panelStyle.cornerRadius);
-  ctx->renderer.DrawRect(tabViewPos, tabViewSize, panelStyle.borderColor,
-                         panelStyle.cornerRadius);
 
-  // Dibujar barra de pestañas
+  // Dibujar barra de pestañas - con contraste sin borde
   Vec2 tabBarPos = tabViewPos;
   Vec2 tabBarBgPos = tabBarPos;
   Vec2 tabBarBgSize(tabViewSize.x, tabHeight);
-  ctx->renderer.DrawRectFilled(tabBarBgPos, tabBarBgSize,
-                               panelStyle.headerBackground, 0.0f);
-
-  // Dibujar línea separadora debajo de la barra de pestañas
-  Vec2 separatorStart(tabBarPos.x, tabBarPos.y + tabHeight);
-  Vec2 separatorEnd(tabBarPos.x + tabViewSize.x, tabBarPos.y + tabHeight);
-  ctx->renderer.DrawLine(separatorStart, separatorEnd, panelStyle.borderColor,
-                         1.0f);
+  Color tabBarBg = panelStyle.headerBackground;
+  if (isDarkTheme) {
+    // Más claro que el fondo para mejor contraste
+    tabBarBg = Color(tabBarBg.r * 1.15f, tabBarBg.g * 1.15f, tabBarBg.b * 1.15f, 1.0f);
+  } else {
+    // Más oscuro que el fondo para mejor contraste
+    tabBarBg = Color(tabBarBg.r * 0.92f, tabBarBg.g * 0.92f, tabBarBg.b * 0.92f, 1.0f);
+  }
+  ctx->renderer.DrawRectFilled(tabBarBgPos, tabBarBgSize, tabBarBg, 0.0f);
 
   // Dibujar pestañas
   float currentX = tabBarPos.x + panelStyle.padding.x;
@@ -2414,9 +2522,15 @@ bool BeginTabView(const std::string &id, int *activeTab,
                   mouseY >= tabPos.y && mouseY <= tabPos.y + tabSize.y);
     bool isActive = (static_cast<int>(i) == state.activeTab);
 
-    // Dibujar fondo de la pestaña
-    Color tabBg =
-        isActive ? panelStyle.background : panelStyle.headerBackground;
+    // Dibujar fondo de la pestaña - sin borde, solo contraste
+    Color tabBg;
+    if (isActive) {
+      // Tab activa: usar el mismo color que el fondo del TabView para que no haya borde visible
+      tabBg = tabViewBg;
+    } else {
+      // Tab inactiva: usar el mismo color que la barra de tabs
+      tabBg = tabBarBg;
+    }
     if (hover && !isActive) {
       tabBg = Color(tabBg.r * 1.1f, tabBg.g * 1.1f, tabBg.b * 1.1f, tabBg.a);
     }
@@ -2482,8 +2596,10 @@ bool BeginTabView(const std::string &id, int *activeTab,
     float thumbHeight = std::max(20.0f, barSize.y * ratio);
     float maxThumbTravel = barSize.y - thumbHeight;
     float maxScrollY = std::max(0.0f, state.contentSize.y - contentSize.y);
+    // Usar scrollOffset del tab activo
+    Vec2& tabScrollOffset = state.tabScrollOffsets[state.activeTab];
     float thumbY = maxScrollY > 0.0f
-                       ? (state.scrollOffset.y / maxScrollY) * maxThumbTravel
+                       ? (tabScrollOffset.y / maxScrollY) * maxThumbTravel
                        : 0.0f;
 
     Vec2 thumbPos(barPos.x, barPos.y + thumbY);
@@ -2501,24 +2617,27 @@ bool BeginTabView(const std::string &id, int *activeTab,
       } else {
         float mouseDelta = mouseY - state.dragStartMouse.y;
         float scrollDelta = (mouseDelta / maxThumbTravel) * maxScrollY;
-        state.scrollOffset.y =
+        tabScrollOffset.y =
             std::clamp(state.dragStartScroll + scrollDelta, 0.0f, maxScrollY);
       }
     } else if (leftPressed && hoverThumb) {
       state.draggingScrollbar = true;
       state.dragStartMouse = Vec2(mouseX, mouseY);
-      state.dragStartScroll = state.scrollOffset.y;
+      state.dragStartScroll = tabScrollOffset.y;
     } else if (leftPressed && hoverTrack) {
       // Click en el track: saltar a esa posición
       float clickPos = mouseY - barPos.y;
       float scrollRatioClick = clickPos / barSize.y;
-      state.scrollOffset.y = std::clamp(scrollRatioClick * maxScrollY, 0.0f, maxScrollY);
+      tabScrollOffset.y = std::clamp(scrollRatioClick * maxScrollY, 0.0f, maxScrollY);
     }
   }
 
+  // Obtener scrollOffset para el tab activo (cada tab tiene su propio scrollOffset)
+  Vec2& tabScrollOffset = state.tabScrollOffsets[state.activeTab];
+  
   // Ajustar cursor con scroll actual (vertical)
   Vec2 scrolledContentPos =
-      Vec2(contentPos.x, contentPos.y - state.scrollOffset.y);
+      Vec2(contentPos.x, contentPos.y - tabScrollOffset.y);
 
   // Aplicar clipping al área de contenido ANTES de configurar el layout
   // Esto asegura que los widgets solo se dibujen dentro del área visible
@@ -2586,11 +2705,14 @@ void EndTabView() {
              mouseY <= frame.contentAreaPos.y + frame.contentAreaSize.y);
         float wheelY = ctx2->input.MouseWheelY();
         if (hoverContent && std::abs(wheelY) > 0.001f &&
-            contentSize.y > frame.contentAreaSize.y) {
+            contentSize.y > frame.contentAreaSize.y && !scrollConsumedThisFrame) {
           float scrollSpeed = 30.0f;
-          st.scrollOffset.y = std::clamp(
-              st.scrollOffset.y - wheelY * scrollSpeed, 0.0f,
+          // Usar scrollOffset del tab activo
+          Vec2& tabScrollOffset = st.tabScrollOffsets[st.activeTab];
+          tabScrollOffset.y = std::clamp(
+              tabScrollOffset.y - wheelY * scrollSpeed, 0.0f,
               std::max(0.0f, contentSize.y - frame.contentAreaSize.y));
+          scrollConsumedThisFrame = true; // Marcar como consumido
         }
 
         // Dibujar barra de scroll vertical si es necesaria
@@ -2606,8 +2728,10 @@ void EndTabView() {
           float ratio = frame.contentAreaSize.y / contentSize.y;
           float thumbHeight = std::max(20.0f, barSize.y * ratio);
           float maxThumbTravel = barSize.y - thumbHeight;
+          // Usar scrollOffset del tab activo
+          Vec2& tabScrollOffset = st.tabScrollOffsets[st.activeTab];
           float thumbY = (contentSize.y - frame.contentAreaSize.y) > 0.0f
-                             ? (st.scrollOffset.y /
+                             ? (tabScrollOffset.y /
                                 (contentSize.y - frame.contentAreaSize.y)) *
                                    maxThumbTravel
                              : 0.0f;
@@ -2949,11 +3073,18 @@ bool BeginListView(const std::string &id, const Vec2 &size, int *selectedItem,
   const PanelStyle &panelStyle = ctx->style.panel;
   const TextStyle &textStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
 
-  // Dibujar fondo del ListView
-  ctx->renderer.DrawRectFilled(listViewPos, listViewSize, panelStyle.background,
+  // Dibujar fondo del ListView con contraste más pronunciado - sin borde
+  Color listBg = panelStyle.background;
+  bool isDarkTheme = (ctx->style.backgroundColor.r < 0.5f);
+  if (isDarkTheme) {
+    // Más claro que el fondo para mejor contraste
+    listBg = Color(listBg.r * 1.15f, listBg.g * 1.15f, listBg.b * 1.15f, 1.0f);
+  } else {
+    // Más oscuro que el fondo para mejor contraste
+    listBg = Color(listBg.r * 0.92f, listBg.g * 0.92f, listBg.b * 0.92f, 1.0f);
+  }
+  ctx->renderer.DrawRectFilled(listViewPos, listViewSize, listBg,
                                panelStyle.cornerRadius);
-  ctx->renderer.DrawRect(listViewPos, listViewSize, panelStyle.borderColor,
-                         panelStyle.cornerRadius);
 
   // Calcular tamaños
   float scrollbarWidth = 10.0f;
@@ -2968,13 +3099,14 @@ bool BeginListView(const std::string &id, const Vec2 &size, int *selectedItem,
   bool hoverListView = (mouseX >= listViewPos.x && mouseX <= listViewPos.x + listViewSize.x &&
                         mouseY >= listViewPos.y && mouseY <= listViewPos.y + listViewSize.y);
   
-  if (hoverListView && needsScrollbar) {
+  if (hoverListView && needsScrollbar && !scrollConsumedThisFrame) {
     float wheelY = ctx->input.MouseWheelY();
     if (std::abs(wheelY) > 0.001f) {
       float scrollSpeed = 30.0f;
       state.scrollOffset -= wheelY * scrollSpeed;
       state.scrollOffset = std::clamp(state.scrollOffset, 0.0f, 
                                       std::max(0.0f, totalHeight - visibleHeight));
+      scrollConsumedThisFrame = true; // Marcar como consumido
     }
   }
 
@@ -3180,11 +3312,18 @@ bool BeginTreeView(const std::string &id, const Vec2 &size, const Vec2 &pos) {
 
   const PanelStyle &panelStyle = ctx->style.panel;
 
-  // Dibujar fondo del TreeView
-  ctx->renderer.DrawRectFilled(treeViewPos, treeViewSize, panelStyle.background,
+  // Dibujar fondo del TreeView con contraste más pronunciado - sin borde
+  Color treeBg = panelStyle.background;
+  bool isDarkTheme = (ctx->style.backgroundColor.r < 0.5f);
+  if (isDarkTheme) {
+    // Más claro que el fondo para mejor contraste
+    treeBg = Color(treeBg.r * 1.15f, treeBg.g * 1.15f, treeBg.b * 1.15f, 1.0f);
+  } else {
+    // Más oscuro que el fondo para mejor contraste
+    treeBg = Color(treeBg.r * 0.92f, treeBg.g * 0.92f, treeBg.b * 0.92f, 1.0f);
+  }
+  ctx->renderer.DrawRectFilled(treeViewPos, treeViewSize, treeBg,
                                panelStyle.cornerRadius);
-  ctx->renderer.DrawRect(treeViewPos, treeViewSize, panelStyle.borderColor,
-                         panelStyle.cornerRadius);
 
   // Aplicar clipping
   ctx->renderer.PushClipRect(treeViewPos, treeViewSize);
@@ -3393,12 +3532,18 @@ bool BeginMenuBar() {
 
   const PanelStyle &panelStyle = ctx->style.panel;
 
-  // Dibujar fondo del MenuBar
+  // Dibujar fondo del MenuBar - con contraste sin borde
+  Color menuBarBg = panelStyle.headerBackground;
+  bool isDarkTheme = (ctx->style.backgroundColor.r < 0.5f);
+  if (isDarkTheme) {
+    // Más claro que el fondo para mejor contraste
+    menuBarBg = Color(menuBarBg.r * 1.15f, menuBarBg.g * 1.15f, menuBarBg.b * 1.15f, 1.0f);
+  } else {
+    // Más oscuro que el fondo para mejor contraste
+    menuBarBg = Color(menuBarBg.r * 0.92f, menuBarBg.g * 0.92f, menuBarBg.b * 0.92f, 1.0f);
+  }
   ctx->renderer.DrawRectFilled(menuBar.position, menuBar.size,
-                               panelStyle.headerBackground, 0.0f);
-  ctx->renderer.DrawRect(
-      Vec2(menuBar.position.x, menuBar.position.y + menuBar.size.y),
-      Vec2(menuBar.size.x, 1.0f), panelStyle.borderColor, 0.0f);
+                               menuBarBg, 0.0f);
 
   // Configurar cursor para el MenuBar (sin padding)
   ctx->cursorPos = menuBar.position;
@@ -3612,10 +3757,18 @@ void EndMenu() {
                 ctx->currentMenuItems[i].size.x = maxItemWidth;
             }
 
-            // Copy items to dropdown
-            dropdown.items.insert(dropdown.items.end(), 
-                                 ctx->currentMenuItems.begin() + startIndex, 
-                                 ctx->currentMenuItems.end());
+            // Copy items to dropdown and adjust their positions to be relative to dropdownPos
+            // El primer item debe comenzar exactamente en dropdownPos.y, sin espacio extra
+            float currentY = dropdownPos.y;
+            for (size_t i = startIndex; i < ctx->currentMenuItems.size(); ++i) {
+                UIContext::DeferredMenuItem item = ctx->currentMenuItems[i];
+                // Recalcular posición para que el primer item comience exactamente en dropdownPos
+                item.pos.y = currentY;
+                item.pos.x = dropdownPos.x;
+                dropdown.items.push_back(item);
+                // Avanzar Y para el siguiente item usando la altura del item actual
+                currentY += item.size.y;
+            }
             
             // Remove items from currentMenuItems
             ctx->currentMenuItems.resize(startIndex);
@@ -3981,14 +4134,20 @@ void RenderDeferredDropdowns() {
 
   // Render deferred menu dropdowns
   for (auto &dropdown : ctx->deferredMenuDropdowns) {
-    // Draw dropdown background with elevation
+    // Draw dropdown background with elevation and contrast (sin borde)
+    Color dropdownBg = ctx->style.panel.background;
+    bool isDarkTheme = (ctx->style.backgroundColor.r < 0.5f);
+    if (isDarkTheme) {
+      // Más claro que el fondo para mejor contraste
+      dropdownBg = Color(dropdownBg.r * 1.15f, dropdownBg.g * 1.15f, dropdownBg.b * 1.15f, 1.0f);
+    } else {
+      // Más oscuro que el fondo para mejor contraste
+      dropdownBg = Color(dropdownBg.r * 0.92f, dropdownBg.g * 0.92f, dropdownBg.b * 0.92f, 1.0f);
+    }
+    
     ctx->renderer.DrawRectWithElevation(
         dropdown.dropdownPos, dropdown.dropdownSize,
-        ctx->style.panel.background, 4.0f, 8.0f);
-    
-    // Draw dropdown border
-    ctx->renderer.DrawRect(dropdown.dropdownPos, dropdown.dropdownSize,
-                           ctx->style.panel.borderColor, 4.0f);
+        dropdownBg, 4.0f, 8.0f);
 
     // Draw menu items
     const TextStyle &textStyle = ctx->style.GetTextStyle(TypographyStyle::Body);

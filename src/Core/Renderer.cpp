@@ -262,7 +262,30 @@ namespace FluentUI {
             return;
         }
         
-        std::cout << "MSDF atlas not found, falling back to FreeType rendering..." << std::endl;
+        std::cout << "MSDF atlas not found, initializing dynamic MSDF generation from FreeType..." << std::endl;
+        
+        // Initialize MSDF generator for dynamic generation
+        msdfGenerator = std::make_unique<MSDFGenerator>();
+        
+        // Create dynamic MSDF atlas texture
+        if (dynamicMSDFAtlasTexture == 0) {
+            glGenTextures(1, &dynamicMSDFAtlasTexture);
+            glBindTexture(GL_TEXTURE_2D, dynamicMSDFAtlasTexture);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, dynamicAtlasWidth, dynamicAtlasHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            
+            // Initialize packing state
+            atlasNextX = 2; // Start with padding
+            atlasNextY = 2;
+            atlasCurrentRowHeight = 0;
+            
+            std::cout << "Dynamic MSDF atlas texture created (" << dynamicAtlasWidth << "x" << dynamicAtlasHeight << ")" << std::endl;
+        }
 
 
         // Fallback to FreeType rendering
@@ -703,15 +726,55 @@ namespace FluentUI {
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glDisable(GL_DEPTH_TEST);
             
-            msdfFont->Bind(ortho);
-            msdfFont->SetColor(color);
+            // Bind MSDF shader - create if needed
+            if (!msdfFont) {
+                msdfFont = std::make_unique<FontMSDF>();
+                msdfFont->BindShaderOnly(ortho);
+            } else if (msdfFont->IsLoaded()) {
+                msdfFont->Bind(ortho);
+            } else {
+                msdfFont->BindShaderOnly(ortho);
+            }
+            
+            // Set color
+            if (msdfFont) {
+                msdfFont->SetColor(color);
+            }
+            
+            // Bind appropriate texture
+            if (msdfFont->IsLoaded()) {
+                // Pre-generated atlas is bound by FontMSDF::Bind()
+            } else if (dynamicMSDFAtlasTexture != 0) {
+                // Bind dynamic atlas texture
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, dynamicMSDFAtlasTexture);
+                if (msdfFont->GetShaderProgram() != 0) {
+                    GLint texUniform = glGetUniformLocation(msdfFont->GetShaderProgram(), "msdfTexture");
+                    if (texUniform >= 0) {
+                        glUniform1i(texUniform, 0);
+                    }
+                }
+            }
              
-             float scale = fontSize / msdfFont->GetEmSize();
+             // Calculate scale - use emSize if available, otherwise use fontPixelHeight
+             float emSize = msdfFont->GetEmSize();
+             if (emSize <= 0 && fontLoaded) {
+                 emSize = fontPixelHeight; // Fallback to FreeType pixel height
+             }
+             if (emSize <= 0) {
+                 emSize = fontSize; // Final fallback
+             }
+             float scale = fontSize / emSize;
              
              // Calculate baseline: pos.y is top-left, we need to offset by ascender
-             // In OpenGL screen coords (Y=0 at top, Y grows downward)
-             // Baseline is at pos.y + ascender * scale
-             float baseline = pos.y + msdfFont->GetAscender() * scale;
+             float ascender = msdfFont->GetAscender();
+             if (ascender <= 0 && fontLoaded) {
+                 ascender = fontAscent / emSize; // Use FreeType ascender if available
+             }
+             if (ascender <= 0) {
+                 ascender = 0.8f; // Default ascender ratio
+             }
+             float baseline = pos.y + ascender * fontSize;
              
              float xpos = pos.x;
              float lineHeight = fontSize * msdfFont->GetLineHeight();
@@ -731,61 +794,85 @@ namespace FluentUI {
                     continue;
                 }
                 
-                const FontMSDF::Glyph* glyph = msdfFont->GetGlyph(codepoint);
+                // Try pre-generated MSDF first, then dynamic generation
+                const FontMSDF::Glyph* glyph = nullptr;
+                const Glyph* dynamicGlyph = nullptr;
+                bool useDynamicMSDF = false;
+                
+                if (msdfFont && msdfFont->IsLoaded()) {
+                    glyph = msdfFont->GetGlyph(codepoint);
+                }
+                
+                // If not found in pre-generated atlas, try dynamic generation
+                if (!glyph && msdfGenerator && fontFace) {
+                    dynamicGlyph = GetOrGenerateMSDFGlyph(codepoint);
+                    useDynamicMSDF = (dynamicGlyph != nullptr);
+                }
                 
                 // Handle spaces and missing glyphs: still advance xpos by advance
-                // Even if there's no glyph to render
                 float advance = 0.0f;
                 if (glyph) {
                     advance = glyph->advance * scale;
-                    
-                    // For space characters, don't render but still advance
+                    if (codepoint == 32) { // Space character
+                        xpos += advance;
+                        continue;
+                    }
+                } else if (dynamicGlyph) {
+                    advance = dynamicGlyph->advance * scale;
                     if (codepoint == 32) { // Space character
                         xpos += advance;
                         continue;
                     }
                 } else {
                     // For missing glyphs, use a default advance
-                    if (codepoint == 32) { // Space character
-                        advance = fontSize * 0.3f; // Default space width
+                    if (codepoint == 32) {
+                        advance = fontSize * 0.3f;
                     } else {
-                        advance = fontSize * 0.2f; // Default width for other missing glyphs
+                        advance = fontSize * 0.2f;
                     }
                     xpos += advance;
-                    continue; // Skip rendering for missing glyphs
+                    continue;
                 }
 
                 // Calculate glyph position and size
-                // bearing.x is typically negative (glyph extends left of insertion point)
-                // bearing.y is the top offset from baseline (positive = above baseline)
-                // In OpenGL coords: baseline is reference, subtract bearing.y to get top of glyph
-                float x0 = xpos + glyph->bearing.x * scale;
-                float y0 = baseline - glyph->bearing.y * scale; 
-                float w = glyph->planeBounds.x * scale;
-                float h = glyph->planeBounds.y * scale;
+                float x0, y0, w, h, u0, v0, u1, v1;
+                
+                if (useDynamicMSDF && dynamicGlyph) {
+                    // Use dynamically generated MSDF glyph
+                    x0 = xpos + dynamicGlyph->bearing.x * scale;
+                    y0 = baseline - dynamicGlyph->bearing.y * scale;
+                    w = dynamicGlyph->size.x * scale;
+                    h = dynamicGlyph->size.y * scale;
+                    u0 = dynamicGlyph->uv0.x; v0 = dynamicGlyph->uv0.y;
+                    u1 = dynamicGlyph->uv1.x; v1 = dynamicGlyph->uv1.y;
+                    
+                    // Use dynamic atlas texture instead of pre-generated
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, dynamicMSDFAtlasTexture);
+                } else {
+                    // Use pre-generated MSDF glyph
+                    x0 = xpos + glyph->bearing.x * scale;
+                    y0 = baseline - glyph->bearing.y * scale;
+                    w = glyph->planeBounds.x * scale;
+                    h = glyph->planeBounds.y * scale;
+                    u0 = glyph->uv0.x; v0 = glyph->uv0.y;
+                    u1 = glyph->uv1.x; v1 = glyph->uv1.y;
+                }
                 
                 // Skip if size is invalid
                 if (w <= 0 || h <= 0) {
                     xpos += advance;
                     continue;
                 }
-                
-                // UV coordinates after Y-flip in FontMSDF:
-                // uv0 = (left, bottom) in OpenGL coordinates
-                // uv1 = (right, top) in OpenGL coordinates
-                float u0 = glyph->uv0.x; float v0 = glyph->uv0.y;  // left, bottom
-                float u1 = glyph->uv1.x; float v1 = glyph->uv1.y;  // right, top
 
                 // Quad vertices: two triangles forming a rectangle
-                // Triangle 1: bottom-left, top-right, top-left
-                // Triangle 2: bottom-left, bottom-right, top-right
                 float vertices[6][4] = {
-                    { x0,     y0,       u0, v0 },  // bottom-left: (left, bottom)
-                    { x0 + w, y0 + h,   u1, v1 },  // top-right: (right, top)
-                    { x0,     y0 + h,   u0, v1 },  // top-left: (left, top)
-                    { x0,     y0,       u0, v0 },  // bottom-left: (left, bottom)
-                    { x0 + w, y0,       u1, v0 },  // bottom-right: (right, bottom)
-                    { x0 + w, y0 + h,   u1, v1 }   // top-right: (right, top)
+                    { x0,     y0,       u0, v0 },
+                    { x0 + w, y0 + h,   u1, v1 },
+                    { x0,     y0 + h,   u0, v1 },
+                    { x0,     y0,       u0, v0 },
+                    { x0 + w, y0,       u1, v0 },
+                    { x0 + w, y0 + h,   u1, v1 }
                 };
                 
                 glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
@@ -796,7 +883,15 @@ namespace FluentUI {
              
              glBindBuffer(GL_ARRAY_BUFFER, 0);
              glBindVertexArray(0);
-             msdfFont->Unbind();
+             
+             if (msdfFont) {
+                 if (msdfFont->IsLoaded()) {
+                     msdfFont->Unbind();
+                 } else {
+                     msdfFont->UnbindShader();
+                     glBindTexture(GL_TEXTURE_2D, 0);
+                 }
+             }
              return;
         }
 
@@ -1125,6 +1220,123 @@ namespace FluentUI {
         }
 
         return static_cast<float>(kerning.x) / 64.0f;
+    }
+
+    const Renderer::Glyph* Renderer::GetOrGenerateMSDFGlyph(std::uint32_t codepoint)
+    {
+        // Check if already generated
+        auto it = dynamicMSDFGlyphCache.find(codepoint);
+        if (it != dynamicMSDFGlyphCache.end() && it->second.valid)
+        {
+            return &it->second;
+        }
+
+        // Try to generate
+        if (GenerateMSDFGlyph(codepoint))
+        {
+            it = dynamicMSDFGlyphCache.find(codepoint);
+            if (it != dynamicMSDFGlyphCache.end() && it->second.valid)
+            {
+                return &it->second;
+            }
+        }
+
+        return nullptr;
+    }
+
+    bool Renderer::GenerateMSDFGlyph(std::uint32_t codepoint)
+    {
+        if (!msdfGenerator || !fontFace)
+        {
+            return false;
+        }
+
+        // Get glyph index
+        FT_UInt glyphIndex = FT_Get_Char_Index(fontFace, static_cast<FT_ULong>(codepoint));
+        if (glyphIndex == 0)
+        {
+            return false;
+        }
+
+        // Generate MSDF
+        const int msdfSize = 64; // MSDF texture size per glyph
+        const float pixelRange = 4.0f;
+        auto msdfData = msdfGenerator->GenerateFromGlyph(fontFace, glyphIndex, msdfSize, pixelRange, 4);
+        
+        if (!msdfData)
+        {
+            return false;
+        }
+
+        // Find space in atlas
+        int atlasX, atlasY;
+        if (!EnsureDynamicMSDFAtlasSpace(msdfData->width, msdfData->height, atlasX, atlasY))
+        {
+            std::cerr << "Dynamic MSDF atlas full!" << std::endl;
+            return false;
+        }
+
+        // Upload to texture
+        glBindTexture(GL_TEXTURE_2D, dynamicMSDFAtlasTexture);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, atlasX, atlasY, msdfData->width, msdfData->height,
+                        GL_RGB, GL_UNSIGNED_BYTE, msdfData->pixels.data());
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        // Get glyph metrics from FreeType
+        if (FT_Load_Glyph(fontFace, glyphIndex, FT_LOAD_NO_BITMAP))
+        {
+            return false;
+        }
+
+        FT_GlyphSlot slot = fontFace->glyph;
+        float scale = 1.0f / 64.0f; // FreeType uses 26.6 fixed point
+
+        // Create glyph entry
+        Glyph& glyph = dynamicMSDFGlyphCache[codepoint];
+        glyph.size = Vec2(static_cast<float>(msdfData->width), static_cast<float>(msdfData->height));
+        glyph.bearing = Vec2(
+            static_cast<float>(slot->metrics.horiBearingX) * scale,
+            static_cast<float>(slot->metrics.horiBearingY) * scale
+        );
+        glyph.advance = static_cast<float>(slot->metrics.horiAdvance) * scale;
+        glyph.uv0 = Vec2(
+            static_cast<float>(atlasX) / static_cast<float>(dynamicAtlasWidth),
+            static_cast<float>(atlasY) / static_cast<float>(dynamicAtlasHeight)
+        );
+        glyph.uv1 = Vec2(
+            static_cast<float>(atlasX + msdfData->width) / static_cast<float>(dynamicAtlasWidth),
+            static_cast<float>(atlasY + msdfData->height) / static_cast<float>(dynamicAtlasHeight)
+        );
+        glyph.valid = true;
+
+        return true;
+    }
+
+    bool Renderer::EnsureDynamicMSDFAtlasSpace(int glyphWidth, int glyphHeight, int& outX, int& outY)
+    {
+        // Simple packing algorithm - start new row if needed
+        const int padding = 2;
+
+        if (atlasNextX + glyphWidth + padding > dynamicAtlasWidth)
+        {
+            // Move to next row
+            atlasNextY += atlasCurrentRowHeight + padding;
+            atlasNextX = padding;
+            atlasCurrentRowHeight = 0;
+
+            if (atlasNextY + glyphHeight + padding > dynamicAtlasHeight)
+            {
+                return false; // Atlas full
+            }
+        }
+
+        outX = atlasNextX;
+        outY = atlasNextY;
+
+        atlasNextX += glyphWidth + padding;
+        atlasCurrentRowHeight = std::max(atlasCurrentRowHeight, glyphHeight);
+
+        return true;
     }
 
     void Renderer::SetViewport(int width, int height) {

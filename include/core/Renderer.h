@@ -10,6 +10,7 @@
 #include FT_FREETYPE_H
 #include <cstdint>
 #include "core/FontMSDF.h"
+#include "core/MSDFGenerator.h"
 #include <memory>
 
 namespace FluentUI {
@@ -104,10 +105,13 @@ private:
   int atlasCurrentRowHeight = 0;
 
   std::unique_ptr<FontMSDF> msdfFont;
-
-    
-
-    
+  std::unique_ptr<MSDFGenerator> msdfGenerator;
+  
+  // Dynamic MSDF atlas for FreeType-generated glyphs
+  GLuint dynamicMSDFAtlasTexture = 0;
+  int dynamicAtlasWidth = 2048;
+  int dynamicAtlasHeight = 2048;
+  std::unordered_map<std::uint32_t, Glyph> dynamicMSDFGlyphCache;
 
   // Helpers internos
   void EnsureBatchResources();
@@ -115,9 +119,12 @@ private:
   void ClearGlyphs();
   const Glyph* GetGlyph(std::uint32_t codepoint);
   bool LoadGlyph(std::uint32_t codepoint);
+  const Glyph* GetOrGenerateMSDFGlyph(std::uint32_t codepoint);
+  bool GenerateMSDFGlyph(std::uint32_t codepoint);
   float GetKerning(std::uint32_t left, std::uint32_t right) const;
   void UpdateProjection();
   bool EnsureAtlasSpace(int glyphWidth, int glyphHeight, int& outX, int& outY);
+  bool EnsureDynamicMSDFAtlasSpace(int glyphWidth, int glyphHeight, int& outX, int& outY);
 
   // MSDF methods
 
