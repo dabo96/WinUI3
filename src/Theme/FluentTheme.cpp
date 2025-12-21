@@ -31,8 +31,8 @@ namespace FluentUI {
             style.border.pressed = Color(base.r, base.g, base.b, 0.0f);
             style.border.disabled = Color(0.0f, 0.0f, 0.0f, 0.0f);
 
-            style.cornerRadius = 8.0f;
-            style.padding = Vec2(20.0f, 10.0f);
+            style.cornerRadius = 5.0f; // Esquinas redondeadas para botones (se sobrescribe en BuildStyle)
+            style.padding = Vec2(20.0f, 6.0f); // Padding vertical reducido para mejor proporción
             style.borderWidth = 0.0f;
             style.shadowOpacity = 0.35f;
             style.shadowOffsetY = 4.0f;
@@ -83,10 +83,10 @@ namespace FluentUI {
             }
 
             panel.borderWidth = 0.0f;  // Sin borde visible - solo contraste de fondo
-            panel.cornerRadius = 10.0f;
+            panel.cornerRadius = 5.0f; // Esquinas redondeadas para TextInput, ComboBox, etc.
             panel.shadowOpacity = 0.4f;
             panel.shadowOffsetY = 8.0f;
-            panel.padding = Vec2(16.0f, 14.0f);
+            panel.padding = Vec2(12.0f, 8.0f); // Padding reducido para mejor proporción (vertical más compacto)
             panel.useAcrylic = true; // Habilitar acrylic por defecto en paneles
             panel.acrylicOpacity = 0.85f;
             return panel;
@@ -140,7 +140,7 @@ namespace FluentUI {
                 Color(1.0f, 1.0f, 1.0f, 1.0f));
             buttonStyle.shadowOpacity = 0.25f; // Sombra más suave
             buttonStyle.shadowOffsetY = 2.0f;
-            buttonStyle.cornerRadius = 6.0f; // Bordes más redondeados según Fluent
+            buttonStyle.cornerRadius = 5.0f; // Esquinas redondeadas sutiles
             style.button = buttonStyle;
 
             style.label = MakeLabelStyle(style.typography.body);
@@ -175,7 +175,7 @@ namespace FluentUI {
             textColor);
         buttonStyle.shadowOpacity = 0.25f;
         buttonStyle.shadowOffsetY = 2.0f;
-        buttonStyle.cornerRadius = 6.0f;
+        buttonStyle.cornerRadius = 5.0f; // Esquinas redondeadas sutiles
         style.button = buttonStyle;
 
         // Aplicar acento a otros elementos si es necesario

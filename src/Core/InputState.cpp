@@ -1,5 +1,6 @@
 ﻿#include "core/InputState.h"
 #include <string>
+#include <iostream>
 
 using namespace FluentUI;
 
@@ -35,20 +36,20 @@ void InputState::Update(SDL_Window* window)
     }
     anyKeyPressed = false;
 
-    prevMouseX = mouseX;
-    prevMouseY = mouseY;
+    // Clear deltas at the start of the frame (before processing events)
+    mouseDX = 0.0f;
+    mouseDY = 0.0f;
 
-    // En SDL3, obtener la posición actual del mouse cada frame
-    // Esto asegura que siempre tengamos la posición correcta, incluso sin eventos
+    // We rely on SDL_EVENT_MOUSE_MOTION for accurate deltas including sub-pixel or relative modes
+    // But we still update absolute position here mainly for initial state or lost events
     if (window) {
         float mouseXPos, mouseYPos;
         SDL_GetMouseState(&mouseXPos, &mouseYPos);
-        mouseX = mouseXPos;
-        mouseY = mouseYPos;
+        // Only update if we haven't processed events yet (to avoid jitter) 
+        // or just let ProcessEvent handle it.
+        // Let's keep absolute pos sync but NOT delta calculation here to avoid conflict.
+        // We will trust ProcessEvent for deltas.
     }
-    
-    mouseDX = mouseX - prevMouseX;
-    mouseDY = mouseY - prevMouseY;
 }
 
 void InputState::ProcessEvent(const SDL_Event& e)
@@ -83,12 +84,16 @@ void InputState::ProcessEvent(const SDL_Event& e)
         if (e.button.button > 0)
         {
             int idx = static_cast<int>(e.button.button) - 1;
+            std::cout << "[ProcessEvent] MouseDown: Button " << (int)e.button.button << " -> Index " << idx << std::endl;
             if (idx >= 0 && idx < static_cast<int>(mouseDown.size()))
             {
                 mouseX = static_cast<float>(e.button.x);
                 mouseY = static_cast<float>(e.button.y);
                 mouseDown[idx] = true;
                 mousePressed[idx] = true;
+                std::cout << "[ProcessEvent] Set mousePressed[" << idx << "] = true" << std::endl;
+            } else {
+                 std::cout << "[ProcessEvent] Index out of bounds! Size: " << mouseDown.size() << std::endl;
             }
         }
         break;
@@ -106,9 +111,10 @@ void InputState::ProcessEvent(const SDL_Event& e)
         break;
 
     case SDL_EVENT_MOUSE_MOTION:
-        // En SDL3, las coordenadas están en el evento motion
         mouseX = static_cast<float>(e.motion.x);
         mouseY = static_cast<float>(e.motion.y);
+        mouseDX += static_cast<float>(e.motion.xrel);
+        mouseDY += static_cast<float>(e.motion.yrel);
         break;
 
     case SDL_EVENT_MOUSE_WHEEL:

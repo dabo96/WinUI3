@@ -1,4 +1,4 @@
-﻿#include "core/Renderer.h"
+#include "core/Renderer.h"
 #include "Theme/Style.h"
 #include <fstream>
 #include <iostream>
@@ -391,6 +391,10 @@ namespace FluentUI {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 5);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 
+        // Habilitar MSAA (Multisample Anti-Aliasing) para mejor calidad
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
+
         glContext = SDL_GL_CreateContext(window);
         SDL_GL_MakeCurrent(window, glContext);
 
@@ -404,14 +408,36 @@ namespace FluentUI {
         int width, height;
         SDL_GetWindowSize(window, &width, &height);
         viewportSize = Vec2(static_cast<float>(width), static_cast<float>(height));
-        glViewport(0, 0, width, height);
+        
+        int pixelWidth, pixelHeight;
+        SDL_GetWindowSizeInPixels(window, &pixelWidth, &pixelHeight);
+        pixelSize = Vec2(static_cast<float>(pixelWidth), static_cast<float>(pixelHeight));
+        
+        glViewport(0, 0, pixelWidth, pixelHeight);
         glClearColor(0.93f, 0.93f, 0.95f, 1.0f);
         SetupShaders();
         SetupTextRendering();
+        
+        // Setup Image Shader
+        try {
+            imageShaderProgram = CreateShaderProgram("shaders/image_vertex.glsl", "shaders/image_fragment.glsl");
+        } catch (const std::exception& e) {
+            std::cerr << "Error creating image shaders: " << e.what() << std::endl;
+        }
+
         InitializeDefaultFont();
         
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        // Habilitar MSAA si está disponible (requiere que se haya configurado antes de crear el contexto)
+        // Esto mejora el antialiasing de líneas y bordes, pero puede reducir el rendimiento
+        GLint samples = 0;
+        glGetIntegerv(GL_SAMPLES, &samples);
+        if (samples > 0) {
+            glEnable(GL_MULTISAMPLE);
+            std::cout << "MSAA habilitado: " << samples << " muestras" << std::endl;
+        }
 
         return true;
     }
@@ -421,7 +447,12 @@ namespace FluentUI {
             int width, height;
             SDL_GetWindowSize(window, &width, &height);
             viewportSize = Vec2(static_cast<float>(width), static_cast<float>(height));
-            glViewport(0, 0, width, height);
+            
+            int pixelWidth, pixelHeight;
+            SDL_GetWindowSizeInPixels(window, &pixelWidth, &pixelHeight);
+            pixelSize = Vec2(static_cast<float>(pixelWidth), static_cast<float>(pixelHeight));
+            
+            glViewport(0, 0, pixelWidth, pixelHeight);
         }
         
         glClearColor(0.13f, 0.13f, 0.13f, 1.0f); // gris claro tipo Fluent UI
@@ -449,8 +480,55 @@ namespace FluentUI {
     }
 
     void Renderer::DrawRectFilled(const Vec2& pos, const Vec2& size, const Color& color, float cornerRadius) {
-        (void)cornerRadius;
+        // Si tiene esquinas redondeadas, renderizar individualmente con uniforms
+        if (cornerRadius > 0.0f) {
+            // Flushear el batch primero para que los uniforms se apliquen correctamente
+            FlushBatch();
+            
+            EnsureBatchResources();
+            UpdateProjection();
+            glUseProgram(shaderProgram);
+            
+            // Configurar uniforms para esquinas redondeadas
+            if (rectPosUniform >= 0) {
+                glUniform2f(rectPosUniform, pos.x, pos.y);
+            }
+            if (rectSizeUniform >= 0) {
+                glUniform2f(rectSizeUniform, size.x, size.y);
+            }
+            if (cornerRadiusUniform >= 0) {
+                glUniform1f(cornerRadiusUniform, cornerRadius);
+            }
+            
+            // Renderizar el quad individualmente
+            std::vector<Vertex> singleQuad = {
+                { pos.x,             pos.y,              color.r, color.g, color.b, color.a },
+                { pos.x + size.x,    pos.y,              color.r, color.g, color.b, color.a },
+                { pos.x + size.x,    pos.y + size.y,     color.r, color.g, color.b, color.a },
+                { pos.x,             pos.y + size.y,     color.r, color.g, color.b, color.a }
+            };
+            
+            std::vector<unsigned int> singleIndices = { 0, 1, 2, 0, 2, 3 };
+            
+            glBindVertexArray(quadVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(singleQuad.size() * sizeof(Vertex)), singleQuad.data(), GL_DYNAMIC_DRAW);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, quadEBO);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(singleIndices.size() * sizeof(unsigned int)), singleIndices.data(), GL_DYNAMIC_DRAW);
+            
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(singleIndices.size()), GL_UNSIGNED_INT, 0);
+            
+            // Resetear uniforms para que no afecten otros quads
+            if (cornerRadiusUniform >= 0) {
+                glUniform1f(cornerRadiusUniform, 0.0f);
+            }
+            
+            return;
+        }
         
+        // Sin esquinas redondeadas: usar el batch normal
         // Flush automático si el batch está lleno
         if (quadVertices.size() + 4 > MAX_QUAD_VERTICES || quadIndices.size() + 6 > MAX_QUAD_INDICES) {
             FlushBatch();
@@ -941,6 +1019,16 @@ namespace FluentUI {
                      glBindTexture(GL_TEXTURE_2D, 0);
                  }
              }
+             
+             // IMPORTANTE: Restaurar el shader principal después de dibujar texto
+             // para que los elementos siguientes (como ripple effects) se rendericen correctamente
+             // No hacer glUseProgram(0) aquí porque necesitamos el shader principal activo
+             // El shader se activará automáticamente cuando se llame a FlushBatch() o DrawRectFilled()
+             // pero es mejor asegurarnos de que esté activo ahora para evitar problemas
+             if (shaderProgram != 0) {
+                 glUseProgram(shaderProgram);
+                 UpdateProjection();
+             }
              return;
         }
 
@@ -1025,6 +1113,13 @@ namespace FluentUI {
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
         glBindTexture(GL_TEXTURE_2D, 0);
+        
+        // IMPORTANTE: Restaurar el shader principal después de dibujar texto (fallback FreeType)
+        // para que los elementos siguientes se rendericen correctamente
+        if (shaderProgram != 0) {
+            glUseProgram(shaderProgram);
+            UpdateProjection();
+        }
     }
 
     bool Renderer::LoadFont(const std::string& filepath, int pixelHeight)
@@ -1531,6 +1626,9 @@ namespace FluentUI {
         shaderProgram = CreateShaderProgram("shaders/vertex.glsl", "shaders/fragment.glsl");
         glUseProgram(shaderProgram);
         projectionUniform = glGetUniformLocation(shaderProgram, "uProjection");
+        rectPosUniform = glGetUniformLocation(shaderProgram, "uRectPos");
+        rectSizeUniform = glGetUniformLocation(shaderProgram, "uRectSize");
+        cornerRadiusUniform = glGetUniformLocation(shaderProgram, "uCornerRadius");
         glUseProgram(0);
         projectionDirty = true;
     }
@@ -1581,6 +1679,17 @@ namespace FluentUI {
         EnsureBatchResources();
         UpdateProjection();
         glUseProgram(shaderProgram);
+        
+        // Resetear uniforms de esquinas redondeadas para quads normales
+        if (rectPosUniform >= 0) {
+            glUniform2f(rectPosUniform, 0.0f, 0.0f);
+        }
+        if (rectSizeUniform >= 0) {
+            glUniform2f(rectSizeUniform, 0.0f, 0.0f);
+        }
+        if (cornerRadiusUniform >= 0) {
+            glUniform1f(cornerRadiusUniform, 0.0f);
+        }
 
         if (!quadVertices.empty())
         {
@@ -1603,7 +1712,11 @@ namespace FluentUI {
         }
 
         glBindVertexArray(0);
-        glUseProgram(0);
+        // IMPORTANTE: NO desactivar el shader aquí - mantenerlo activo para que los elementos siguientes
+        // se rendericen correctamente. Solo desactivar el shader al final del frame en EndFrame().
+        // Desactivar el shader aquí causa problemas porque los elementos que se dibujan después
+        // pueden no renderizarse correctamente si el shader no está activo.
+        // glUseProgram(0); // REMOVIDO para evitar problemas de renderizado
         quadVertices.clear();
         quadIndices.clear();
         lineVertices.clear();
@@ -1640,9 +1753,15 @@ namespace FluentUI {
         return true;
     }
 
-    void Renderer::PushClipRect(const Vec2& pos, const Vec2& size)
+    void Renderer::PushClipRect(const Vec2& pos, const Vec2& size, bool force)
     {
-        FlushBatch();
+        // IMPORTANTE: Solo hacer flush si hay contenido en el batch que necesita ser renderizado
+        // antes de cambiar el scissor. Esto evita flushes innecesarios que causan flickering.
+        // El flush es necesario porque OpenGL necesita que el scissor se configure antes de dibujar,
+        // pero solo debemos hacerlo si realmente hay contenido pendiente.
+        if (!quadVertices.empty() || !lineVertices.empty()) {
+            FlushBatch();
+        }
 
         ClipRect rect;
         rect.x = static_cast<int>(std::floor(pos.x));
@@ -1650,7 +1769,7 @@ namespace FluentUI {
         rect.width = std::max(0, static_cast<int>(std::ceil(size.x)));
         rect.height = std::max(0, static_cast<int>(std::ceil(size.y)));
 
-        if (!clipStack.empty())
+        if (!force && !clipStack.empty())
         {
             const ClipRect& top = clipStack.back();
             int left = std::max(top.x, rect.x);
@@ -1672,12 +1791,36 @@ namespace FluentUI {
             return;
         }
 
-        int scissorX = rect.x;
-        int scissorY = static_cast<int>(viewportSize.y) - (rect.y + rect.height);
-        scissorX = std::max(scissorX, 0);
-        scissorY = std::max(scissorY, 0);
-        int scissorWidth = std::min(rect.width, static_cast<int>(viewportSize.x) - scissorX);
-        int scissorHeight = std::min(rect.height, static_cast<int>(viewportSize.y) - scissorY);
+        float scaleX = 1.0f;
+        float scaleY = 1.0f;
+        if (viewportSize.x > 0.0f && viewportSize.y > 0.0f) {
+            scaleX = pixelSize.x / viewportSize.x;
+            scaleY = pixelSize.y / viewportSize.y;
+        }
+
+        int scissorX = static_cast<int>(rect.x * scaleX);
+        int scissorY = static_cast<int>(pixelSize.y - (rect.y + rect.height) * scaleY);
+        int scissorWidth = static_cast<int>(rect.width * scaleX);
+        int scissorHeight = static_cast<int>(rect.height * scaleY);
+        
+        // Handle negative coordinates (off margin) - Truncate, don't shift!
+        if (scissorX < 0) {
+            scissorWidth += scissorX;
+            scissorX = 0;
+        }
+        if (scissorY < 0) {
+            scissorHeight += scissorY;
+            scissorY = 0;
+        }
+        
+        // Clamp to pixel dimensions
+        if (scissorX + scissorWidth > static_cast<int>(pixelSize.x)) {
+            scissorWidth = static_cast<int>(pixelSize.x) - scissorX;
+        }
+        if (scissorY + scissorHeight > static_cast<int>(pixelSize.y)) {
+            scissorHeight = static_cast<int>(pixelSize.y) - scissorY;
+        }
+        
         scissorWidth = std::max(scissorWidth, 0);
         scissorHeight = std::max(scissorHeight, 0);
 
@@ -1690,7 +1833,13 @@ namespace FluentUI {
         if (clipStack.empty())
             return;
 
-        FlushBatch();
+        // IMPORTANTE: Solo hacer flush si hay contenido en el batch que necesita ser renderizado
+        // antes de cambiar el scissor. Esto evita flushes innecesarios que causan flickering.
+        // El flush es necesario porque OpenGL necesita que el scissor se configure antes de dibujar,
+        // pero solo debemos hacerlo si realmente hay contenido pendiente.
+        if (!quadVertices.empty() || !lineVertices.empty()) {
+            FlushBatch();
+        }
         clipStack.pop_back();
 
         if (clipStack.empty())
@@ -1707,12 +1856,36 @@ namespace FluentUI {
             return;
         }
 
-        int scissorX = rect.x;
-        int scissorY = static_cast<int>(viewportSize.y) - (rect.y + rect.height);
-        scissorX = std::max(scissorX, 0);
-        scissorY = std::max(scissorY, 0);
-        int scissorWidth = std::min(rect.width, static_cast<int>(viewportSize.x) - scissorX);
-        int scissorHeight = std::min(rect.height, static_cast<int>(viewportSize.y) - scissorY);
+        float scaleX = 1.0f;
+        float scaleY = 1.0f;
+        if (viewportSize.x > 0.0f && viewportSize.y > 0.0f) {
+            scaleX = pixelSize.x / viewportSize.x;
+            scaleY = pixelSize.y / viewportSize.y;
+        }
+
+        int scissorX = static_cast<int>(rect.x * scaleX);
+        int scissorY = static_cast<int>(pixelSize.y - (rect.y + rect.height) * scaleY);
+        int scissorWidth = static_cast<int>(rect.width * scaleX);
+        int scissorHeight = static_cast<int>(rect.height * scaleY);
+        
+        // Handle negative coordinates (off margin) - Truncate, don't shift!
+        if (scissorX < 0) {
+            scissorWidth += scissorX;
+            scissorX = 0;
+        }
+        if (scissorY < 0) {
+            scissorHeight += scissorY;
+            scissorY = 0;
+        }
+        
+        // Clamp to pixel dimensions
+        if (scissorX + scissorWidth > static_cast<int>(pixelSize.x)) {
+            scissorWidth = static_cast<int>(pixelSize.x) - scissorX;
+        }
+        if (scissorY + scissorHeight > static_cast<int>(pixelSize.y)) {
+            scissorHeight = static_cast<int>(pixelSize.y) - scissorY;
+        }
+        
         scissorWidth = std::max(scissorWidth, 0);
         scissorHeight = std::max(scissorHeight, 0);
 
@@ -1788,6 +1961,101 @@ namespace FluentUI {
         glDeleteShader(vertexShader);
         glDeleteShader(fragmentShader);
         return program;
+    }
+
+    void Renderer::DrawImage(uint32_t textureId, const Vec2 &pos, const Vec2 &size, 
+                            const Vec2 &uv0, const Vec2 &uv1, const Color &tintColor, float opacity)
+    {
+        if (textureId == 0) return;
+
+        FlushBatch(); // Flush previous batch to ensure order
+
+        if (imageShaderProgram == 0) return;
+
+        glUseProgram(imageShaderProgram);
+
+        // Upload uniforms
+        // Manually construct Ortho matrix matching the viewport
+        // Assuming top-left 0,0, bottom-right W,H. 
+        // Ortho(0, W, H, 0, -1, 1) -> 
+        // 2/(R-L) = 2/W
+        // 2/(T-B) = 2/(0-H) = -2/H
+        // -(R+L)/(R-L) = -1
+        // -(T+B)/(T-B) = 1
+        
+        float L = 0.0f;
+        float R = viewportSize.x;
+        float B = viewportSize.y;
+        float T = 0.0f;
+        
+        float ortho[16] = {
+             2.0f/R,   0.0f,     0.0f, 0.0f,
+             0.0f,     -2.0f/B,  0.0f, 0.0f,
+             0.0f,     0.0f,    -1.0f, 0.0f,
+            -1.0f,     1.0f,     0.0f, 1.0f 
+        };
+        
+        GLint locProj = glGetUniformLocation(imageShaderProgram, "uProjection");
+        if (locProj >= 0) glUniformMatrix4fv(locProj, 1, GL_FALSE, ortho);
+
+        GLint locRectPos = glGetUniformLocation(imageShaderProgram, "uRectPos");
+        if (locRectPos >= 0) glUniform2f(locRectPos, pos.x, pos.y);
+
+        GLint locRectSize = glGetUniformLocation(imageShaderProgram, "uRectSize");
+        if (locRectSize >= 0) glUniform2f(locRectSize, size.x, size.y);
+        
+        GLint locImage = glGetUniformLocation(imageShaderProgram, "uImageTexture");
+        if (locImage >= 0) glUniform1i(locImage, 0); // Texture unit 0
+
+        GLint locTint = glGetUniformLocation(imageShaderProgram, "uTintColor");
+        if (locTint >= 0) glUniform4f(locTint, tintColor.r, tintColor.g, tintColor.b, tintColor.a);
+        
+        GLint locOpacity = glGetUniformLocation(imageShaderProgram, "uOpacity");
+        if (locOpacity >= 0) glUniform1f(locOpacity, opacity);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, textureId);
+
+        // Simple Quad with UVs
+        // Pos (2), UV (2)
+        float vertices[] = {
+            pos.x,          pos.y,           uv0.x, uv0.y,
+            pos.x + size.x, pos.y,           uv1.x, uv0.y,
+            pos.x + size.x, pos.y + size.y,  uv1.x, uv1.y,
+            pos.x,          pos.y + size.y,  uv0.x, uv1.y
+        };
+        
+        unsigned int indices[] = { 0, 1, 2, 0, 2, 3 };
+
+        GLuint imgVAO = 0, imgVBO = 0, imgEBO = 0;
+        glGenVertexArrays(1, &imgVAO);
+        glGenBuffers(1, &imgVBO);
+        glGenBuffers(1, &imgEBO);
+
+        glBindVertexArray(imgVAO);
+
+        glBindBuffer(GL_ARRAY_BUFFER, imgVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, imgEBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_DYNAMIC_DRAW);
+
+        // Pos: Loc 0, 2 floats, stride 4 floats, offset 0
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+
+        // UV: Loc 1, 2 floats, stride 4 floats, offset 2 floats
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+
+        glBindVertexArray(0);
+        glDeleteBuffers(1, &imgVBO);
+        glDeleteBuffers(1, &imgEBO);
+        glDeleteVertexArrays(1, &imgVAO); // Should delete VAO too to clean up immediate mode resources
+        
+        glUseProgram(0);
     }
 
 } // namespace FluentUI

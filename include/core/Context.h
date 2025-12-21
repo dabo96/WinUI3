@@ -40,9 +40,41 @@ struct TabContentFrame {
   Vec2 contentAreaPos;
   Vec2 contentAreaSize;
   Vec2 contentStartCursor;
+  float maxAvailableHeight = 0.0f; // Limit determined by parent container
 };
 
-enum class ActiveWidgetType { None, Slider, TextInput };
+
+enum class ActiveWidgetType { None, Slider, TextInput, Splitter };
+
+// Toast Notification System (Moved out of UIContext for visibility)
+enum class ToastType { Info, Success, Warning, Error };
+struct Toast {
+    std::string message;
+    ToastType type;
+    float duration = 3.0f;
+    float elapsed = 0.0f;
+    float opacity = 0.0f; // 0 to 1
+    bool isFadingOut = false;
+};
+
+// Docking System
+enum class DockSplitDirection { None, Horizontal, Vertical };
+struct DockNode {
+    uint32_t id = 0;
+    uint32_t parentId = 0;
+    uint32_t childrenIds[2] = { 0, 0 }; // 0 = Left/Top, 1 = Right/Bottom
+    DockSplitDirection splitDirection = DockSplitDirection::None;
+    float splitRatio = 0.5f; // Position of split (0.0 to 1.0)
+    
+    Vec2 position{0.0f, 0.0f};
+    Vec2 size{0.0f, 0.0f};
+    
+    // Leaf content
+    std::vector<std::string> dockedPanelIds; // IDs (names) of panels docked here
+    int activeTabIndex = 0;
+    
+    bool isLeaf() const { return splitDirection == DockSplitDirection::None; }
+};
 
 struct UIContext {
   Renderer renderer;
@@ -107,12 +139,55 @@ struct UIContext {
     float acrylicOpacity = 0.85f; // Opacidad específica del panel para acrylic
     bool useAbsolutePos =
         false; // Si se usó posición absoluta (pos != Vec2(0,0))
+    bool pushedOverrideClip = false; // Internal: if we forced layout clip break
     Vec2 absolutePos{0.0f, 0.0f}; // Posición absoluta guardada
     Vec2 dragPositionOffset{0.0f, 0.0f}; // Offset from layout position when dragged
     bool hasBeenDragged = false; // Track if panel has been manually repositioned
+    bool manuallyUndocked = false; // Track if panel was manually undocked from dock
+    bool isDockable = true; // If the panel can be docked (only root-level panels)
   };
 
   std::unordered_map<uint32_t, PanelState> panelStates;
+
+  std::vector<Toast> toastQueue;
+
+  // Communication between DockSpace and BeginPanel
+  struct DockedPanelInfo {
+      Vec2 pos;
+      Vec2 size;
+      bool isVisible; // Only true if active tab
+  };
+  std::unordered_map<std::string, DockedPanelInfo> currentFrameDockedPanels;
+
+  // Docking State
+
+  // Docking State
+  std::unordered_map<uint32_t, DockNode> dockNodes;
+  uint32_t rootDockNodeId = 0;
+  uint32_t nextDockNodeId = 1;
+  std::string draggedPanelId = "";
+  
+  // Z-Order / Hover Management
+  std::string hoveredPanelId = "";    // Panel hovered LAST frame (top-most)
+  std::string nextHoveredPanelId = ""; // Panel currently being hovered in this frame (candidates) // Name of panel currently being dragged
+  uint32_t hoveredDockNodeId = 0; // ID of dock node under mouse
+  int dockPreviewType = 0; // 0=None, 1=Left, 2=Right, 3=Top, 4=Bottom, 5=Center/Tab
+  Vec2 dockPreviewRectPos{0.0f, 0.0f};
+  Vec2 dockPreviewRectSize{0.0f, 0.0f};
+
+  // Deferred Docking Actions (to prevent map invalidation during render/update)
+  struct PendingDockAction {
+      enum class Type { None, Split, Tab };
+      Type type = Type::None;
+      uint32_t targetNodeId = 0;
+      std::string panelId;
+      DockSplitDirection splitDirection = DockSplitDirection::None;
+      // For split:
+      float splitRatio = 0.5f;
+      bool insertBefore = false; // true = new panel is Child 0, false = Child 1
+  };
+  PendingDockAction pendingDockAction;
+
 
   struct ScrollViewState {
     Vec2 scrollOffset{0.0f, 0.0f};
@@ -140,12 +215,21 @@ struct UIContext {
     std::map<int, Vec2> tabScrollOffsets; // Mapa de índice de tab -> scrollOffset
     Vec2 contentSize{0.0f, 0.0f};
     Vec2 viewSize{0.0f, 0.0f};
+    // Rastrear el ancho máximo de cada tab para ajustar el tamaño del TabView
+    std::map<int, float> tabContentWidths; // Mapa de índice de tab -> ancho máximo del contenido
     bool draggingScrollbar = false;
+    bool draggingHScrollbar = false; // Drag del scrollbar horizontal del contenido
+    // Scroll horizontal para las pestañas cuando se cortan
+    float tabBarScrollOffset = 0.0f;
+    bool draggingTabBarScrollbar = false;
     Vec2 dragStartMouse{0.0f, 0.0f};
     float dragStartScroll = 0.0f;
     bool useAbsolutePos =
         false; // Si se usó posición absoluta (pos != Vec2(0,0))
     Vec2 absolutePos{0.0f, 0.0f}; // Posición absoluta guardada
+    bool fixedHeight = false; // Si la altura es fija (no calcular dinámicamente)
+    float fixedHeightValue = 0.0f; // Valor de la altura fija
+    bool widthCalculated = false; // Flag to lock width after first calculation
   };
 
   std::unordered_map<uint32_t, TabViewState> tabViewStates;
@@ -205,6 +289,14 @@ struct UIContext {
     bool useAbsolutePos =
         false; // Si se usó posición absoluta (pos != Vec2(0,0))
     Vec2 absolutePos{0.0f, 0.0f}; // Posición absoluta guardada
+    Vec2 viewSize{0.0f, 0.0f}; // Tamaño del TreeView (para calcular altura real)
+    Vec2 viewPos{0.0f, 0.0f}; // Posición del TreeView (para calcular altura real)
+    std::string selectedNodeKey = ""; // ID del nodo actualmente seleccionado
+    // Scrollbar support
+    float scrollOffset = 0.0f;
+    bool draggingScrollbar = false;
+    Vec2 dragStartMouse{0.0f, 0.0f};
+    float dragStartScroll = 0.0f;
   };
 
   std::unordered_map<uint32_t, TreeViewState> treeViewStates;
@@ -229,6 +321,25 @@ struct UIContext {
 
   std::unordered_map<uint32_t, MenuState> menuStates;
   uint32_t activeMenuId = 0; // ID del menú desplegable activo
+
+  struct ComboBoxState {
+    bool isOpen = false;
+    float scrollOffset = 0.0f;
+    int hoveredIndex = -1;
+    Vec2 dropdownPos{0.0f, 0.0f};
+    Vec2 dropdownSize{0.0f, 0.0f};
+    bool initialized = false;
+    bool justOpened = false;
+  };
+  std::unordered_map<uint32_t, ComboBoxState> comboBoxStates;
+
+  struct CollapsibleGroupState {
+      bool initialized = false;
+      bool widthCalculated = false;
+      float contentWidth = 0.0f;
+      float headerWidth = 0.0f;
+  };
+  std::unordered_map<uint32_t, CollapsibleGroupState> groupStates;
 
   // Optimización: Caché de medidas de texto
   struct TextMeasurement {

@@ -40,6 +40,11 @@ public:
   void DrawCircle(const Vec2 &center, float radius, const Color &color,
                   bool filled = true);
   void DrawRipple(const Vec2 &center, float radius, float opacity);
+
+  // Imágenes
+  void DrawImage(uint32_t textureId, const Vec2 &pos, const Vec2 &size, 
+                 const Vec2 &uv0 = Vec2(0,0), const Vec2 &uv1 = Vec2(1,1), 
+                 const Color &tintColor = Color(1,1,1,1), float opacity = 1.0f);
   
   // Texto básico (usando caracteres ASCII simples)
   void DrawText(const Vec2 &pos, const std::string &text, const Color &color,
@@ -65,11 +70,13 @@ private:
   SDL_GLContext glContext = nullptr;
   GLuint shaderProgram = 0;
   GLuint textShaderProgram = 0;
+  GLuint imageShaderProgram = 0;
   GLuint VAO = 0, VBO = 0, EBO = 0;
   GLuint textVAO = 0, textVBO = 0;
   GLuint quadVAO = 0, quadVBO = 0, quadEBO = 0;
   GLuint lineVAO = 0, lineVBO = 0;
   Vec2 viewportSize = {800.0f, 600.0f};
+  Vec2 pixelSize = {800.0f, 600.0f};
 
   struct Glyph {
     Vec2 size;     // size of glyph in pixels
@@ -93,6 +100,9 @@ private:
   GLint textColorUniform = -1;
   GLint projectionUniform = -1;
   GLint textProjectionUniform = -1;
+  GLint rectPosUniform = -1;
+  GLint rectSizeUniform = -1;
+  GLint cornerRadiusUniform = -1;
   FT_Library ftLibrary = nullptr;
   FT_Face fontFace = nullptr;
   bool projectionDirty = true;
@@ -158,7 +168,7 @@ private:
   static constexpr size_t MAX_LINE_VERTICES = 5000;  // ~2500 líneas
 
 public:
-  void PushClipRect(const Vec2& pos, const Vec2& size);
+  void PushClipRect(const Vec2& pos, const Vec2& size, bool force = false);
   void PopClipRect();
   const std::vector<ClipRect>& GetClipStack() const { return clipStack; }
 };

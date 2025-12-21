@@ -31,8 +31,15 @@ namespace FluentUI {
     void NewFrame(float deltaTime) {
         if (!g_ctx || !g_ctx->initialized) return;
         
+        // Z-Order management
+        g_ctx->hoveredPanelId = g_ctx->nextHoveredPanelId;
+        g_ctx->nextHoveredPanelId = "";
+
+        // Reset counters
+        g_ctx->frame++;
+        g_ctx->deltaTime = deltaTime; // Corrected from 'dt;eltaTime'
+        
         // Actualizar tiempo
-        g_ctx->deltaTime = deltaTime;
         g_ctx->time += deltaTime;
         
         // Actualizar animaciones de colores
@@ -54,9 +61,13 @@ namespace FluentUI {
         g_ctx->cursorPos = { 20.0f, 20.0f };
         g_ctx->lastItemPos = g_ctx->cursorPos;
         g_ctx->lastItemSize = { 0.0f, 0.0f };
-        if (!g_ctx->input.IsMouseDown(0) && g_ctx->activeWidgetType == ActiveWidgetType::Slider) {
-            g_ctx->activeWidgetId = 0;
-            g_ctx->activeWidgetType = ActiveWidgetType::None;
+        if (!g_ctx->input.IsMouseDown(0)) {
+            if (g_ctx->activeWidgetType == ActiveWidgetType::Slider || 
+                g_ctx->activeWidgetType == ActiveWidgetType::Splitter) {
+                g_ctx->activeWidgetId = 0;
+                g_ctx->activeWidgetType = ActiveWidgetType::None;
+                if (g_ctx->window) SDL_SetWindowRelativeMouseMode(g_ctx->window, false); // Unlock cursor centrally
+            }
         }
         if (!g_ctx->input.IsKeyDown(SDL_SCANCODE_LCTRL) && !g_ctx->input.IsKeyDown(SDL_SCANCODE_RCTRL)) {
             g_ctx->input.anyKeyPressed = false;
