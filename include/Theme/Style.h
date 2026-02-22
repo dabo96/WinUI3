@@ -122,6 +122,7 @@ namespace FluentUI {
         Color backgroundColor = Color(0.13f, 0.13f, 0.13f, 1.0f);
         float spacing = 8.0f;
         float padding = 12.0f;
+        bool isDarkTheme = true; // Cached theme mode flag
 
         Typography typography;
         ButtonStyle button;

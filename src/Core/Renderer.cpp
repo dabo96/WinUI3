@@ -223,10 +223,10 @@ namespace FluentUI {
             atlasNextY = 0;
             atlasCurrentRowHeight = 0;
 
-            glGenTextures(1, &fontAtlasTexture);
+            GL_CHECK(glGenTextures(1, &fontAtlasTexture));
             glBindTexture(GL_TEXTURE_2D, fontAtlasTexture);
             glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, atlasWidth, atlasHeight, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+            GL_CHECK(glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, atlasWidth, atlasHeight, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr));
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             // Usar GL_LINEAR para minificación y GL_LINEAR para magnificación para mejor calidad
@@ -245,12 +245,12 @@ namespace FluentUI {
             glBindTexture(GL_TEXTURE_2D, 0);
         }
 
-        glGenVertexArrays(1, &textVAO);
-        glGenBuffers(1, &textVBO);
+        GL_CHECK(glGenVertexArrays(1, &textVAO));
+        GL_CHECK(glGenBuffers(1, &textVBO));
 
         glBindVertexArray(textVAO);
         glBindBuffer(GL_ARRAY_BUFFER, textVBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6 * 4, nullptr, GL_DYNAMIC_DRAW);
+        GL_CHECK(glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6 * 4, nullptr, GL_DYNAMIC_DRAW));
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), reinterpret_cast<void*>(0));
         glEnableVertexAttribArray(1);
@@ -286,10 +286,10 @@ namespace FluentUI {
         
         // Create dynamic MSDF atlas texture
         if (dynamicMSDFAtlasTexture == 0) {
-            glGenTextures(1, &dynamicMSDFAtlasTexture);
+            GL_CHECK(glGenTextures(1, &dynamicMSDFAtlasTexture));
             glBindTexture(GL_TEXTURE_2D, dynamicMSDFAtlasTexture);
             glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, dynamicAtlasWidth, dynamicAtlasHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+            GL_CHECK(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, dynamicAtlasWidth, dynamicAtlasHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr));
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             // Para MSDF, GL_LINEAR es correcto pero con mejor configuración
@@ -304,10 +304,10 @@ namespace FluentUI {
             }
             glBindTexture(GL_TEXTURE_2D, 0);
             
-            // Initialize packing state
-            atlasNextX = 2; // Start with padding
-            atlasNextY = 2;
-            atlasCurrentRowHeight = 0;
+            // Initialize packing state for the dynamic MSDF atlas
+            dynamicAtlasNextX = 2; // Start with padding
+            dynamicAtlasNextY = 2;
+            dynamicAtlasCurrentRowHeight = 0;
             
             std::cout << "Dynamic MSDF atlas texture created (" << dynamicAtlasWidth << "x" << dynamicAtlasHeight << ")" << std::endl;
         }
@@ -392,6 +392,10 @@ namespace FluentUI {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 
         glContext = SDL_GL_CreateContext(window);
+        if (!glContext) {
+            std::cerr << "Error creating OpenGL context\n";
+            return false;
+        }
         SDL_GL_MakeCurrent(window, glContext);
 
         if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
@@ -416,15 +420,15 @@ namespace FluentUI {
         return true;
     }
 
-    void Renderer::BeginFrame() {
+    void Renderer::BeginFrame(const Color& clearColor) {
         if (window) {
             int width, height;
             SDL_GetWindowSize(window, &width, &height);
             viewportSize = Vec2(static_cast<float>(width), static_cast<float>(height));
             glViewport(0, 0, width, height);
         }
-        
-        glClearColor(0.13f, 0.13f, 0.13f, 1.0f); // gris claro tipo Fluent UI
+
+        glClearColor(clearColor.r, clearColor.g, clearColor.b, clearColor.a);
         glClear(GL_COLOR_BUFFER_BIT);
         projectionDirty = true;
         quadVertices.clear();
@@ -435,61 +439,200 @@ namespace FluentUI {
 
     void Renderer::DrawRect(const Vec2& pos, const Vec2& size, const Color& color, float cornerRadius) {
         // DrawRect should draw only the BORDER, not fill
-        // Use DrawLine to draw the 4 sides
         float lineWidth = 1.0f;
-        
-        // Top
-        DrawLine(pos, Vec2(pos.x + size.x, pos.y), color, lineWidth);
-        // Right
-        DrawLine(Vec2(pos.x + size.x, pos.y), Vec2(pos.x + size.x, pos.y + size.y), color, lineWidth);
-        // Bottom
-        DrawLine(Vec2(pos.x + size.x, pos.y + size.y), Vec2(pos.x, pos.y + size.y), color, lineWidth);
-        // Left
-        DrawLine(Vec2(pos.x, pos.y + size.y), pos, color, lineWidth);
+
+        if (cornerRadius <= 0.0f || cornerRadius < 0.5f) {
+            // Simple quad outline (no rounding)
+            // Top
+            DrawLine(pos, Vec2(pos.x + size.x, pos.y), color, lineWidth);
+            // Right
+            DrawLine(Vec2(pos.x + size.x, pos.y), Vec2(pos.x + size.x, pos.y + size.y), color, lineWidth);
+            // Bottom
+            DrawLine(Vec2(pos.x + size.x, pos.y + size.y), Vec2(pos.x, pos.y + size.y), color, lineWidth);
+            // Left
+            DrawLine(Vec2(pos.x, pos.y + size.y), pos, color, lineWidth);
+            return;
+        }
+
+        // Rounded rectangle outline
+        const float pi = 3.14159265358979323846f;
+        const int segments = 8; // segments per corner arc
+
+        // Clamp cornerRadius so it doesn't exceed half the smallest dimension
+        float cr = std::min(cornerRadius, std::min(size.x, size.y) * 0.5f);
+
+        // Corner arc centers
+        float cx_left  = pos.x + cr;
+        float cx_right = pos.x + size.x - cr;
+        float cy_top   = pos.y + cr;
+        float cy_bot   = pos.y + size.y - cr;
+
+        // Generate perimeter points around the rounded rectangle
+        // Order: top-right corner, right side down, bottom-right corner,
+        //        bottom side left, bottom-left corner, left side up, top-left corner, top side right
+        std::vector<Vec2> points;
+        points.reserve(4 * segments + 4);
+
+        // Top-right corner (arc from -pi/2 to 0, i.e. 270 to 360 degrees)
+        for (int i = 0; i <= segments; ++i) {
+            float angle = -pi * 0.5f + (pi * 0.5f) * static_cast<float>(i) / static_cast<float>(segments);
+            points.push_back(Vec2(cx_right + cr * std::cos(angle), cy_top + cr * std::sin(angle)));
+        }
+
+        // Bottom-right corner (arc from 0 to pi/2)
+        for (int i = 0; i <= segments; ++i) {
+            float angle = (pi * 0.5f) * static_cast<float>(i) / static_cast<float>(segments);
+            points.push_back(Vec2(cx_right + cr * std::cos(angle), cy_bot + cr * std::sin(angle)));
+        }
+
+        // Bottom-left corner (arc from pi/2 to pi)
+        for (int i = 0; i <= segments; ++i) {
+            float angle = pi * 0.5f + (pi * 0.5f) * static_cast<float>(i) / static_cast<float>(segments);
+            points.push_back(Vec2(cx_left + cr * std::cos(angle), cy_bot + cr * std::sin(angle)));
+        }
+
+        // Top-left corner (arc from pi to 3pi/2)
+        for (int i = 0; i <= segments; ++i) {
+            float angle = pi + (pi * 0.5f) * static_cast<float>(i) / static_cast<float>(segments);
+            points.push_back(Vec2(cx_left + cr * std::cos(angle), cy_top + cr * std::sin(angle)));
+        }
+
+        // Draw line segments along the perimeter
+        for (size_t i = 0; i < points.size(); ++i) {
+            size_t next = (i + 1) % points.size();
+            DrawLine(points[i], points[next], color, lineWidth);
+        }
     }
 
     void Renderer::DrawRectFilled(const Vec2& pos, const Vec2& size, const Color& color, float cornerRadius) {
-        (void)cornerRadius;
-        
-        // Flush automático si el batch está lleno
-        if (quadVertices.size() + 4 > MAX_QUAD_VERTICES || quadIndices.size() + 6 > MAX_QUAD_INDICES) {
+        // Fast path: no rounding, draw a simple quad
+        if (cornerRadius <= 0.0f || cornerRadius < 0.5f) {
+            // Flush if the batch is full
+            if (quadVertices.size() + 4 > MAX_QUAD_VERTICES || quadIndices.size() + 6 > MAX_QUAD_INDICES) {
+                FlushBatch();
+            }
+
+            unsigned int baseIndex = static_cast<unsigned int>(quadVertices.size());
+            quadVertices.push_back({ pos.x,             pos.y,              color.r, color.g, color.b, color.a });
+            quadVertices.push_back({ pos.x + size.x,    pos.y,              color.r, color.g, color.b, color.a });
+            quadVertices.push_back({ pos.x + size.x,    pos.y + size.y,     color.r, color.g, color.b, color.a });
+            quadVertices.push_back({ pos.x,             pos.y + size.y,     color.r, color.g, color.b, color.a });
+
+            quadIndices.push_back(baseIndex + 0);
+            quadIndices.push_back(baseIndex + 1);
+            quadIndices.push_back(baseIndex + 2);
+            quadIndices.push_back(baseIndex + 0);
+            quadIndices.push_back(baseIndex + 2);
+            quadIndices.push_back(baseIndex + 3);
+            return;
+        }
+
+        // Rounded rectangle filled path using triangle fan from center
+        const float pi = 3.14159265358979323846f;
+        const int segments = 8; // segments per corner arc
+
+        // Clamp cornerRadius so it doesn't exceed half the smallest dimension
+        float cr = std::min(cornerRadius, std::min(size.x, size.y) * 0.5f);
+
+        // Corner arc centers
+        float cx_left  = pos.x + cr;
+        float cx_right = pos.x + size.x - cr;
+        float cy_top   = pos.y + cr;
+        float cy_bot   = pos.y + size.y - cr;
+
+        // Generate perimeter vertices around the rounded rectangle
+        // Each corner has (segments + 1) points, but adjacent corners share the
+        // boundary point, so total perimeter points = 4 * segments
+        // We store them in order going clockwise starting from the top-right corner.
+        std::vector<Vec2> perim;
+        perim.reserve(4 * segments + 4);
+
+        // Top-right corner (arc from -pi/2 to 0)
+        for (int i = 0; i <= segments; ++i) {
+            float angle = -pi * 0.5f + (pi * 0.5f) * static_cast<float>(i) / static_cast<float>(segments);
+            perim.push_back(Vec2(cx_right + cr * std::cos(angle), cy_top + cr * std::sin(angle)));
+        }
+
+        // Bottom-right corner (arc from 0 to pi/2)
+        for (int i = 0; i <= segments; ++i) {
+            float angle = (pi * 0.5f) * static_cast<float>(i) / static_cast<float>(segments);
+            perim.push_back(Vec2(cx_right + cr * std::cos(angle), cy_bot + cr * std::sin(angle)));
+        }
+
+        // Bottom-left corner (arc from pi/2 to pi)
+        for (int i = 0; i <= segments; ++i) {
+            float angle = pi * 0.5f + (pi * 0.5f) * static_cast<float>(i) / static_cast<float>(segments);
+            perim.push_back(Vec2(cx_left + cr * std::cos(angle), cy_bot + cr * std::sin(angle)));
+        }
+
+        // Top-left corner (arc from pi to 3pi/2)
+        for (int i = 0; i <= segments; ++i) {
+            float angle = pi + (pi * 0.5f) * static_cast<float>(i) / static_cast<float>(segments);
+            perim.push_back(Vec2(cx_left + cr * std::cos(angle), cy_top + cr * std::sin(angle)));
+        }
+
+        // Total vertices = 1 (center) + perim.size()
+        // Total triangles = perim.size() (fan from center, wrapping around)
+        // Total indices = perim.size() * 3
+        size_t numPerim = perim.size();
+        size_t numVerts = 1 + numPerim;
+        size_t numIndices = numPerim * 3;
+
+        // Flush if the batch cannot hold this rounded rect
+        if (quadVertices.size() + numVerts > MAX_QUAD_VERTICES || quadIndices.size() + numIndices > MAX_QUAD_INDICES) {
             FlushBatch();
         }
-        
-        unsigned int baseIndex = static_cast<unsigned int>(quadVertices.size());
-        quadVertices.push_back({ pos.x,             pos.y,              color.r, color.g, color.b, color.a });
-        quadVertices.push_back({ pos.x + size.x,    pos.y,              color.r, color.g, color.b, color.a });
-        quadVertices.push_back({ pos.x + size.x,    pos.y + size.y,     color.r, color.g, color.b, color.a });
-        quadVertices.push_back({ pos.x,             pos.y + size.y,     color.r, color.g, color.b, color.a });
 
-        quadIndices.push_back(baseIndex + 0);
-        quadIndices.push_back(baseIndex + 1);
-        quadIndices.push_back(baseIndex + 2);
-        quadIndices.push_back(baseIndex + 0);
-        quadIndices.push_back(baseIndex + 2);
-        quadIndices.push_back(baseIndex + 3);
+        // Center vertex
+        unsigned int baseIndex = static_cast<unsigned int>(quadVertices.size());
+        float cx = pos.x + size.x * 0.5f;
+        float cy = pos.y + size.y * 0.5f;
+        quadVertices.push_back({ cx, cy, color.r, color.g, color.b, color.a });
+
+        // Perimeter vertices
+        for (size_t i = 0; i < numPerim; ++i) {
+            quadVertices.push_back({ perim[i].x, perim[i].y, color.r, color.g, color.b, color.a });
+        }
+
+        // Triangle fan indices: center, perim[i], perim[i+1] (wrapping)
+        unsigned int centerIdx = baseIndex;
+        for (size_t i = 0; i < numPerim; ++i) {
+            unsigned int cur  = baseIndex + 1 + static_cast<unsigned int>(i);
+            unsigned int next = baseIndex + 1 + static_cast<unsigned int>((i + 1) % numPerim);
+            quadIndices.push_back(centerIdx);
+            quadIndices.push_back(cur);
+            quadIndices.push_back(next);
+        }
     }
 
     void Renderer::DrawRectWithElevation(const Vec2& pos, const Vec2& size, const Color& color, float cornerRadius, float elevation) {
         if (elevation > 0.0f) {
-            // Dibujar múltiples sombras para efecto más suave
-            float shadowOpacity = std::min(0.3f, elevation * 0.01f);
-            float shadowOffsetY = elevation * 0.5f;
-            float shadowBlur = elevation;
-            
-            // Sombra principal
-            Color shadowColor(0.0f, 0.0f, 0.0f, shadowOpacity);
-            Vec2 shadowPos = pos + Vec2(0.0f, shadowOffsetY);
-            DrawRectFilled(shadowPos, size, shadowColor, cornerRadius);
-            
-            // Sombra secundaria más suave
+            // Fluent Design multi-layer elevation shadow
+            // Layer 1: Ambient shadow (wide, low opacity)
+            float ambientOpacity = std::min(0.12f, elevation * 0.006f);
+            Vec2 ambientExpand(elevation * 0.8f, elevation * 0.8f);
+            Color ambientColor(0.0f, 0.0f, 0.0f, ambientOpacity);
+            DrawRectFilled(pos - ambientExpand * 0.5f + Vec2(0.0f, elevation * 0.15f),
+                           size + ambientExpand, ambientColor,
+                           cornerRadius + elevation * 0.3f);
+
+            // Layer 2: Key shadow (directional, offset downward)
+            float keyOpacity = std::min(0.20f, elevation * 0.012f);
+            float keyOffsetY = elevation * 0.4f;
+            Vec2 keyExpand(elevation * 0.3f, elevation * 0.3f);
+            Color keyColor(0.0f, 0.0f, 0.0f, keyOpacity);
+            DrawRectFilled(pos - keyExpand * 0.5f + Vec2(0.0f, keyOffsetY),
+                           size + keyExpand, keyColor,
+                           cornerRadius + elevation * 0.15f);
+
+            // Layer 3: Close shadow (tight, higher opacity for definition)
             if (elevation > 2.0f) {
-                Color shadowColor2(0.0f, 0.0f, 0.0f, shadowOpacity * 0.5f);
-                Vec2 shadowPos2 = pos + Vec2(0.0f, shadowOffsetY * 0.5f);
-                DrawRectFilled(shadowPos2, size, shadowColor2, cornerRadius);
+                float closeOpacity = std::min(0.08f, elevation * 0.004f);
+                Color closeColor(0.0f, 0.0f, 0.0f, closeOpacity);
+                DrawRectFilled(pos + Vec2(0.0f, 1.0f), size, closeColor, cornerRadius);
             }
         }
-        
+
         // Dibujar el rectángulo principal
         DrawRectFilled(pos, size, color, cornerRadius);
     }
@@ -617,15 +760,19 @@ namespace FluentUI {
             vertices.push_back(rippleColor.a);
         }
 
+        EnsureBatchResources();
         glUseProgram(shaderProgram);
-        glBindVertexArray(VAO);
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
+        glBindVertexArray(circleVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, circleVBO);
+        GL_CHECK(glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW));
 
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertices.size() / 6));
+        GL_CHECK(glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertices.size() / 6)));
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
     }
 
     void Renderer::DrawCircle(const Vec2& center, float radius, const Color& color, bool filled) {
@@ -666,26 +813,16 @@ namespace FluentUI {
                 vertices.push_back(color.a);
             }
 
-            GLuint localVAO = 0, localVBO = 0;
-            glGenVertexArrays(1, &localVAO);
-            glGenBuffers(1, &localVBO);
-
-            glBindVertexArray(localVAO);
-            glBindBuffer(GL_ARRAY_BUFFER, localVBO);
-            glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
-
-            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(2 * sizeof(float)));
-            glEnableVertexAttribArray(1);
+            EnsureBatchResources();
+            glBindVertexArray(circleVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, circleVBO);
+            GL_CHECK(glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW));
 
             glUseProgram(shaderProgram);
-            glDrawArrays(GL_TRIANGLE_FAN, 0, static_cast<GLsizei>((segments + 2)));
+            GL_CHECK(glDrawArrays(GL_TRIANGLE_FAN, 0, static_cast<GLsizei>((segments + 2))));
 
             glBindBuffer(GL_ARRAY_BUFFER, 0);
             glBindVertexArray(0);
-            glDeleteBuffers(1, &localVBO);
-            glDeleteVertexArrays(1, &localVAO);
         } else {
             vertices.reserve(segments * 6);
             for (int i = 0; i < segments; ++i) {
@@ -700,26 +837,16 @@ namespace FluentUI {
                 vertices.push_back(color.a);
             }
 
-            GLuint localVAO = 0, localVBO = 0;
-            glGenVertexArrays(1, &localVAO);
-            glGenBuffers(1, &localVBO);
-
-            glBindVertexArray(localVAO);
-            glBindBuffer(GL_ARRAY_BUFFER, localVBO);
-            glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
-
-            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(2 * sizeof(float)));
-            glEnableVertexAttribArray(1);
+            EnsureBatchResources();
+            glBindVertexArray(circleVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, circleVBO);
+            GL_CHECK(glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW));
 
             glUseProgram(shaderProgram);
-            glDrawArrays(GL_LINE_LOOP, 0, static_cast<GLsizei>(segments));
+            GL_CHECK(glDrawArrays(GL_LINE_LOOP, 0, static_cast<GLsizei>(segments)));
 
             glBindBuffer(GL_ARRAY_BUFFER, 0);
             glBindVertexArray(0);
-            glDeleteBuffers(1, &localVBO);
-            glDeleteVertexArrays(1, &localVAO);
         }
     }
     void Renderer::DrawText(const Vec2& pos, const std::string& text, const Color& color, float fontSize) {
@@ -821,7 +948,22 @@ namespace FluentUI {
              
              glBindVertexArray(textVAO);
              glBindBuffer(GL_ARRAY_BUFFER, textVBO);
-             
+
+             // Batch all glyph quads into a single buffer, then draw once
+             // Track which atlas is in use to flush when switching
+             std::vector<float> batchVertices;
+             batchVertices.reserve(text.size() * 6 * 4); // 6 verts * 4 floats per glyph estimate
+             bool currentlyUsingDynamic = false;
+             bool firstGlyph = true;
+
+             auto flushTextBatch = [&]() {
+                 if (batchVertices.empty()) return;
+                 GL_CHECK(glBufferData(GL_ARRAY_BUFFER, batchVertices.size() * sizeof(float),
+                              batchVertices.data(), GL_DYNAMIC_DRAW));
+                 GL_CHECK(glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batchVertices.size() / 4)));
+                 batchVertices.clear();
+             };
+
              while (ptr < end) {
                 uint32_t codepoint = DecodeUTF8(ptr, end);
                 if (codepoint == 0) break;
@@ -830,106 +972,90 @@ namespace FluentUI {
                     baseline += lineHeight;
                     continue;
                 }
-                
+
                 // Try pre-generated MSDF first, then dynamic generation
                 const FontMSDF::Glyph* glyph = nullptr;
                 const Glyph* dynamicGlyph = nullptr;
                 bool useDynamicMSDF = false;
-                
+
                 if (msdfFont && msdfFont->IsLoaded()) {
                     glyph = msdfFont->GetGlyph(codepoint);
                 }
-                
+
                 // If not found in pre-generated atlas, try dynamic generation
                 if (!glyph && msdfGenerator && fontFace) {
                     dynamicGlyph = GetOrGenerateMSDFGlyph(codepoint);
                     useDynamicMSDF = (dynamicGlyph != nullptr);
                 }
-                
+
                 // Handle spaces and missing glyphs: still advance xpos by advance
                 float advance = 0.0f;
                 if (glyph) {
                     advance = glyph->advance * scale;
-                    if (codepoint == 32) { // Space character
-                        xpos += advance;
-                        continue;
-                    }
+                    if (codepoint == 32) { xpos += advance; continue; }
                 } else if (dynamicGlyph) {
                     advance = dynamicGlyph->advance * scale;
-                    if (codepoint == 32) { // Space character
-                        xpos += advance;
-                        continue;
-                    }
+                    if (codepoint == 32) { xpos += advance; continue; }
                 } else {
-                    // For missing glyphs, use a default advance
-                    if (codepoint == 32) {
-                        advance = fontSize * 0.3f;
-                    } else {
-                        advance = fontSize * 0.2f;
-                    }
-                    xpos += advance;
+                    xpos += (codepoint == 32) ? fontSize * 0.3f : fontSize * 0.2f;
                     continue;
                 }
 
+                // If atlas type changed, flush the batch
+                if (!firstGlyph && useDynamicMSDF != currentlyUsingDynamic) {
+                    flushTextBatch();
+                }
+                if (useDynamicMSDF && (firstGlyph || !currentlyUsingDynamic)) {
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, dynamicMSDFAtlasTexture);
+                } else if (!useDynamicMSDF && (firstGlyph || currentlyUsingDynamic)) {
+                    // Re-bind pre-generated atlas if we switched from dynamic
+                    if (!firstGlyph && currentlyUsingDynamic && msdfFont->IsLoaded()) {
+                        glActiveTexture(GL_TEXTURE0);
+                        // Pre-generated atlas was bound by msdfFont->Bind()
+                    }
+                }
+                currentlyUsingDynamic = useDynamicMSDF;
+                firstGlyph = false;
+
                 // Calculate glyph position and size
                 float x0, y0, w, h, u0, v0, u1, v1;
-                
+
                 if (useDynamicMSDF && dynamicGlyph) {
-                    // Use dynamically generated MSDF glyph
-                    // bearing.y es la distancia desde la baseline hasta la parte superior del glifo
-                    // Para glifos con descenders, el bitmap se extiende por debajo de la baseline
-                    x0 = xpos + dynamicGlyph->bearing.x * scale;
+                    x0 = std::round(xpos + dynamicGlyph->bearing.x * scale);
                     y0 = baseline - dynamicGlyph->bearing.y * scale;
                     w = dynamicGlyph->size.x * scale;
                     h = dynamicGlyph->size.y * scale;
                     u0 = dynamicGlyph->uv0.x; v0 = dynamicGlyph->uv0.y;
                     u1 = dynamicGlyph->uv1.x; v1 = dynamicGlyph->uv1.y;
-                    
-                    // Alinear solo X a píxeles enteros para mejor nitidez horizontal
-                    // NO redondear Y para mantener la alineación vertical correcta
-                    x0 = std::round(x0);
-                    
-                    // Use dynamic atlas texture instead of pre-generated
-                    glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_2D, dynamicMSDFAtlasTexture);
                 } else {
-                    // Use pre-generated MSDF glyph
-                    // bearing.y es la distancia desde la baseline hasta la parte superior del glifo
-                    // Para glifos con descenders, el bitmap se extiende por debajo de la baseline
-                    x0 = xpos + glyph->bearing.x * scale;
+                    x0 = std::round(xpos + glyph->bearing.x * scale);
                     y0 = baseline - glyph->bearing.y * scale;
                     w = glyph->planeBounds.x * scale;
                     h = glyph->planeBounds.y * scale;
                     u0 = glyph->uv0.x; v0 = glyph->uv0.y;
                     u1 = glyph->uv1.x; v1 = glyph->uv1.y;
-                    
-                    // Alinear solo X a píxeles enteros para mejor nitidez horizontal
-                    // NO redondear Y para mantener la alineación vertical correcta
-                    x0 = std::round(x0);
-                }
-                
-                // Skip if size is invalid
-                if (w <= 0 || h <= 0) {
-                    xpos += advance;
-                    continue;
                 }
 
-                // Quad vertices: two triangles forming a rectangle
-                float vertices[6][4] = {
-                    { x0,     y0,       u0, v0 },
-                    { x0 + w, y0 + h,   u1, v1 },
-                    { x0,     y0 + h,   u0, v1 },
-                    { x0,     y0,       u0, v0 },
-                    { x0 + w, y0,       u1, v0 },
-                    { x0 + w, y0 + h,   u1, v1 }
+                if (w <= 0 || h <= 0) { xpos += advance; continue; }
+
+                // Add quad vertices to batch (6 vertices, 4 floats each)
+                float verts[] = {
+                    x0,     y0,       u0, v0,
+                    x0 + w, y0 + h,   u1, v1,
+                    x0,     y0 + h,   u0, v1,
+                    x0,     y0,       u0, v0,
+                    x0 + w, y0,       u1, v0,
+                    x0 + w, y0 + h,   u1, v1
                 };
-                
-                glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
-                glDrawArrays(GL_TRIANGLES, 0, 6);
-                
+                batchVertices.insert(batchVertices.end(), std::begin(verts), std::end(verts));
+
                 xpos += advance;
              }
-             
+
+             // Flush remaining batched glyphs
+             flushTextBatch();
+
              glBindBuffer(GL_ARRAY_BUFFER, 0);
              glBindVertexArray(0);
              
@@ -1016,7 +1142,7 @@ namespace FluentUI {
             };
 
             glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
-            glDrawArrays(GL_TRIANGLES, 0, 6);
+            GL_CHECK(glDrawArrays(GL_TRIANGLES, 0, 6));
 
             penX += glyph->advance * scale;
             prevCodepoint = codepoint;
@@ -1312,7 +1438,7 @@ namespace FluentUI {
         }
 
         // Generate MSDF
-        const int msdfSize = 64; // MSDF texture size per glyph
+        const int msdfSize = MSDF_GLYPH_SIZE;
         const float pixelRange = 4.0f;
         auto msdfData = msdfGenerator->GenerateFromGlyph(fontFace, glyphIndex, msdfSize, pixelRange, 4);
         
@@ -1368,26 +1494,27 @@ namespace FluentUI {
     bool Renderer::EnsureDynamicMSDFAtlasSpace(int glyphWidth, int glyphHeight, int& outX, int& outY)
     {
         // Simple packing algorithm - start new row if needed
+        // Uses dedicated dynamic atlas packing state (not shared with FreeType atlas)
         const int padding = 2;
 
-        if (atlasNextX + glyphWidth + padding > dynamicAtlasWidth)
+        if (dynamicAtlasNextX + glyphWidth + padding > dynamicAtlasWidth)
         {
             // Move to next row
-            atlasNextY += atlasCurrentRowHeight + padding;
-            atlasNextX = padding;
-            atlasCurrentRowHeight = 0;
+            dynamicAtlasNextY += dynamicAtlasCurrentRowHeight + padding;
+            dynamicAtlasNextX = padding;
+            dynamicAtlasCurrentRowHeight = 0;
 
-            if (atlasNextY + glyphHeight + padding > dynamicAtlasHeight)
+            if (dynamicAtlasNextY + glyphHeight + padding > dynamicAtlasHeight)
             {
                 return false; // Atlas full
             }
         }
 
-        outX = atlasNextX;
-        outY = atlasNextY;
+        outX = dynamicAtlasNextX;
+        outY = dynamicAtlasNextY;
 
-        atlasNextX += glyphWidth + padding;
-        atlasCurrentRowHeight = std::max(atlasCurrentRowHeight, glyphHeight);
+        dynamicAtlasNextX += glyphWidth + padding;
+        dynamicAtlasCurrentRowHeight = std::max(dynamicAtlasCurrentRowHeight, glyphHeight);
 
         return true;
     }
@@ -1423,9 +1550,6 @@ namespace FluentUI {
             0.0f, 1.0f
         };
 
-        GLint previousProgram = 0;
-        glGetIntegerv(GL_CURRENT_PROGRAM, &previousProgram);
-
         if (shaderProgram != 0 && projectionUniform >= 0)
         {
             glUseProgram(shaderProgram);
@@ -1438,13 +1562,12 @@ namespace FluentUI {
             glUniformMatrix4fv(textProjectionUniform, 1, GL_FALSE, ortho);
         }
 
-        glUseProgram(previousProgram);
+        glUseProgram(0);
         projectionDirty = false;
     }
 
     void Renderer::EndFrame() {
         FlushBatch();
-        glFlush();
     }
 
     void Renderer::Shutdown() {
@@ -1513,16 +1636,35 @@ namespace FluentUI {
             glDeleteBuffers(1, &lineVBO);
             lineVBO = 0;
         }
+        if (circleVAO)
+        {
+            glDeleteVertexArrays(1, &circleVAO);
+            circleVAO = 0;
+        }
+        if (circleVBO)
+        {
+            glDeleteBuffers(1, &circleVBO);
+            circleVBO = 0;
+        }
         batchResourcesInitialized = false;
         if (EBO) {
             glDeleteBuffers(1, &EBO);
             EBO = 0;
         }
+        // Clean up dynamic MSDF atlas texture
+        if (dynamicMSDFAtlasTexture) {
+            glDeleteTextures(1, &dynamicMSDFAtlasTexture);
+            dynamicMSDFAtlasTexture = 0;
+        }
+        dynamicMSDFGlyphCache.clear();
+        // Clean up font atlas texture
+        if (fontAtlasTexture) {
+            glDeleteTextures(1, &fontAtlasTexture);
+            fontAtlasTexture = 0;
+        }
         if (glContext && window) {
-            // En SDL3, el contexto GL se destruye automáticamente cuando se destruye la ventana
-            // Solo necesitamos desconectarlo del thread actual
             SDL_GL_MakeCurrent(window, nullptr);
-            // El contexto será destruido por SDL cuando se destruya la ventana
+            SDL_GL_DestroyContext(glContext);
             glContext = nullptr;
         }
     }
@@ -1545,9 +1687,9 @@ namespace FluentUI {
         quadIndices.reserve(MAX_QUAD_INDICES);
         lineVertices.reserve(MAX_LINE_VERTICES);
 
-        glGenVertexArrays(1, &quadVAO);
-        glGenBuffers(1, &quadVBO);
-        glGenBuffers(1, &quadEBO);
+        GL_CHECK(glGenVertexArrays(1, &quadVAO));
+        GL_CHECK(glGenBuffers(1, &quadVBO));
+        GL_CHECK(glGenBuffers(1, &quadEBO));
 
         glBindVertexArray(quadVAO);
         glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
@@ -1558,14 +1700,25 @@ namespace FluentUI {
         glEnableVertexAttribArray(1);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-        glGenVertexArrays(1, &lineVAO);
-        glGenBuffers(1, &lineVBO);
+        GL_CHECK(glGenVertexArrays(1, &lineVAO));
+        GL_CHECK(glGenBuffers(1, &lineVBO));
 
         glBindVertexArray(lineVAO);
         glBindBuffer(GL_ARRAY_BUFFER, lineVBO);
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void*>(0));
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void*>(2 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        GL_CHECK(glGenVertexArrays(1, &circleVAO));
+        GL_CHECK(glGenBuffers(1, &circleVBO));
+
+        glBindVertexArray(circleVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, circleVBO);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(float), reinterpret_cast<void*>(0));
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(float), reinterpret_cast<void*>(2 * sizeof(float)));
         glEnableVertexAttribArray(1);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
 
@@ -1586,19 +1739,19 @@ namespace FluentUI {
         {
             glBindVertexArray(quadVAO);
             glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
-            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(quadVertices.size() * sizeof(Vertex)), quadVertices.data(), GL_DYNAMIC_DRAW);
+            GL_CHECK(glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(quadVertices.size() * sizeof(Vertex)), quadVertices.data(), GL_DYNAMIC_DRAW));
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, quadEBO);
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(quadIndices.size() * sizeof(unsigned int)), quadIndices.data(), GL_DYNAMIC_DRAW);
-            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(quadIndices.size()), GL_UNSIGNED_INT, nullptr);
+            GL_CHECK(glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(quadIndices.size() * sizeof(unsigned int)), quadIndices.data(), GL_DYNAMIC_DRAW));
+            GL_CHECK(glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(quadIndices.size()), GL_UNSIGNED_INT, nullptr));
         }
 
         if (!lineVertices.empty())
         {
             glBindVertexArray(lineVAO);
             glBindBuffer(GL_ARRAY_BUFFER, lineVBO);
-            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(lineVertices.size() * sizeof(Vertex)), lineVertices.data(), GL_DYNAMIC_DRAW);
+            GL_CHECK(glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(lineVertices.size() * sizeof(Vertex)), lineVertices.data(), GL_DYNAMIC_DRAW));
             glLineWidth(lineBatchWidth);
-            glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(lineVertices.size()));
+            GL_CHECK(glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(lineVertices.size())));
             glLineWidth(1.0f);
         }
 
@@ -1756,6 +1909,8 @@ namespace FluentUI {
             std::cerr << "Error compilando shader ("
                 << (type == GL_VERTEX_SHADER ? "VERTEX" : "FRAGMENT")
                 << "):\n" << infoLog << std::endl;
+            glDeleteShader(shader);
+            return 0;
         }
         return shader;
     }
@@ -1765,11 +1920,19 @@ namespace FluentUI {
         std::string vertSrc = LoadShaderSource(vertexSource);
         std::string fragSrc = LoadShaderSource(fragmentSource);
 
-        if (vertSrc.empty() || fragSrc.empty())
-            throw std::runtime_error("No se pudieron cargar los shaders");
+        if (vertSrc.empty() || fragSrc.empty()) {
+            std::cerr << "No se pudieron cargar los shaders" << std::endl;
+            return 0;
+        }
 
         GLuint vertexShader = CompileShader(GL_VERTEX_SHADER, vertSrc);
         GLuint fragmentShader = CompileShader(GL_FRAGMENT_SHADER, fragSrc);
+
+        if (vertexShader == 0 || fragmentShader == 0) {
+            if (vertexShader != 0) glDeleteShader(vertexShader);
+            if (fragmentShader != 0) glDeleteShader(fragmentShader);
+            return 0;
+        }
 
         GLuint program = glCreateProgram();
         glAttachShader(program, vertexShader);
@@ -1782,7 +1945,9 @@ namespace FluentUI {
         {
             char infoLog[512];
             glGetProgramInfoLog(program, 512, nullptr, infoLog);
-            std::cout << "Error linkeando el programa de shaders:\n" << infoLog << std::endl;
+            std::cerr << "Error linkeando el programa de shaders:\n" << infoLog << std::endl;
+            glDeleteProgram(program);
+            program = 0;
         }
 
         glDeleteShader(vertexShader);

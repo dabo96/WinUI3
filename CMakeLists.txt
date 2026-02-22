@@ -7,7 +7,12 @@ project(FluentUI VERSION 1.0.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(CMAKE_PREFIX_PATH "C:/vcpkg/installed/x64-windows/share")
+# Detect vcpkg prefix path from environment or use default
+if(DEFINED ENV{VCPKG_ROOT})
+  set(CMAKE_PREFIX_PATH "$ENV{VCPKG_ROOT}/installed/x64-windows/share")
+elseif(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+  set(CMAKE_PREFIX_PATH "C:/vcpkg/installed/x64-windows/share")
+endif()
 
 # Ruta de código fuente
 add_subdirectory(src)

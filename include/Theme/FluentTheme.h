@@ -35,7 +35,7 @@ namespace FluentUI {
         // Colores de texto
         inline const Color TextPrimary = Color(0.13f, 0.13f, 0.13f, 1.0f);
         inline const Color TextSecondary = Color(0.6f, 0.6f, 0.6f, 1.0f);
-        inline const Color TextTertiary = Color(0.8f, 0.8f, 0.8f, 1.0f);
+        inline const Color TextTertiary = Color(0.45f, 0.45f, 0.45f, 1.0f);
         inline const Color TextPrimaryDark = Color(1.0f, 1.0f, 1.0f, 1.0f);
         inline const Color TextSecondaryDark = Color(0.8f, 0.8f, 0.8f, 1.0f);
         inline const Color TextTertiaryDark = Color(0.6f, 0.6f, 0.6f, 1.0f);
@@ -62,9 +62,11 @@ namespace FluentUI {
 
         // Helper para generar colores de acento con variaciones
         inline Color GetAccentHover(const Color& accent) {
-            return Color(std::min(1.0f, accent.r * 1.15f), 
-                        std::min(1.0f, accent.g * 1.15f), 
-                        std::min(1.0f, accent.b * 1.15f), accent.a);
+            // Additive lighten to work correctly with dark accent colors
+            float lift = 0.08f;
+            return Color(std::min(1.0f, accent.r + lift),
+                        std::min(1.0f, accent.g + lift),
+                        std::min(1.0f, accent.b + lift), accent.a);
         }
 
         inline Color GetAccentPressed(const Color& accent) {

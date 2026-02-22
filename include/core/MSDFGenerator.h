@@ -15,10 +15,10 @@ namespace FluentUI {
         int width;
         int height;
         float pixelRange;
-        
-        MSDFData(int w, int h, float range) 
-            : width(w), height(h), pixelRange(range) {
-            pixels.resize(w * h * 3);
+
+        MSDFData(int w, int h, float range)
+            : width(std::max(w, 1)), height(std::max(h, 1)), pixelRange(range) {
+            pixels.resize(static_cast<size_t>(width) * height * 3, 0);
         }
     };
 
@@ -46,7 +46,6 @@ namespace FluentUI {
         );
 
     private:
-        // Helper structures for contour processing
         struct Point {
             float x, y;
             Point(float x = 0, float y = 0) : x(x), y(y) {}
@@ -54,38 +53,38 @@ namespace FluentUI {
             Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
             Point operator*(float s) const { return Point(x * s, y * s); }
             float dot(const Point& p) const { return x * p.x + y * p.y; }
-            float length() const { 
-                using std::sqrt;
-                return sqrt(x * x + y * y); 
-            }
-            void normalize() {
-                float len = length();
-                if (len > 0.0f) {
-                    x /= len;
-                    y /= len;
-                }
-            }
+            float cross(const Point& p) const { return x * p.y - y * p.x; }
+            float length() const { return std::sqrt(x * x + y * y); }
+            float lengthSq() const { return x * x + y * y; }
         };
 
         struct Edge {
-            Point p0, p1, p2; // For quadratic: p0->p2 with control p1
+            Point p0, p1, p2; // For line: p0->p1. For quadratic: p0->p2 with control p1
             bool isQuadratic;
-            
+            uint8_t colorMask; // Bitmask: bit0=R, bit1=G, bit2=B
+
             Edge(const Point& a, const Point& b, const Point& c = Point(), bool quad = false)
-                : p0(a), p1(b), p2(c), isQuadratic(quad) {}
+                : p0(a), p1(b), p2(c), isQuadratic(quad), colorMask(0x7) {}
         };
 
-        // Process FreeType outline into edges
-        void ProcessOutline(FT_Outline* outline, std::vector<Edge>& edges);
+        struct Contour {
+            std::vector<Edge> edges;
+        };
 
-        // Calculate signed distance from point to edge
+        // Process FreeType outline into per-contour edge lists
+        void ProcessOutline(FT_Outline* outline, std::vector<Contour>& contours);
+
+        // Assign color channels to edges within each contour
+        void ColorContourEdges(std::vector<Contour>& contours);
+
+        // Calculate signed distance from point to edge (uses tangent for sign)
         float SignedDistance(const Point& p, const Edge& edge) const;
 
-        // Calculate MSDF value at a point
-        void CalculateMSDF(MSDFData* msdf, const std::vector<Edge>& edges, int x, int y);
+        // Calculate MSDF value at a point using per-channel closest distances
+        void CalculateMSDF(MSDFData* msdf, const std::vector<Contour>& contours, int x, int y);
 
-        // Fill MSDF data
-        void FillMSDF(MSDFData* msdf, const std::vector<Edge>& edges);
+        // Transform contours to texture space and generate MSDF
+        void FillMSDF(MSDFData* msdf, std::vector<Contour>& contours);
     };
 
 } // namespace FluentUI

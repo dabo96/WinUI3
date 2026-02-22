@@ -6,7 +6,6 @@
 #include <string>
 #include <unordered_map>
 #include <memory>
-#include <iostream>
 
 namespace FluentUI {
 
@@ -23,6 +22,12 @@ namespace FluentUI {
 
         FontMSDF() = default;
         ~FontMSDF();
+
+        // Non-copyable, non-movable (owns GL resources)
+        FontMSDF(const FontMSDF&) = delete;
+        FontMSDF& operator=(const FontMSDF&) = delete;
+        FontMSDF(FontMSDF&&) = delete;
+        FontMSDF& operator=(FontMSDF&&) = delete;
 
         bool Load(const std::string& atlasImagePath, const std::string& atlasJsonPath);
         const Glyph* GetGlyph(uint32_t codepoint) const;

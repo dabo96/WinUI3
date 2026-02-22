@@ -1,9 +1,6 @@
 #pragma once
 #include "Math/Vec2.h"
 #include "UI/Layout.h"
-#include "core/Button.h"
-#include "core/Element.h"
-#include "core/Panel.h"
 #include "Theme/Style.h"
 #include <string>
 #include <vector>
@@ -24,24 +21,24 @@ void EndHorizontal(bool advanceParent = true);
 void SetNextConstraints(const LayoutConstraints& constraints);
 
 // Widgets básicos
-bool Button(const std::string &label, const Vec2 &size = Vec2(0, 0), const Vec2 &pos = Vec2(0, 0), bool enabled = true);
+bool Button(const std::string &label, const Vec2 &size = Vec2(0, 0), std::optional<Vec2> pos = std::nullopt, bool enabled = true);
 void Label(const std::string &text, std::optional<Vec2> position = std::nullopt, TypographyStyle variant = TypographyStyle::Body, bool disabled = false);
 void Separator();
-bool Checkbox(const std::string &label, bool *value = nullptr, const Vec2 &pos = Vec2(0, 0));
-bool RadioButton(const std::string &label, int *value, int optionValue, const std::string &group = "", const Vec2 &pos = Vec2(0, 0));
-bool SliderFloat(const std::string &label, float *value, float minValue, float maxValue, float width = 200.0f, const char *format = "%.2f", const Vec2 &pos = Vec2(0, 0));
-bool SliderInt(const std::string &label, int *value, int minValue, int maxValue, float width = 200.0f, const Vec2 &pos = Vec2(0, 0));
-void ProgressBar(float fraction, const Vec2 &size = Vec2(0, 0), const std::string &overlay = "", const Vec2 &pos = Vec2(0, 0));
-bool TextInput(const std::string &label, std::string *value, float width = 200.0f, bool multiline = false, const Vec2 &pos = Vec2(0, 0));
-bool ComboBox(const std::string &label, int *currentItem, const std::vector<std::string> &items, float width = 200.0f, const Vec2 &pos = Vec2(0, 0));
+bool Checkbox(const std::string &label, bool *value = nullptr, std::optional<Vec2> pos = std::nullopt);
+bool RadioButton(const std::string &label, int *value, int optionValue, const std::string &group = "", std::optional<Vec2> pos = std::nullopt);
+bool SliderFloat(const std::string &label, float *value, float minValue, float maxValue, float width = 200.0f, const char *format = "%.2f", std::optional<Vec2> pos = std::nullopt);
+bool SliderInt(const std::string &label, int *value, int minValue, int maxValue, float width = 200.0f, std::optional<Vec2> pos = std::nullopt);
+void ProgressBar(float fraction, const Vec2 &size = Vec2(0, 0), const std::string &overlay = "", std::optional<Vec2> pos = std::nullopt);
+bool TextInput(const std::string &label, std::string *value, float width = 200.0f, bool multiline = false, std::optional<Vec2> pos = std::nullopt);
+bool ComboBox(const std::string &label, int *currentItem, const std::vector<std::string> &items, float width = 200.0f, std::optional<Vec2> pos = std::nullopt);
 
 // Contenedores
 bool BeginPanel(const std::string &id, const Vec2 &size = Vec2(0, 0), bool reserveLayoutSpace = true,
-                std::optional<bool> useAcrylic = std::nullopt, std::optional<float> acrylicOpacity = std::nullopt, const Vec2 &pos = Vec2(0, 0));
+                std::optional<bool> useAcrylic = std::nullopt, std::optional<float> acrylicOpacity = std::nullopt, std::optional<Vec2> pos = std::nullopt);
 void EndPanel();
-bool BeginScrollView(const std::string &id, const Vec2 &size, Vec2 *scrollOffset = nullptr, const Vec2 &pos = Vec2(0, 0));
+bool BeginScrollView(const std::string &id, const Vec2 &size, Vec2 *scrollOffset = nullptr, std::optional<Vec2> pos = std::nullopt);
 void EndScrollView();
-bool BeginTabView(const std::string &id, int *activeTab, const std::vector<std::string> &tabLabels, const Vec2 &size = Vec2(0, 0), const Vec2 &pos = Vec2(0, 0));
+bool BeginTabView(const std::string &id, int *activeTab, const std::vector<std::string> &tabLabels, const Vec2 &size = Vec2(0, 0), std::optional<Vec2> pos = std::nullopt);
 void EndTabView();
 
 // Widgets especializados
@@ -52,23 +49,23 @@ void ContextMenuSeparator();
 void EndContextMenu();
 bool BeginModal(const std::string &id, const std::string &title, bool *open, const Vec2 &size = Vec2(400, 300));
 void EndModal();
-bool BeginListView(const std::string &id, const Vec2 &size, int *selectedItem, const std::vector<std::string> &items, const Vec2 &pos = Vec2(0, 0));
+bool BeginListView(const std::string &id, const Vec2 &size, int *selectedItem, const std::vector<std::string> &items, std::optional<Vec2> pos = std::nullopt);
 void EndListView();
 
 // TreeView structures
-struct TreeNode {
+struct TreeNodeData {
     std::string label;
     bool isOpen = false;
     bool isSelected = false;
-    std::vector<TreeNode> children;
-    
-    TreeNode(const std::string& lbl) : label(lbl) {}
+    std::vector<TreeNodeData> children;
+
+    TreeNodeData(const std::string& lbl) : label(lbl) {}
 };
 
 bool TreeNode(const std::string &id, const std::string &label, bool *isOpen = nullptr, bool *isSelected = nullptr);
 void TreeNodePush(); // Incrementar profundidad para hijos
 void TreeNodePop();  // Decrementar profundidad después de hijos
-bool BeginTreeView(const std::string &id, const Vec2 &size, const Vec2 &pos = Vec2(0, 0));
+bool BeginTreeView(const std::string &id, const Vec2 &size, std::optional<Vec2> pos = std::nullopt);
 void EndTreeView();
 
 // MenuBar

@@ -12,6 +12,20 @@
 #include "core/FontMSDF.h"
 #include "core/MSDFGenerator.h"
 #include <memory>
+#include <iostream>
+
+#ifndef NDEBUG
+#define GL_CHECK(call) do { \
+    call; \
+    GLenum err = glGetError(); \
+    if (err != GL_NO_ERROR) { \
+        std::cerr << "OpenGL error 0x" << std::hex << err << std::dec \
+                  << " at " << __FILE__ << ":" << __LINE__ << " - " << #call << std::endl; \
+    } \
+} while(0)
+#else
+#define GL_CHECK(call) call
+#endif
 
 namespace FluentUI {
 
@@ -22,7 +36,7 @@ public:
   ~Renderer();
 
   bool Init(SDL_Window *window);
-  void BeginFrame();
+  void BeginFrame(const Color& clearColor = Color(0.13f, 0.13f, 0.13f, 1.0f));
   void EndFrame();
   void Shutdown();
 
@@ -69,6 +83,7 @@ private:
   GLuint textVAO = 0, textVBO = 0;
   GLuint quadVAO = 0, quadVBO = 0, quadEBO = 0;
   GLuint lineVAO = 0, lineVBO = 0;
+  GLuint circleVAO = 0, circleVBO = 0;
   Vec2 viewportSize = {800.0f, 600.0f};
 
   struct Glyph {
@@ -108,9 +123,14 @@ private:
   std::unique_ptr<MSDFGenerator> msdfGenerator;
   
   // Dynamic MSDF atlas for FreeType-generated glyphs
+  static constexpr int DYNAMIC_ATLAS_SIZE = 2048;
+  static constexpr int MSDF_GLYPH_SIZE = 64;
   GLuint dynamicMSDFAtlasTexture = 0;
-  int dynamicAtlasWidth = 2048;
-  int dynamicAtlasHeight = 2048;
+  int dynamicAtlasWidth = DYNAMIC_ATLAS_SIZE;
+  int dynamicAtlasHeight = DYNAMIC_ATLAS_SIZE;
+  int dynamicAtlasNextX = 0;
+  int dynamicAtlasNextY = 0;
+  int dynamicAtlasCurrentRowHeight = 0;
   std::unordered_map<std::uint32_t, Glyph> dynamicMSDFGlyphCache;
 
   // Helpers internos

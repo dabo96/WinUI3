@@ -31,11 +31,11 @@ namespace FluentUI {
             style.border.pressed = Color(base.r, base.g, base.b, 0.0f);
             style.border.disabled = Color(0.0f, 0.0f, 0.0f, 0.0f);
 
-            style.cornerRadius = 8.0f;
+            style.cornerRadius = 6.0f;
             style.padding = Vec2(20.0f, 10.0f);
             style.borderWidth = 0.0f;
-            style.shadowOpacity = 0.35f;
-            style.shadowOffsetY = 4.0f;
+            style.shadowOpacity = 0.25f;
+            style.shadowOffsetY = 2.0f;
             style.text = MakeTextStyle(16.0f, FontWeight::SemiBold, textColor);
             return style;
         }
@@ -113,6 +113,7 @@ namespace FluentUI {
         Style BuildStyle(bool darkTheme)
         {
             Style style;
+            style.isDarkTheme = darkTheme;
             style.backgroundColor = darkTheme ? FluentColors::BackgroundDark : FluentColors::Background;
             style.spacing = 10.0f;
             style.padding = 14.0f;
@@ -138,9 +139,6 @@ namespace FluentUI {
                 FluentColors::AccentPressed,
                 Color(textPrimary.r, textPrimary.g, textPrimary.b, 0.45f),
                 Color(1.0f, 1.0f, 1.0f, 1.0f));
-            buttonStyle.shadowOpacity = 0.25f; // Sombra más suave
-            buttonStyle.shadowOffsetY = 2.0f;
-            buttonStyle.cornerRadius = 6.0f; // Bordes más redondeados según Fluent
             style.button = buttonStyle;
 
             style.label = MakeLabelStyle(style.typography.body);
@@ -161,11 +159,15 @@ namespace FluentUI {
 
     Style CreateCustomFluentStyle(const Color& accentColor, bool darkTheme) {
         Style style = BuildStyle(darkTheme);
-        
+
         // Aplicar color de acento personalizado
         const Color accentHover = FluentColors::GetAccentHover(accentColor);
         const Color accentPressed = FluentColors::GetAccentPressed(accentColor);
-        const Color textColor = Color(1.0f, 1.0f, 1.0f, 1.0f); // Texto blanco sobre acento
+        // Choose white or black text based on accent luminance
+        float luminance = 0.2126f * accentColor.r + 0.7152f * accentColor.g + 0.0722f * accentColor.b;
+        const Color textColor = luminance > 0.5f
+            ? Color(0.0f, 0.0f, 0.0f, 1.0f)   // Dark text on light accent
+            : Color(1.0f, 1.0f, 1.0f, 1.0f);   // White text on dark accent
         
         ButtonStyle buttonStyle = MakeButtonStyle(
             accentColor,

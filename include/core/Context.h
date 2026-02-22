@@ -1,8 +1,5 @@
 #pragma once
 
-#ifndef FLUENTGUI_CONTEXT_H
-#define FLUENTGUI_CONTEXT_H
-
 #include "Animation.h"
 #include "Math/Color.h"
 #include "Math/Vec2.h"
@@ -44,6 +41,40 @@ struct TabContentFrame {
 
 enum class ActiveWidgetType { None, Slider, TextInput };
 
+struct PanelFrameContext {
+  uint32_t id;
+  Vec2 layoutOrigin;
+  float titleHeight;
+  Vec2 clipPos;
+  Vec2 clipSize;
+  bool clipPushed;
+  bool layoutPushed;
+  bool reserveLayout = true;
+  Vec2 reservedLayoutSize{0.0f, 0.0f};
+  Vec2 savedCursor;
+  Vec2 savedLastItemPos;
+  Vec2 savedLastItemSize;
+  Vec2 parentCursor;
+  Vec2 parentContentSize;
+  Vec2 parentAvailable;
+  int parentItemCount = 0;
+};
+
+struct ScrollViewFrameContext {
+  uint32_t id;
+  Vec2 position;
+  Vec2 size;
+  Vec2 contentAreaPos;
+  Vec2 contentAreaSize;
+  Vec2 availableSize;
+  float scrollbarWidth;
+  bool layoutPushed;
+  bool useAbsolutePos;
+  Vec2 savedCursor;
+  Vec2 savedLastItemPos;
+  Vec2 savedLastItemSize;
+};
+
 struct UIContext {
   Renderer renderer;
   InputState input;
@@ -69,7 +100,7 @@ struct UIContext {
   }
 
   Vec2 cursorPos;           // posición actual del layout vertical
-  int frame;                // contador de frames
+  uint32_t frame = 0;       // contador de frames
   float deltaTime = 0.016f; // tiempo entre frames (default 60 FPS)
   float time = 0.0f;        // tiempo total transcurrido
   Vec2 lastItemPos{0.0f, 0.0f};
@@ -240,6 +271,7 @@ struct UIContext {
   mutable uint32_t textCacheFrame = 0;
   static constexpr uint32_t TEXT_CACHE_MAX_AGE =
       60; // Limpiar caché cada 60 frames
+  static constexpr size_t TEXT_CACHE_MAX_SIZE = 512; // Max entries before eviction
 
   // Optimización: Pool de IDs reutilizables
   std::vector<uint32_t> reusableIds;
@@ -295,6 +327,22 @@ struct UIContext {
   std::vector<DeferredMenuDropdown> deferredMenuDropdowns;
   std::vector<DeferredMenuItem> currentMenuItems;
 
+  // ComboBox change tracking (deferred dropdowns notify change next frame)
+  std::unordered_map<uint32_t, bool> comboBoxChanged;
+
+  // Scroll consumed flag - reset each frame in NewFrame()
+  bool scrollConsumedThisFrame = false;
+
+  // GC for state maps
+  std::unordered_map<uint32_t, uint32_t> lastSeenFrame;
+  static constexpr uint32_t GC_INTERVAL = 300; // Run GC every N frames
+
+  // Global statics moved from Widgets.cpp
+  int treeViewDepth = 0;
+  uint32_t currentTreeViewId = 0;
+  std::vector<PanelFrameContext> panelStack;
+  std::vector<ScrollViewFrameContext> scrollViewStack;
+
   // Stack to track which menu is currently being processed
   std::vector<uint32_t> menuIdStack;
   std::vector<size_t> menuItemStartIndexStack;
@@ -308,5 +356,3 @@ void NewFrame(float deltaTime = 0.016f);
 void Render();
 
 } // namespace FluentUI
-
-#endif // FLUENTGUI_CONTEXT_H

@@ -123,7 +123,13 @@ namespace FluentUI {
         }
 
         GLenum format = (channels == 4) ? GL_RGBA : GL_RGB;
-        
+
+        // Delete old texture if reloading
+        if (textureID != 0) {
+            glDeleteTextures(1, &textureID);
+            textureID = 0;
+        }
+
         glGenTextures(1, &textureID);
         glBindTexture(GL_TEXTURE_2D, textureID);
         
@@ -168,13 +174,18 @@ namespace FluentUI {
                     size_t colonPos = content.find(":", keyPos);
                     size_t commaPos = content.find_first_of(",}", colonPos);
                     std::string valStr = content.substr(colonPos + 1, commaPos - colonPos - 1);
-                    try { outVal = std::stof(valStr); } catch(...) {}
+                    try { outVal = std::stof(valStr); } catch(const std::exception& e) {
+                        std::cerr << "Warning: failed to parse " << key << ": " << e.what() << std::endl;
+                    }
                 }
             };
             findValue("emSize", emSize);
             findValue("lineHeight", lineHeight);
             findValue("ascender", ascender);
         }
+
+        // Validate parsed metrics
+        if (emSize <= 0.0f) emSize = 1.0f;
 
         // Parse Atlas Info
         size_t atlasPos = content.find("\"atlas\"");
@@ -185,12 +196,17 @@ namespace FluentUI {
                     size_t colonPos = content.find(":", keyPos);
                     size_t commaPos = content.find_first_of(",}", colonPos);
                     std::string valStr = content.substr(colonPos + 1, commaPos - colonPos - 1);
-                    try { outVal = std::stof(valStr); } catch(...) {}
+                    try { outVal = std::stof(valStr); } catch(const std::exception& e) {
+                        std::cerr << "Warning: failed to parse " << key << ": " << e.what() << std::endl;
+                    }
                 }
             };
             findValue("size", fontSize);
             findValue("distanceRange", pixelRange);
         }
+
+        // Validate atlas metrics
+        if (pixelRange <= 0.0f) pixelRange = 4.0f;
 
         // Parse Glyphs
         size_t glyphsPos = content.find("\"glyphs\"");

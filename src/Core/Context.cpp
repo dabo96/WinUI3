@@ -13,7 +13,6 @@ namespace FluentUI {
         g_ctx->renderer.Init(window);
         g_ctx->style = GetDarkFluentStyle();
         g_ctx->initialized = true;
-        g_ctx->frame = 0;
         return g_ctx;
     }
 
@@ -50,7 +49,8 @@ namespace FluentUI {
             ripple.Update(deltaTime);
         }
         
-        g_ctx->renderer.BeginFrame();
+        g_ctx->renderer.BeginFrame(g_ctx->style.backgroundColor);
+        g_ctx->scrollConsumedThisFrame = false;
         g_ctx->cursorPos = { 20.0f, 20.0f };
         g_ctx->lastItemPos = g_ctx->cursorPos;
         g_ctx->lastItemSize = { 0.0f, 0.0f };
@@ -145,6 +145,47 @@ namespace FluentUI {
             }
         }
         
+        // GC: periodically clean up stale state map entries
+        if (g_ctx->frame > 0 && (g_ctx->frame % UIContext::GC_INTERVAL) == 0) {
+            uint32_t currentFrame = g_ctx->frame;
+            uint32_t threshold = UIContext::GC_INTERVAL;
+            auto& seen = g_ctx->lastSeenFrame;
+
+            // Helper to erase stale entries from a map
+            auto gcMap = [&](auto& map) {
+                for (auto it = map.begin(); it != map.end(); ) {
+                    auto seenIt = seen.find(it->first);
+                    if (seenIt == seen.end() || (currentFrame - seenIt->second) > threshold) {
+                        it = map.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+            };
+
+            gcMap(g_ctx->colorAnimations);
+            gcMap(g_ctx->floatAnimations);
+            gcMap(g_ctx->rippleEffects);
+            gcMap(g_ctx->panelStates);
+            gcMap(g_ctx->scrollViewStates);
+            gcMap(g_ctx->tabViewStates);
+            gcMap(g_ctx->listViewStates);
+            gcMap(g_ctx->treeViewStates);
+            gcMap(g_ctx->boolStates);
+            gcMap(g_ctx->floatStates);
+            gcMap(g_ctx->intStates);
+            gcMap(g_ctx->stringStates);
+
+            // Clean up lastSeenFrame itself for entries with no corresponding state
+            for (auto it = seen.begin(); it != seen.end(); ) {
+                if ((currentFrame - it->second) > threshold) {
+                    it = seen.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+
         g_ctx->frame++;
     }
 

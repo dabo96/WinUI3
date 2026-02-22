@@ -47,10 +47,10 @@ namespace FluentUI {
     template<typename T>
     class AnimatedValue {
     public:
-        AnimatedValue() : current_(T{}), target_(T{}), duration_(0.3f), elapsed_(0.0f), active_(false) {}
+        AnimatedValue() : current_(T{}), target_(T{}), duration_(0.3f), elapsed_(0.0f), active_(false), initialized_(false) {}
         
-        AnimatedValue(const T& initial) 
-            : current_(initial), target_(initial), duration_(0.3f), elapsed_(0.0f), active_(false) {}
+        AnimatedValue(const T& initial)
+            : current_(initial), target_(initial), duration_(0.3f), elapsed_(0.0f), active_(false), initialized_(true) {}
         
         // Establecer valor objetivo (inicia animación)
         void SetTarget(const T& target, float duration = 0.3f, 
@@ -93,7 +93,11 @@ namespace FluentUI {
             current_ = value;
             target_ = value;
             active_ = false;
+            initialized_ = true;
         }
+
+        // Check if this animation has been initialized with a value
+        bool IsInitialized() const { return initialized_; }
         
     private:
         T Lerp(const T& a, const T& b, float t) {
@@ -111,6 +115,7 @@ namespace FluentUI {
         float duration_;
         float elapsed_;
         bool active_;
+        bool initialized_;
         std::function<float(float)> easing_ = Easing::EaseOutCubic;
     };
 
