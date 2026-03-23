@@ -260,8 +260,6 @@ Tres capas de render en orden: **Default** -> **Overlay** -> **Tooltip**.
 ## Documentacion
 
 - [API_REFERENCE.md](API_REFERENCE.md) — Referencia completa de la API de widgets
-- [CLAUDE.md](CLAUDE.md) — Guia de arquitectura e internos
-- [GUIA_USO_VISUAL_STUDIO.md](GUIA_USO_VISUAL_STUDIO.md) — Guia de integracion con Visual Studio
 
 ## CI/CD
 
@@ -273,4 +271,4 @@ MIT
 
 ## Contribuciones
 
-Las contribuciones son bienvenidas. El proyecto usa C++20 y sigue el patron Immediate Mode GUI.
+Las contribuciones son bienvenidas. El proyecto usa C++20 y sigue el patron Immediate and Retained Mode GUI.
