@@ -1,0 +1,11 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: FluentUI
+Description: Fluent Design System Immediate Mode GUI library for C++
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -lFluentUI
+Cflags: -I${includedir}
+Requires: sdl3 freetype2 zlib

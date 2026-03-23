@@ -87,7 +87,7 @@ namespace FluentUI {
             panel.shadowOpacity = 0.4f;
             panel.shadowOffsetY = 8.0f;
             panel.padding = Vec2(16.0f, 14.0f);
-            panel.useAcrylic = true; // Habilitar acrylic por defecto en paneles
+            panel.useAcrylic = false; // Deshabilitar acrylic por defecto para evitar transparencias no deseadas
             panel.acrylicOpacity = 0.85f;
             return panel;
         }
@@ -185,6 +185,70 @@ namespace FluentUI {
         style.panel.titleButton.hover = accentHover;
         style.panel.titleButton.pressed = accentPressed;
         
+        return style;
+    }
+
+    // Phase 6: High Contrast Accessibility Theme
+    Style GetHighContrastStyle() {
+        Style style;
+        style.isDarkTheme = true;
+
+        // Pure black background, pure white text
+        Color black(0.0f, 0.0f, 0.0f, 1.0f);
+        Color white(1.0f, 1.0f, 1.0f, 1.0f);
+        Color yellow(1.0f, 1.0f, 0.0f, 1.0f);   // Highlight/accent
+        Color cyan(0.0f, 1.0f, 1.0f, 1.0f);      // Links/interactive
+        Color green(0.0f, 1.0f, 0.0f, 1.0f);      // Enabled states
+        Color gray(0.5f, 0.5f, 0.5f, 1.0f);       // Disabled
+
+        style.backgroundColor = black;
+        style.spacing = 8.0f;
+        style.padding = 12.0f;
+
+        // Typography — large, high-contrast text
+        auto makeText = [&](float size) -> TextStyle {
+            return {size, 0.0f, FontWeight::Regular, white};
+        };
+        style.typography.caption = makeText(13.0f);
+        style.typography.body = makeText(15.0f);
+        style.typography.bodyStrong = {15.0f, 0.0f, FontWeight::Bold, white};
+        style.typography.subtitle = makeText(20.0f);
+        style.typography.subtitleStrong = {20.0f, 0.0f, FontWeight::Bold, white};
+        style.typography.title = makeText(24.0f);
+        style.typography.titleLarge = makeText(32.0f);
+        style.typography.display = makeText(48.0f);
+
+        // Button — bright borders, clear states
+        style.button.background = {black, yellow, cyan, Color(0.2f, 0.2f, 0.2f, 1.0f)};
+        style.button.foreground = {white, black, black, gray};
+        style.button.border = {white, yellow, cyan, gray};
+        style.button.padding = Vec2(18.0f, 12.0f);
+        style.button.cornerRadius = 4.0f;
+        style.button.borderWidth = 2.0f;
+        style.button.shadowOpacity = 0.0f;
+        style.button.text = {15.0f, 0.0f, FontWeight::Bold, white};
+
+        // Label
+        style.label.text = {15.0f, 0.0f, FontWeight::Regular, white};
+        style.label.disabledColor = gray;
+
+        // Panel — clear borders
+        style.panel.background = Color(0.05f, 0.05f, 0.05f, 1.0f);
+        style.panel.headerBackground = Color(0.1f, 0.1f, 0.1f, 1.0f);
+        style.panel.borderColor = white;
+        style.panel.borderWidth = 2.0f;
+        style.panel.cornerRadius = 4.0f;
+        style.panel.shadowOpacity = 0.0f;
+        style.panel.headerText = {15.0f, 0.0f, FontWeight::Bold, white};
+        style.panel.titleButton = {cyan, yellow, green, gray};
+        style.panel.padding = Vec2(12.0f, 12.0f);
+        style.panel.useAcrylic = false; // No acrylic in high contrast
+
+        // Separator
+        style.separator.color = white;
+        style.separator.thickness = 2.0f;
+        style.separator.padding = 8.0f;
+
         return style;
     }
 

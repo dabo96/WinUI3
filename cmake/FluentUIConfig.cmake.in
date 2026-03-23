@@ -1,0 +1,13 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(OpenGL)
+find_dependency(SDL3 CONFIG)
+find_dependency(Freetype CONFIG)
+find_dependency(ZLIB)
+find_dependency(SDL3_image)
+
+include("${CMAKE_CURRENT_LIST_DIR}/FluentUITargets.cmake")
+
+check_required_components(FluentUI)

@@ -1,13 +1,13 @@
 #pragma once
 #include "Math/Vec2.h"
 #include "Math/Color.h"
-#include <SDL3/SDL.h>
-#include <glad/glad.h>
 #include <string>
 #include <unordered_map>
 #include <memory>
 
 namespace FluentUI {
+
+    class RenderBackend;
 
     class FontMSDF {
     public:
@@ -20,27 +20,13 @@ namespace FluentUI {
             bool valid = false;
         };
 
-        FontMSDF() = default;
+        FontMSDF(RenderBackend* backend = nullptr);
         ~FontMSDF();
-
-        // Non-copyable, non-movable (owns GL resources)
-        FontMSDF(const FontMSDF&) = delete;
-        FontMSDF& operator=(const FontMSDF&) = delete;
-        FontMSDF(FontMSDF&&) = delete;
-        FontMSDF& operator=(FontMSDF&&) = delete;
 
         bool Load(const std::string& atlasImagePath, const std::string& atlasJsonPath);
         const Glyph* GetGlyph(uint32_t codepoint) const;
         
-        // Bind texture and shader for rendering
-        // Returns true if successfully bound
-        bool Bind(const float* projectionMatrix);
-        void Unbind();
-        
-        // Set text color (must be called after Bind)
-        void SetColor(const Color& color);
-
-        // Getters for font metrics
+        // Metrics
         float GetLineHeight() const { return lineHeight; }
         float GetEmSize() const { return emSize; }
         float GetFontSize() const { return fontSize; }
@@ -48,31 +34,17 @@ namespace FluentUI {
         float GetAscender() const { return ascender; }
         bool IsLoaded() const { return loaded; }
         
-        // Shader access for shared use with dynamic MSDF
-        GLuint GetShaderProgram() const { return shaderProgram; }
-        void BindShaderOnly(const float* projectionMatrix);
-        void UnbindShader();
+        void* GetTextureHandle() const { return textureHandle; }
 
     private:
         bool LoadTexture(const std::string& imagePath);
         bool ParseJson(const std::string& jsonPath);
-        void CreateShader();
-        std::string LoadShaderSource(const std::string& filepath);
-        GLuint CompileShader(GLenum type, const std::string& source);
-        GLuint CreateShaderProgram(const std::string& vertexSource, const std::string& fragmentSource);
 
     private:
+        RenderBackend* backend = nullptr;
         bool loaded = false;
         
-        // OpenGL resources
-        GLuint textureID = 0;
-        GLuint shaderProgram = 0;
-        
-        // Uniform locations
-        GLint projectionUniform = -1;
-        GLint colorUniform = -1;
-        GLint pxRangeUniform = -1;
-        GLint textureUniform = -1;
+        void* textureHandle = nullptr;
 
         // Metrics
         float emSize = 1.0f;

@@ -5,6 +5,9 @@ using namespace FluentUI;
 
 struct InputState::TextInputData {
     std::string buffer;
+    std::string compositionText;  // IME composition string
+    int compositionCursor = 0;    // Cursor position within composition
+    int compositionLength = 0;    // Selection length within composition
 };
 
 InputState::InputState()
@@ -23,6 +26,27 @@ const std::string& InputState::TextInputBuffer() const
     return textInputData ? textInputData->buffer : empty;
 }
 
+const std::string& InputState::CompositionText() const
+{
+    static const std::string empty;
+    return textInputData ? textInputData->compositionText : empty;
+}
+
+int InputState::CompositionCursor() const
+{
+    return textInputData ? textInputData->compositionCursor : 0;
+}
+
+int InputState::CompositionLength() const
+{
+    return textInputData ? textInputData->compositionLength : 0;
+}
+
+bool InputState::HasComposition() const
+{
+    return textInputData && !textInputData->compositionText.empty();
+}
+
 void InputState::Update(SDL_Window* window)
 {
     keysPressed.fill(false);
@@ -33,6 +57,7 @@ void InputState::Update(SDL_Window* window)
     if (textInputData) {
         textInputData->buffer.clear();
     }
+    droppedFiles.clear();
     anyKeyPressed = false;
 
     prevMouseX = mouseX;
@@ -76,6 +101,18 @@ void InputState::ProcessEvent(const SDL_Event& e)
     case SDL_EVENT_TEXT_INPUT:
         if (textInputData) {
             textInputData->buffer += e.text.text;
+            // Committed text clears any active composition
+            textInputData->compositionText.clear();
+            textInputData->compositionCursor = 0;
+            textInputData->compositionLength = 0;
+        }
+        break;
+
+    case SDL_EVENT_TEXT_EDITING:
+        if (textInputData) {
+            textInputData->compositionText = e.edit.text ? e.edit.text : "";
+            textInputData->compositionCursor = e.edit.start;
+            textInputData->compositionLength = e.edit.length;
         }
         break;
 
@@ -116,8 +153,13 @@ void InputState::ProcessEvent(const SDL_Event& e)
         mouseWheelY += static_cast<float>(e.wheel.y);
         break;
 
+    case SDL_EVENT_DROP_FILE:
+        if (e.drop.data) {
+            droppedFiles.emplace_back(e.drop.data);
+        }
+        break;
+
     case SDL_EVENT_QUIT:
-        // Puedes manejar aquí un flag global de salida si lo deseas
         break;
 
     default:

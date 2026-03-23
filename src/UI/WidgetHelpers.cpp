@@ -3,6 +3,7 @@
 #include "core/Renderer.h"
 #include <cmath>
 #include <algorithm>
+#include <cstring>
 
 namespace FluentUI {
 
@@ -24,8 +25,12 @@ bool IsRectInViewport(UIContext *ctx, const Vec2 &pos, const Vec2 &size) {
         Vec2(static_cast<float>(clip.width), static_cast<float>(clip.height));
   }
 
-  return !(pos.x + size.x <= clipPos.x || pos.x >= clipPos.x + clipSize.x ||
-           pos.y + size.y <= clipPos.y || pos.y >= clipPos.y + clipSize.y);
+  // Añadimos un margen de seguridad (pérdida de precisión o bordes suaves)
+  constexpr float margin = 10.0f;
+
+  // Comprobación de solapamiento AABB con margen
+  return (pos.x + size.x + margin > clipPos.x && pos.x - margin < clipPos.x + clipSize.x &&
+          pos.y + size.y + margin > clipPos.y && pos.y - margin < clipPos.y + clipSize.y);
 }
 
 float ResolveSpacing(UIContext *ctx, float spacing) {
@@ -176,28 +181,6 @@ Vec2 ResolveAbsolutePosition(UIContext *ctx, const Vec2 &desiredPos,
   return resolvedPos;
 }
 
-void RegisterOccupiedArea(UIContext *ctx, const Vec2 &pos, const Vec2 &size) {
-  if (!ctx)
-    return;
-
-  OccupiedArea area;
-  area.pos = pos;
-  area.size = size;
-
-  if (!ctx->layoutStack.empty()) {
-    ctx->layoutStack.back().occupiedAreas.push_back(area);
-  }
-}
-
-void ClearOccupiedAreas(UIContext *ctx) {
-  if (!ctx)
-    return;
-  ctx->globalOccupiedAreas.clear();
-  for (auto &stack : ctx->layoutStack) {
-    stack.occupiedAreas.clear();
-  }
-}
-
 void AdvanceCursor(UIContext *ctx, const Vec2 &size) {
   if (!ctx)
     return;
@@ -242,22 +225,91 @@ Vec2 MeasureTextCached(UIContext *ctx, const std::string &text,
   if (!ctx || text.empty())
     return Vec2(0.0f, 0.0f);
 
-  std::string cacheKey = text + "|" + std::to_string(fontSize);
+  // Perf 1.1: Zero-allocation cache key using hash
+  // Combine text hash + fontSize bits into a single uint64_t key
+  uint32_t textHash = 5381;
+  for (char c : text) textHash = ((textHash << 5) + textHash) + static_cast<unsigned char>(c);
+  uint32_t sizeKey;
+  static_assert(sizeof(float) == sizeof(uint32_t));
+  std::memcpy(&sizeKey, &fontSize, sizeof(uint32_t));
+  uint64_t cacheKey = (static_cast<uint64_t>(textHash) << 32) | sizeKey;
 
   auto it = ctx->textMeasurementCache.find(cacheKey);
   if (it != ctx->textMeasurementCache.end()) {
-    return it->second;
+    // Issue 12: Update last access frame
+    it->second.lastAccessFrame = ctx->frame;
+    ctx->perfCounters.textCacheHits++;
+    return it->second.size;
   }
 
+  ctx->perfCounters.textCacheMisses++;
   Vec2 size = ctx->renderer.MeasureText(text, fontSize);
 
   // Evict cache if it exceeds max size
   if (ctx->textMeasurementCache.size() >= UIContext::TEXT_CACHE_MAX_SIZE) {
-    ctx->textMeasurementCache.clear();
+    // Issue 12: Instead of clearing all, remove oldest entries
+    for (auto evIt = ctx->textMeasurementCache.begin(); evIt != ctx->textMeasurementCache.end(); ) {
+      if ((ctx->frame - evIt->second.lastAccessFrame) > UIContext::TEXT_CACHE_STALE_AGE) {
+        evIt = ctx->textMeasurementCache.erase(evIt);
+      } else {
+        ++evIt;
+      }
+    }
+    // If still too big after removing stale, clear half
+    if (ctx->textMeasurementCache.size() >= UIContext::TEXT_CACHE_MAX_SIZE) {
+      size_t toRemove = ctx->textMeasurementCache.size() / 2;
+      auto evIt = ctx->textMeasurementCache.begin();
+      while (toRemove > 0 && evIt != ctx->textMeasurementCache.end()) {
+        evIt = ctx->textMeasurementCache.erase(evIt);
+        --toRemove;
+      }
+    }
   }
 
-  ctx->textMeasurementCache[cacheKey] = size;
+  ctx->textMeasurementCache[cacheKey] = {size, ctx->frame};
   return size;
+}
+
+Vec2 MeasureTextCached(UIContext *ctx, const std::string &text,
+                        float fontSize, const std::string &fontName) {
+  if (fontName.empty()) return MeasureTextCached(ctx, text, fontSize);
+  if (!ctx || text.empty()) return Vec2(0.0f, 0.0f);
+
+  // Include fontName hash in cache key
+  uint32_t textHash = 5381;
+  for (char c : text) textHash = ((textHash << 5) + textHash) + static_cast<unsigned char>(c);
+  for (char c : fontName) textHash = ((textHash << 5) + textHash) + static_cast<unsigned char>(c);
+  uint32_t sizeKey;
+  std::memcpy(&sizeKey, &fontSize, sizeof(uint32_t));
+  uint64_t cacheKey = (static_cast<uint64_t>(textHash) << 32) | sizeKey;
+
+  auto it = ctx->textMeasurementCache.find(cacheKey);
+  if (it != ctx->textMeasurementCache.end()) {
+    it->second.lastAccessFrame = ctx->frame;
+    ctx->perfCounters.textCacheHits++;
+    return it->second.size;
+  }
+
+  ctx->perfCounters.textCacheMisses++;
+  Vec2 size = ctx->renderer.MeasureTextWithFont(text, fontName, fontSize);
+  ctx->textMeasurementCache[cacheKey] = {size, ctx->frame};
+  return size;
+}
+
+void DrawStyledText(UIContext *ctx, const Vec2 &pos, const std::string &text, const TextStyle &style) {
+  if (!ctx || text.empty()) return;
+  if (style.fontName.empty()) {
+    ctx->renderer.DrawText(pos, text, style.color, style.fontSize);
+  } else {
+    ctx->renderer.DrawTextWithFont(pos, text, style.color, style.fontName, style.fontSize);
+  }
+}
+
+Vec2 MeasureStyledText(UIContext *ctx, const std::string &text, const TextStyle &style) {
+  if (style.fontName.empty()) {
+    return MeasureTextCached(ctx, text, style.fontSize);
+  }
+  return MeasureTextCached(ctx, text, style.fontSize, style.fontName);
 }
 
 // Animation slot offsets - use large prime-based offsets to avoid collisions
@@ -269,22 +321,69 @@ uint32_t AnimSlot(uint32_t widgetId, uint32_t slot) {
   return widgetId + SLOT_OFFSET_BASE * (slot + 1);
 }
 
+// Helper to register hash with GC tracking
+// Perf 1.2: Only register base ID — animation slots registered lazily via RegisterAnimSlots
+static uint32_t RegisterHash(uint32_t hash) {
+  UIContext *ctx = GetContext();
+  if (ctx) {
+    ctx->lastSeenFrame[hash] = ctx->frame;
+    ctx->lastGeneratedId = hash;
+  }
+  return hash;
+}
+
+// Perf 1.2: Lazy registration of animation slots — only called by widgets that use animations
+void RegisterAnimSlots(uint32_t widgetId) {
+  UIContext *ctx = GetContext();
+  if (ctx) {
+    uint32_t frame = ctx->frame;
+    ctx->lastSeenFrame[AnimSlot(widgetId, 0)] = frame;
+    ctx->lastSeenFrame[AnimSlot(widgetId, 1)] = frame;
+    ctx->lastSeenFrame[AnimSlot(widgetId, 2)] = frame;
+  }
+}
+
 uint32_t GenerateId(const char *str) {
   uint32_t hash = 5381;
   int c;
   while ((c = *str++)) {
     hash = ((hash << 5) + hash) + c;
   }
-  UIContext *ctx = GetContext();
-  if (ctx) {
-    uint32_t frame = ctx->frame;
-    ctx->lastSeenFrame[hash] = frame;
-    // Register animation slots so GC doesn't collect them
-    ctx->lastSeenFrame[AnimSlot(hash, 0)] = frame;
-    ctx->lastSeenFrame[AnimSlot(hash, 1)] = frame;
-    ctx->lastSeenFrame[AnimSlot(hash, 2)] = frame;
+  return RegisterHash(hash);
+}
+
+// Issue 14: Two-part GenerateId without string concatenation
+uint32_t GenerateId(const char *prefix, const char *str) {
+  uint32_t hash = 5381;
+  int c;
+  const char* p = prefix;
+  while ((c = *p++)) {
+    hash = ((hash << 5) + hash) + c;
   }
-  return hash;
+  p = str;
+  while ((c = *p++)) {
+    hash = ((hash << 5) + hash) + c;
+  }
+  return RegisterHash(hash);
+}
+
+// Issue 14: Three-part GenerateId without string concatenation
+uint32_t GenerateId(const char *a, const char *b, const char *c_str) {
+  uint32_t hash = 5381;
+  int c;
+  const char* p = a;
+  while ((c = *p++)) {
+    hash = ((hash << 5) + hash) + c;
+  }
+  p = b;
+  while ((c = *p++)) {
+    hash = ((hash << 5) + hash) + c;
+  }
+  p = c_str;
+  while ((c = *p++)) {
+    hash = ((hash << 5) + hash) + c;
+  }
+  return RegisterHash(hash);
 }
 
 void DrawScrollbar(UIContext *ctx, const Vec2 &barPos, const Vec2 &barSize,
@@ -358,6 +457,79 @@ bool PointInRect(const Vec2 &p, const Vec2 &pos, const Vec2 &size) {
 
 void SetNextConstraints(const LayoutConstraints &constraints) {
   nextConstraints = constraints;
+}
+
+// DPI helpers (Phase 4)
+float GetDPIScale() {
+    auto* ctx = GetContext();
+    return ctx ? ctx->dpiScale : 1.0f;
+}
+
+float Scaled(float value) {
+    auto* ctx = GetContext();
+    return ctx ? value * ctx->dpiScale : value;
+}
+
+// Style override stack (Phase 6)
+void PushStyle(const Style& override) {
+    auto* ctx = GetContext();
+    if (ctx) ctx->styleStack.push_back(override);
+}
+
+void PopStyle() {
+    auto* ctx = GetContext();
+    if (ctx && !ctx->styleStack.empty()) ctx->styleStack.pop_back();
+}
+
+void PushButtonStyle(const ButtonStyle& s) {
+    auto* ctx = GetContext();
+    if (ctx) ctx->buttonStyleStack.push_back(s);
+}
+
+void PopButtonStyle() {
+    auto* ctx = GetContext();
+    if (ctx && !ctx->buttonStyleStack.empty()) ctx->buttonStyleStack.pop_back();
+}
+
+void PushPanelStyle(const PanelStyle& s) {
+    auto* ctx = GetContext();
+    if (ctx) ctx->panelStyleStack.push_back(s);
+}
+
+void PopPanelStyle() {
+    auto* ctx = GetContext();
+    if (ctx && !ctx->panelStyleStack.empty()) ctx->panelStyleStack.pop_back();
+}
+
+void PushTextColor(const Color& color) {
+    auto* ctx = GetContext();
+    if (ctx) ctx->textColorStack.push_back(color);
+}
+
+void PopTextColor() {
+    auto* ctx = GetContext();
+    if (ctx && !ctx->textColorStack.empty()) ctx->textColorStack.pop_back();
+}
+
+// Accessibility (Phase 6)
+void DrawAccessibilityFocusRing(const Vec2& pos, const Vec2& size) {
+    auto* ctx = GetContext();
+    if (!ctx) return;
+
+    // High-contrast focus ring: 2px outline with accent color
+    Color focusColor(0.4f, 0.6f, 1.0f, 0.9f); // Bright blue
+    float thickness = 2.0f;
+    float offset = 2.0f;
+
+    Vec2 ringPos = {pos.x - offset, pos.y - offset};
+    Vec2 ringSize = {size.x + offset * 2.0f, size.y + offset * 2.0f};
+
+    // Outer ring
+    ctx->renderer.DrawRect(ringPos, ringSize, focusColor, 4.0f);
+    // Inner ring (white for contrast)
+    Vec2 innerPos = {pos.x - offset + thickness, pos.y - offset + thickness};
+    Vec2 innerSize = {size.x + (offset - thickness) * 2.0f, size.y + (offset - thickness) * 2.0f};
+    ctx->renderer.DrawRect(innerPos, innerSize, Color(1.0f, 1.0f, 1.0f, 0.6f), 3.0f);
 }
 
 } // namespace FluentUI

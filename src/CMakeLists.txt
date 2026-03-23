@@ -4,6 +4,14 @@ add_library(FluentUI
     Core/FontMSDF.cpp
     Core/MSDFGenerator.cpp
     Core/InputState.cpp
+    Core/OpenGLBackend.cpp
+    Core/UIBuilder.cpp
+    Core/FluentApp.cpp
+    Core/DockSystem.cpp
+    Core/LayoutSerializer.cpp
+    Core/FontManager.cpp
+    Core/Accessibility.cpp
+    Core/FileDialog.cpp
     UI/WidgetHelpers.cpp
     UI/BasicWidgets.cpp
     UI/InputWidgets.cpp
@@ -13,4 +21,4 @@ add_library(FluentUI
     UI/OverlayWidgets.cpp
     Theme/FluentTheme.cpp)
 
-target_include_directories(FluentUI PUBLIC ${CMAKE_SOURCE_DIR}/include)
+# Include dirs are set in the parent CMakeLists.txt via BUILD_INTERFACE/INSTALL_INTERFACE

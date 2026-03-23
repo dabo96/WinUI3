@@ -84,6 +84,13 @@
 #include "core/Context.h"
 #include "core/InputState.h"
 #include "core/Renderer.h"
+#include "core/FluentApp.h"
+#include "core/UIBuilder.h"
+#include "core/DockSystem.h"
+#include "core/UndoSystem.h"
+#include "core/LayoutSerializer.h"
+#include "core/FontManager.h"
+#include "core/FileDialog.h"
 
 // UI includes
 #include "UI/Layout.h"
@@ -96,6 +103,7 @@
 // Math includes
 #include "Math/Color.h"
 #include "Math/Vec2.h"
+#include "Math/Rect.h"
 
 // Main namespace
 namespace FluentUI {

@@ -62,8 +62,7 @@ bool BeginMenu(const std::string &label, bool enabled) {
   if (!ctx)
     return false;
 
-  std::string key = "MENU:" + label;
-  uint32_t menuId = GenerateId(key.c_str());
+  uint32_t menuId = GenerateId("MENU:", label.c_str());
   auto &state = ctx->menuStates[menuId];
 
   const PanelStyle &panelStyle = ctx->style.panel;
@@ -122,7 +121,6 @@ bool BeginMenu(const std::string &label, bool enabled) {
                       textStyle.color.b * 0.5f, textStyle.color.a);
   ctx->renderer.DrawText(textPos, label, textColor, textStyle.fontSize);
 
-  RegisterOccupiedArea(ctx, menuPos, menuSize);
   AdvanceCursor(ctx, menuSize);
 
   // Guardar estado
@@ -171,29 +169,37 @@ void EndMenu() {
 
   // Find the menu state for this specific menu
   auto it = ctx->menuStates.find(currentMenuId);
-  if (it != ctx->menuStates.end() && it->second.open) {
-    auto &state = it->second;
+  if (it == ctx->menuStates.end())
+    return;
 
-    // Cerrar el layout vertical primero para obtener el tamaño real del contenido
+  auto &state = it->second;
+
+  // ALWAYS close the BeginVertical that BeginMenu opened, even if a MenuItem
+  // click set state.open = false during this frame. Otherwise the layout stack
+  // is permanently corrupted.
+
+  // Capture cursor position BEFORE EndVertical restores it to the parent
+  Vec2 contentEndCursor = ctx->cursorPos;
+
+  // Cerrar el layout vertical
+  if (!ctx->layoutStack.empty()) {
+    EndVertical(false);
+
+    // Explicitly restore cursor to parent horizontal layout position
     if (!ctx->layoutStack.empty()) {
-      EndVertical(false);
-
-      // Explicitly restore cursor to parent horizontal layout position
-      // This ensures we don't lose track of where the next menu item should be
-      if (!ctx->layoutStack.empty()) {
-         LayoutStack &parentStack = ctx->layoutStack.back();
-         if (!parentStack.isVertical) {
-             ctx->cursorPos = Vec2(parentStack.cursor.x, parentStack.contentStart.y);
-         }
-      }
+       LayoutStack &parentStack = ctx->layoutStack.back();
+       if (!parentStack.isVertical) {
+           ctx->cursorPos = Vec2(parentStack.cursor.x, parentStack.contentStart.y);
+       }
     }
+  }
 
+  if (state.open) {
     // Calcular posición y tamaño del dropdown basado en el contenido real
     Vec2 dropdownStartPos(state.position.x, state.position.y + state.size.y);
-    Vec2 currentCursor = ctx->cursorPos;
 
     float dropdownWidth = 200.0f;
-    float dropdownHeight = currentCursor.y - dropdownStartPos.y;
+    float dropdownHeight = contentEndCursor.y - dropdownStartPos.y;
     if (dropdownHeight < 10.0f) {
       dropdownHeight = 10.0f;
     }
@@ -257,7 +263,20 @@ void EndMenu() {
         }
     }
 
+    // Save dropdown rect in MenuState so NewFrame can check clicks against it
+    it->second.dropdownPos = dropdown.dropdownPos;
+    it->second.dropdownSize = dropdown.dropdownSize;
+
     ctx->deferredMenuDropdowns.push_back(dropdown);
+  } else {
+    // Menu was closed by a MenuItem click this frame — discard pending items
+    if (!ctx->menuItemStartIndexStack.empty()) {
+        size_t startIndex = ctx->menuItemStartIndexStack.back();
+        ctx->menuItemStartIndexStack.pop_back();
+        if (startIndex < ctx->currentMenuItems.size()) {
+            ctx->currentMenuItems.resize(startIndex);
+        }
+    }
   }
 }
 
@@ -313,7 +332,6 @@ bool MenuItem(const std::string &label, bool enabled) {
 
   // No dibujamos nada aquí, se dibujará en RenderDeferredDropdowns
 
-  RegisterOccupiedArea(ctx, itemPos, itemSize);
   AdvanceCursor(ctx, itemSize);
 
   // Si se hace click, cerrar el menú
@@ -356,8 +374,119 @@ void MenuSeparator() {
 
   ctx->currentMenuItems.push_back(item);
 
-  RegisterOccupiedArea(ctx, separatorPos, separatorSize);
   AdvanceCursor(ctx, separatorSize);
+}
+
+// ---------------------------------------------------------------------------
+// Toolbar
+// ---------------------------------------------------------------------------
+
+void BeginToolbar() {
+  UIContext *ctx = GetContext();
+  if (!ctx)
+    return;
+
+  Vec2 viewport = ctx->renderer.GetViewportSize();
+  Vec2 toolbarPos = ctx->cursorPos;
+  Vec2 toolbarSize = Vec2(viewport.x, TOOLBAR_HEIGHT);
+
+  const PanelStyle &panelStyle = ctx->style.panel;
+
+  // Draw toolbar background - slightly different shade from menubar
+  Color toolbarBg = AdjustContainerBackground(panelStyle.headerBackground, ctx->style.isDarkTheme);
+  ctx->renderer.DrawRectFilled(toolbarPos, toolbarSize, toolbarBg, 0.0f);
+
+  // Draw a subtle bottom border
+  Color borderColor = panelStyle.borderColor;
+  borderColor.a *= 0.5f;
+  ctx->renderer.DrawRectFilled(Vec2(toolbarPos.x, toolbarPos.y + TOOLBAR_HEIGHT - 1.0f),
+                               Vec2(viewport.x, 1.0f), borderColor, 0.0f);
+
+  // Set cursor inside the toolbar with small vertical padding
+  float vPad = (TOOLBAR_HEIGHT - 24.0f) * 0.5f; // center 24px content in 36px bar
+  ctx->cursorPos = Vec2(toolbarPos.x + 4.0f, toolbarPos.y + vPad);
+  ctx->lastItemPos = ctx->cursorPos;
+
+  // Begin horizontal layout for toolbar contents
+  BeginHorizontal(4.0f, toolbarSize, Vec2(4.0f, vPad));
+}
+
+void EndToolbar() {
+  UIContext *ctx = GetContext();
+  if (!ctx)
+    return;
+
+  EndHorizontal(false);
+
+  Vec2 viewport = ctx->renderer.GetViewportSize();
+
+  // Advance cursor past the toolbar, mirroring EndMenuBar pattern.
+  // The toolbar was drawn starting at lastItemPos.y (or earlier);
+  // ensure cursor lands exactly one TOOLBAR_HEIGHT below where it started.
+  // Since BeginToolbar set cursorPos to toolbarPos + padding, we compute
+  // the bottom edge from the layout origin.
+  float toolbarTop = ctx->lastItemPos.y;
+  // If the horizontal layout hasn't moved cursor past the bar, force it.
+  if (ctx->cursorPos.y < toolbarTop + TOOLBAR_HEIGHT) {
+    ctx->cursorPos.y = toolbarTop + TOOLBAR_HEIGHT;
+  }
+  ctx->cursorPos.x = 0.0f;
+  ctx->lastItemPos = ctx->cursorPos;
+  ctx->lastItemSize = Vec2(viewport.x, TOOLBAR_HEIGHT);
+}
+
+// ---------------------------------------------------------------------------
+// StatusBar
+// ---------------------------------------------------------------------------
+
+void BeginStatusBar(const std::string &text) {
+  UIContext *ctx = GetContext();
+  if (!ctx)
+    return;
+
+  Vec2 viewport = ctx->renderer.GetViewportSize();
+  Vec2 statusPos = Vec2(0.0f, viewport.y - STATUSBAR_HEIGHT);
+  Vec2 statusSize = Vec2(viewport.x, STATUSBAR_HEIGHT);
+
+  const PanelStyle &panelStyle = ctx->style.panel;
+
+  // Draw statusbar background
+  Color statusBg = AdjustContainerBackground(panelStyle.headerBackground, ctx->style.isDarkTheme);
+  ctx->renderer.DrawRectFilled(statusPos, statusSize, statusBg, 0.0f);
+
+  // Draw a subtle top border
+  Color borderColor = panelStyle.borderColor;
+  borderColor.a *= 0.5f;
+  ctx->renderer.DrawRectFilled(statusPos, Vec2(viewport.x, 1.0f), borderColor, 0.0f);
+
+  // If only text is provided (no content lambda will follow), draw the label now
+  if (!text.empty()) {
+    const TextStyle &textStyle = ctx->style.GetTextStyle(TypographyStyle::Caption);
+    Vec2 textSize = MeasureTextCached(ctx, text, textStyle.fontSize);
+    float textY = statusPos.y + (STATUSBAR_HEIGHT - textSize.y) * 0.5f;
+    ctx->renderer.DrawText(Vec2(statusPos.x + 8.0f, textY), text,
+                           textStyle.color, textStyle.fontSize);
+  }
+
+  // Save current cursor and set up for statusbar content
+  float vPad = (STATUSBAR_HEIGHT - 16.0f) * 0.5f; // center 16px content in 24px bar
+  ctx->cursorPos = Vec2(statusPos.x + 4.0f, statusPos.y + vPad);
+  ctx->lastItemPos = ctx->cursorPos;
+
+  // Begin horizontal layout for statusbar contents
+  BeginHorizontal(4.0f, statusSize, Vec2(4.0f, vPad));
+}
+
+void EndStatusBar() {
+  UIContext *ctx = GetContext();
+  if (!ctx)
+    return;
+
+  EndHorizontal(false);
+
+  // StatusBar is at the bottom, no need to advance cursor for subsequent widgets
+  // Restore cursor to where it was before the statusbar
+  ctx->lastItemSize = Vec2(ctx->renderer.GetViewportSize().x, STATUSBAR_HEIGHT);
 }
 
 } // namespace FluentUI

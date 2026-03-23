@@ -81,4 +81,7 @@ namespace FluentUI {
     // Crear tema personalizado con color de acento
     Style CreateCustomFluentStyle(const Color& accentColor, bool darkTheme = true);
 
+    // High contrast theme (Phase 6: Accessibility)
+    Style GetHighContrastStyle();
+
 } // namespace FluentUI

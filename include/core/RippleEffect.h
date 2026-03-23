@@ -61,6 +61,9 @@ namespace FluentUI {
         // Obtener todos los ripples activos
         const std::vector<Ripple>& GetRipples() const { return ripples_; }
 
+        // Check if any ripples are active
+        bool IsActive() const { return !ripples_.empty(); }
+
         // Limpiar todos los ripples
         void Clear() { ripples_.clear(); }
 

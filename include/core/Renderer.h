@@ -1,8 +1,7 @@
 #pragma once
 #include "Math/Color.h"
 #include "Math/Vec2.h"
-#include <SDL3/SDL.h>
-#include <glad/glad.h>
+#include "core/RenderBackend.h"
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -11,34 +10,63 @@
 #include <cstdint>
 #include "core/FontMSDF.h"
 #include "core/MSDFGenerator.h"
+#include "core/FontManager.h"
 #include <memory>
 #include <iostream>
 
-#ifndef NDEBUG
-#define GL_CHECK(call) do { \
-    call; \
-    GLenum err = glGetError(); \
-    if (err != GL_NO_ERROR) { \
-        std::cerr << "OpenGL error 0x" << std::hex << err << std::dec \
-                  << " at " << __FILE__ << ":" << __LINE__ << " - " << #call << std::endl; \
-    } \
-} while(0)
-#else
-#define GL_CHECK(call) call
-#endif
-
 namespace FluentUI {
 
+enum class RenderLayer {
+  Default = 0,
+  Overlay = 1,
+  Tooltip = 2,
+  Count = 3
+};
 
 class Renderer {
 public:
+  struct ClipRect {
+    int x, y, width, height;
+  };
+
+  // Estructura para almacenar un batch de dibujo diferido
+  struct RenderBatch {
+    ShaderType type;
+    std::vector<RenderVertex> vertices;
+    std::vector<unsigned int> indices;
+    void* texture = nullptr;
+    float projection[16];
+    Color textColor;
+    ClipRect clipRect;
+    bool hasClip = false;
+    float lineWidth = 1.0f;
+    bool isLines = false;
+  };
+
   Renderer() = default;
   ~Renderer();
 
-  bool Init(SDL_Window *window);
+  // Perf Phase C: Optional pointer to performance counters (set by Context)
+  struct PerfCounters {
+    uint32_t* flushCount = nullptr;
+    uint32_t* stateChanges = nullptr;
+    uint32_t* batchCount = nullptr;
+    uint32_t* drawCalls = nullptr;
+    uint32_t* vertexCount = nullptr;
+    uint32_t* indexCount = nullptr;
+    uint32_t* batchMerges = nullptr;
+    uint32_t* clipPushes = nullptr;
+  };
+  PerfCounters perfCounters;
+
+  bool Init(RenderBackend* backend);
   void BeginFrame(const Color& clearColor = Color(0.13f, 0.13f, 0.13f, 1.0f));
   void EndFrame();
   void Shutdown();
+
+  // Gestión de capas
+  void SetLayer(RenderLayer layer) { currentLayer = layer; }
+  RenderLayer GetLayer() const { return currentLayer; }
 
   // Primitivas de dibujo
   void DrawRect(const Vec2 &pos, const Vec2 &size, const Color &color,
@@ -47,6 +75,9 @@ public:
                       float cornerRadius = 0.0f);
   void DrawRectWithElevation(const Vec2 &pos, const Vec2 &size, const Color &color,
                              float cornerRadius = 0.0f, float elevation = 0.0f);
+  void DrawRectGradient(const Vec2 &pos, const Vec2 &size,
+                        const Color &topLeft, const Color &topRight,
+                        const Color &bottomLeft, const Color &bottomRight);
   void DrawRectAcrylic(const Vec2 &pos, const Vec2 &size, const Color &tintColor,
                        float cornerRadius = 0.0f, float opacity = 0.8f, float blurAmount = 0.0f);
   void DrawLine(const Vec2 &start, const Vec2 &end, const Color &color,
@@ -54,37 +85,56 @@ public:
   void DrawCircle(const Vec2 &center, float radius, const Color &color,
                   bool filled = true);
   void DrawRipple(const Vec2 &center, float radius, float opacity);
-  
-  // Texto básico (usando caracteres ASCII simples)
+
+  // Image drawing
+  void DrawImage(const Vec2& pos, const Vec2& size, void* textureHandle,
+                 const Vec2& uv0 = Vec2(0,0), const Vec2& uv1 = Vec2(1,1),
+                 const Color& tint = Color(1,1,1,1), float cornerRadius = 0.0f);
+
+  // Bezier curve (Phase 5) — cubic bezier tessellated into line segments
+  void DrawBezier(const Vec2& p0, const Vec2& p1, const Vec2& p2, const Vec2& p3,
+                  const Color& color, float thickness = 1.0f, int segments = 32);
+
+  // Texto básico
   void DrawText(const Vec2 &pos, const std::string &text, const Color &color,
                 float fontSize = 16.0f);
   bool LoadFont(const std::string &filepath, int pixelHeight);
   bool IsFontLoaded() const { return fontLoaded; }
   Vec2 MeasureText(const std::string &text, float fontSize = 16.0f);
 
+  // Issue 8: Public glyph advance accessor for FindCaretPosition
+  float GetGlyphAdvance(uint32_t codepoint, float fontSize);
+
+  // Multi-font support (Phase 5) — draw text with a named font
+  void DrawTextWithFont(const Vec2& pos, const std::string& text, const Color& color,
+                        const std::string& fontName, float fontSize = 16.0f);
+  Vec2 MeasureTextWithFont(const std::string& text, const std::string& fontName, float fontSize = 16.0f);
+
+  // Font manager access
+  FontManager& GetFontManager() { return fontManager; }
+
   // Utilidades
   void SetViewport(int width, int height);
   Vec2 GetViewportSize() const { return viewportSize; }
 
-  // Shader utilities
-  std::string LoadShaderSource(const std::string &filepath);
-  GLuint CompileShader(GLenum type, const std::string &source);
-  GLuint CreateShaderProgram(const std::string &vertexSource,
-                             const std::string &fragmentSource);
   void FlushBatch();
-  void SetupTextRendering();
-  void SetupShaders();
+  void FlushBatch(ShaderType type, void* texture = nullptr, const Color& textColor = Color(1,1,1,1));
+
 private:
-  SDL_Window *window = nullptr;
-  SDL_GLContext glContext = nullptr;
-  GLuint shaderProgram = 0;
-  GLuint textShaderProgram = 0;
-  GLuint VAO = 0, VBO = 0, EBO = 0;
-  GLuint textVAO = 0, textVBO = 0;
-  GLuint quadVAO = 0, quadVBO = 0, quadEBO = 0;
-  GLuint lineVAO = 0, lineVBO = 0;
-  GLuint circleVAO = 0, circleVBO = 0;
+  RenderBackend* backend = nullptr;
   Vec2 viewportSize = {800.0f, 600.0f};
+  RenderLayer currentLayer = RenderLayer::Default;
+
+  // Perf 1.3: Cached projection matrix — recomputed only on SetViewport()
+  float cachedProjection[16] = {};
+
+  // Issue 1: Batch state tracking to avoid unnecessary flushes
+  ShaderType currentBatchShader = ShaderType::Basic;
+  void* currentBatchTexture = nullptr;
+  Color currentBatchTextColor{1,1,1,1};
+  void EnsureBatchState(ShaderType shader, void* texture, const Color& color);
+
+  std::vector<RenderBatch> layerBatches[(int)RenderLayer::Count];
 
   struct Glyph {
     Vec2 size;     // size of glyph in pixels
@@ -93,10 +143,11 @@ private:
     Vec2 uv0;
     Vec2 uv1;
     bool valid = false;
+    uint32_t lastAccessFrame = 0;  // Perf R6: for LRU eviction
   };
-
-  // MSDF Glyph structure for pre-generated atlas
-
+  uint32_t glyphCacheFrame = 0;
+  static constexpr size_t MAX_GLYPH_CACHE = 2048;
+  static constexpr uint32_t GLYPH_EVICT_AGE = 600; // Evict after 10s at 60fps
 
   std::unordered_map<std::uint32_t, Glyph> glyphCache;
   bool fontLoaded = false;
@@ -104,15 +155,10 @@ private:
   float fontAscent = 0.0f;
   float fontDescent = 0.0f;
   float fontLineHeight = 0.0f;
-  bool textSystemInitialized = false;
-  GLint textColorUniform = -1;
-  GLint projectionUniform = -1;
-  GLint textProjectionUniform = -1;
   FT_Library ftLibrary = nullptr;
   FT_Face fontFace = nullptr;
-  bool projectionDirty = true;
 
-  GLuint fontAtlasTexture = 0;
+  void* fontAtlasTexture = nullptr;
   int atlasWidth = 0;
   int atlasHeight = 0;
   int atlasNextX = 0;
@@ -121,11 +167,13 @@ private:
 
   std::unique_ptr<FontMSDF> msdfFont;
   std::unique_ptr<MSDFGenerator> msdfGenerator;
-  
-  // Dynamic MSDF atlas for FreeType-generated glyphs
+
+  // Multi-font manager (Phase 5)
+  FontManager fontManager;
+
   static constexpr int DYNAMIC_ATLAS_SIZE = 2048;
   static constexpr int MSDF_GLYPH_SIZE = 64;
-  GLuint dynamicMSDFAtlasTexture = 0;
+  void* dynamicMSDFAtlasTexture = nullptr;
   int dynamicAtlasWidth = DYNAMIC_ATLAS_SIZE;
   int dynamicAtlasHeight = DYNAMIC_ATLAS_SIZE;
   int dynamicAtlasNextX = 0;
@@ -134,7 +182,6 @@ private:
   std::unordered_map<std::uint32_t, Glyph> dynamicMSDFGlyphCache;
 
   // Helpers internos
-  void EnsureBatchResources();
   void InitializeDefaultFont();
   void ClearGlyphs();
   const Glyph* GetGlyph(std::uint32_t codepoint);
@@ -142,40 +189,32 @@ private:
   const Glyph* GetOrGenerateMSDFGlyph(std::uint32_t codepoint);
   bool GenerateMSDFGlyph(std::uint32_t codepoint);
   float GetKerning(std::uint32_t left, std::uint32_t right) const;
-  void UpdateProjection();
   bool EnsureAtlasSpace(int glyphWidth, int glyphHeight, int& outX, int& outY);
   bool EnsureDynamicMSDFAtlasSpace(int glyphWidth, int glyphHeight, int& outX, int& outY);
 
-  // MSDF methods
+  // Issue 15: Helper for acrylic multi-fill optimization
+  void DrawMultipleFilledRoundedRects(const Vec2& pos, const Vec2& size, float cornerRadius,
+                                       const Color* colors, int count);
 
-
-  struct Vertex {
-    float x;
-    float y;
-    float r;
-    float g;
-    float b;
-    float a;
-  };
-
-  struct ClipRect {
-    int x;
-    int y;
-    int width;
-    int height;
-  };
-
-  std::vector<Vertex> quadVertices;
+  std::vector<RenderVertex> quadVertices;
   std::vector<unsigned int> quadIndices;
-  std::vector<Vertex> lineVertices;
+  std::vector<RenderVertex> lineVertices;
   float lineBatchWidth = 1.0f;
-  bool batchResourcesInitialized = false;
-  std::vector<ClipRect> clipStack;
-  
+
   // Optimización: límites de batch para evitar reallocaciones grandes
   static constexpr size_t MAX_QUAD_VERTICES = 10000; // ~2500 quads
   static constexpr size_t MAX_QUAD_INDICES = 15000;  // 6 indices por quad
   static constexpr size_t MAX_LINE_VERTICES = 5000;  // ~2500 líneas
+
+  // Perf 3.1: Pre-computed trig lookup table for rounded rects (8 segments per corner)
+  static constexpr int CORNER_SEGMENTS = 8;
+  static constexpr int CORNER_POINTS = CORNER_SEGMENTS + 1; // 9 points per quarter
+  float cosTable[CORNER_POINTS];
+  float sinTable[CORNER_POINTS];
+  bool trigTablesInitialized = false;
+  void InitTrigTables();
+
+  std::vector<ClipRect> clipStack;
 
 public:
   void PushClipRect(const Vec2& pos, const Vec2& size);

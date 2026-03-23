@@ -61,7 +61,6 @@ void ProgressBar(float fraction, const Vec2 &size, const std::string &overlay,
     }
   }
 
-  RegisterOccupiedArea(ctx, barPos, barSize);
   ctx->lastItemPos = barPos;
 
   if (!hasAbsolutePos) {
@@ -85,62 +84,74 @@ void Tooltip(const std::string &text, float delay) {
   auto &tooltip = ctx->tooltipState;
 
   if (mouseOverWidget) {
+    ctx->anyTooltipHoveredThisFrame = true;
+    
+    // Si cambiamos de widget, reiniciar el contador
+    if (tooltip.lastHoveredWidgetId != ctx->lastGeneratedId) {
+        tooltip.hoverTime = 0.0f;
+        tooltip.visible = false;
+        tooltip.lastHoveredWidgetId = ctx->lastGeneratedId;
+    }
+
     tooltip.hoverTime += ctx->deltaTime;
-    if (tooltip.hoverTime >= tooltip.delay) {
+    
+    if (tooltip.hoverTime >= delay) {
       tooltip.visible = true;
       tooltip.text = text;
-      tooltip.delay = delay;
 
-      // Posicionar el tooltip cerca del mouse, pero con un offset
-      Vec2 offset(10.0f, 10.0f);
-      Vec2 viewport = ctx->renderer.GetViewportSize();
-
-      // Medir el tamaño del texto del tooltip
-      const TextStyle &textStyle =
-          ctx->style.GetTextStyle(TypographyStyle::Caption);
-      Vec2 textSize = MeasureTextCached(ctx,text, textStyle.fontSize);
-      Vec2 tooltipSize(textSize.x + textStyle.fontSize,
-                       textSize.y + textStyle.fontSize);
-
-      // Calcular posición (arriba y a la derecha del mouse, asegurándose de no
-      // salir de la ventana)
       float mouseX = ctx->input.MouseX();
       float mouseY = ctx->input.MouseY();
-      Vec2 tooltipPos(mouseX + offset.x, mouseY - tooltipSize.y - offset.y);
-      if (tooltipPos.x + tooltipSize.x > viewport.x) {
-        tooltipPos.x = mouseX - tooltipSize.x - offset.x;
+
+      const TextStyle &textStyle = ctx->style.GetTextStyle(TypographyStyle::Caption);
+
+      // Multi-line: split on \n, compute per-line sizes with max-width constraint
+      static constexpr float MAX_TOOLTIP_WIDTH = 300.0f;
+      float lineH = textStyle.fontSize * 1.3f;
+      float maxLineW = 0.0f;
+      int lineCount = 1;
+      {
+        size_t pos = 0;
+        while ((pos = text.find('\n', pos)) != std::string::npos) {
+          lineCount++;
+          pos++;
+        }
       }
-      if (tooltipPos.y < 0.0f) {
-        tooltipPos.y = mouseY + offset.y;
+      // Measure each line
+      {
+        size_t start = 0;
+        for (int i = 0; i < lineCount; ++i) {
+          size_t end = text.find('\n', start);
+          if (end == std::string::npos) end = text.size();
+          std::string line = text.substr(start, end - start);
+          float lw = MeasureTextCached(ctx, line, textStyle.fontSize).x;
+          maxLineW = std::max(maxLineW, std::min(lw, MAX_TOOLTIP_WIDTH));
+          start = end + 1;
+        }
       }
+
+      Vec2 tooltipSize(maxLineW + 16.0f, lineCount * lineH + 10.0f);
+
+      // Posición: un poco debajo y a la derecha del cursor
+      Vec2 tooltipPos(mouseX + 16.0f, mouseY + 16.0f);
+      Vec2 viewport = ctx->renderer.GetViewportSize();
+
+      if (tooltipPos.x + tooltipSize.x > viewport.x) tooltipPos.x = mouseX - tooltipSize.x - 8.0f;
+      if (tooltipPos.y + tooltipSize.y > viewport.y) tooltipPos.y = mouseY - tooltipSize.y - 8.0f;
+
       tooltip.position = tooltipPos;
+
+      // Fade-in: ramp opacity over 0.15s after becoming visible
+      float fadeTime = tooltip.hoverTime - delay;
+      float opacity = std::min(1.0f, fadeTime / 0.15f);
+
+      // Encolar para renderizado diferido
+      UIContext::DeferredTooltip deferred;
+      deferred.text = text;
+      deferred.pos = tooltipPos;
+      deferred.fontSize = textStyle.fontSize;
+      deferred.opacity = opacity;
+      ctx->deferredTooltips.push_back(deferred);
     }
-  } else {
-    tooltip.hoverTime = 0.0f;
-    tooltip.visible = false;
-  }
-
-  // Dibujar tooltip si es visible
-  if (tooltip.visible) {
-    const PanelStyle &panelStyle = ctx->style.panel;
-    const TextStyle &textStyle =
-        ctx->style.GetTextStyle(TypographyStyle::Caption);
-    Vec2 textSize = MeasureTextCached(ctx,tooltip.text, textStyle.fontSize);
-    Vec2 tooltipSize(textSize.x + textStyle.fontSize,
-                     textSize.y + textStyle.fontSize);
-    Vec2 padding(textStyle.fontSize * 0.5f, textStyle.fontSize * 0.5f);
-
-    // Dibujar tooltip con elevation para que destaque
-    ctx->renderer.DrawRectWithElevation(tooltip.position, tooltipSize,
-                                        panelStyle.background, 4.0f, 4.0f);
-    ctx->renderer.DrawRect(tooltip.position, tooltipSize,
-                           panelStyle.borderColor, 4.0f);
-
-    // Dibujar texto del tooltip
-    Vec2 textPos(tooltip.position.x + padding.x,
-                 tooltip.position.y + padding.y);
-    ctx->renderer.DrawText(textPos, tooltip.text, textStyle.color,
-                           textStyle.fontSize);
   }
 }
 
@@ -149,8 +160,7 @@ bool BeginContextMenu(const std::string &id) {
   if (!ctx)
     return false;
 
-  std::string key = "CTXMENU:" + id;
-  uint32_t menuId = GenerateId(key.c_str());
+  uint32_t menuId = GenerateId("CTXMENU:", id.c_str());
   auto &state = ctx->contextMenuStates[menuId];
 
   // Verificar si se debe abrir el context menu (clic derecho)
@@ -187,7 +197,25 @@ bool BeginContextMenu(const std::string &id) {
   }
   state.position = menuPos;
 
-  // Iniciar layout para calcular el tamaño
+  // IMPORTANTE: Resetear clipping para que el menú aparezca por encima de todo
+  ctx->renderer.FlushBatch();
+  // Guardaríamos el clipStack si quisiéramos restaurarlo en End, pero como el menú
+  // es un elemento terminal de UI que suele ir al final, simplemente lo ignoramos aquí
+  // y lo restauraremos si es necesario. Para ContextMenus, lo ideal es dibujarlos
+  // sin clipping del padre.
+  while(!ctx->renderer.GetClipStack().empty()) {
+      ctx->renderer.PopClipRect();
+  }
+
+  // Dibujar el contenedor del menú ANTES de los items
+  Vec2 approxSize(200.0f, 150.0f); // Tamaño estimado inicial
+  ctx->renderer.DrawRectWithElevation(state.position, approxSize,
+                                      ctx->style.panel.background, 4.0f, 8.0f);
+  Color borderColor = FluentColors::BorderDark;
+  borderColor.a = 0.7f;
+  ctx->renderer.DrawRect(state.position, approxSize, borderColor, 4.0f);
+
+  // Iniciar layout para calcular el tamaño real
   ctx->cursorPos = menuPos;
   ctx->lastItemPos = menuPos;
   ctx->lastItemSize = Vec2(0.0f, 0.0f);
@@ -240,7 +268,6 @@ bool ContextMenuItem(const std::string &label, bool enabled) {
                       textStyle.color.b * 0.5f, textStyle.color.a);
   ctx->renderer.DrawText(textPos, label, textColor, textStyle.fontSize);
 
-  RegisterOccupiedArea(ctx, itemPos, itemSize);
   AdvanceCursor(ctx, itemSize);
 
   return clicked;
@@ -274,7 +301,6 @@ void ContextMenuSeparator() {
   ctx->renderer.DrawLine(lineStart, lineEnd, panelStyle.borderColor,
                          separatorHeight);
 
-  RegisterOccupiedArea(ctx, separatorPos, separatorSize);
   AdvanceCursor(ctx, separatorSize);
 }
 
@@ -336,8 +362,7 @@ bool BeginModal(const std::string &id, const std::string &title, bool *open,
   if (!ctx)
     return false;
 
-  std::string key = "MODAL:" + id;
-  uint32_t modalId = GenerateId(key.c_str());
+  uint32_t modalId = GenerateId("MODAL:", id.c_str());
   auto &state = ctx->modalStates[modalId];
 
   // Si open es nullptr o está en false, no mostrar el modal
@@ -346,28 +371,66 @@ bool BeginModal(const std::string &id, const std::string &title, bool *open,
     return false;
   }
 
+  const PanelStyle &panelStyle = ctx->style.panel;
+  float titleHeight =
+      ctx->style.panel.headerText.fontSize + ctx->style.panel.padding.y * 2.0f;
+  float verticalPadding = panelStyle.padding.y * 2.0f;
+
   if (!state.initialized) {
+    state.minSize = size;
+    state.size = size;
+    // Auto-grow from first frame if needed (content not yet measured)
     Vec2 viewport = ctx->renderer.GetViewportSize();
     state.position =
-        Vec2((viewport.x - size.x) * 0.5f, (viewport.y - size.y) * 0.5f);
-    state.size = size;
+        Vec2((viewport.x - state.size.x) * 0.5f, (viewport.y - state.size.y) * 0.5f);
     state.initialized = true;
   } else {
-    state.size = size;
+    // Keep user-requested size as minimum, but grow to fit content
+    state.minSize = size;
+    float requiredHeight = titleHeight + state.contentSize.y + verticalPadding;
+    float newHeight = std::max(size.y, requiredHeight);
+
+    // Re-center vertically if height changed
+    if (std::abs(newHeight - state.size.y) > 1.0f && !state.dragging) {
+      float deltaH = newHeight - state.size.y;
+      state.position.y -= deltaH * 0.5f;
+    }
+    state.size.y = newHeight;
+    state.size.x = size.x; // Width stays as requested
   }
 
   state.open = *open;
 
+  // Push modal ID to stack so EndModal knows which modal to close
+  ctx->modalStack.push_back(modalId);
+
+  // ACTIVAR CAPA DE OVERLAY para que el modal se dibuje encima de todo
+  ctx->renderer.SetLayer(RenderLayer::Overlay);
+
+  // GUARDAR CLIPPING: Guardar el stack actual para restaurarlo en EndModal
+  state.savedClipStack = ctx->renderer.GetClipStack();
+
+  // IMPORTANTE: FlushBatch y reset de clipping para que el modal esté al frente
+  ctx->renderer.FlushBatch();
+  while(!ctx->renderer.GetClipStack().empty()) {
+      ctx->renderer.PopClipRect();
+  }
+
   Vec2 viewport = ctx->renderer.GetViewportSize();
-  float titleHeight =
-      ctx->style.panel.headerText.fontSize + ctx->style.panel.padding.y * 2.0f;
   Vec2 mousePos(ctx->input.MouseX(), ctx->input.MouseY());
   bool leftPressed = ctx->input.IsMousePressed(0);
   bool leftDown = ctx->input.IsMouseDown(0);
 
+  // Clamp position to viewport
+  state.position.x = std::clamp(state.position.x, 0.0f, std::max(0.0f, viewport.x - state.size.x));
+  state.position.y = std::clamp(state.position.y, 0.0f, std::max(0.0f, viewport.y - state.size.y));
+
   // Dibujar overlay oscuro detrás del modal (backdrop)
   Color overlayColor(0.0f, 0.0f, 0.0f, 0.5f);
   ctx->renderer.DrawRectFilled(Vec2(0, 0), viewport, overlayColor, 0.0f);
+
+  // Forzar que el backdrop se dibuje antes que el modal
+  ctx->renderer.FlushBatch();
 
   // Manejar drag del título
   Vec2 titleSize(state.size.x, titleHeight);
@@ -392,21 +455,34 @@ bool BeginModal(const std::string &id, const std::string &title, bool *open,
     }
   }
 
-  const PanelStyle &panelStyle = ctx->style.panel;
+  // Dibujar modal con elevation elevada y FONDO TOTALMENTE OPACO
+  Color modalBg = panelStyle.background;
+  modalBg.a = 1.0f;
 
-  // Dibujar modal con elevation elevada
+  // 1. Dibujar un rectángulo sólido base sin bordes redondeados para asegurar opacidad total
+  ctx->renderer.DrawRectFilled(state.position, state.size, modalBg, 0.0f);
+
+  // 2. Dibujar la elevación y el fondo con estilo (con bordes redondeados)
   ctx->renderer.DrawRectWithElevation(state.position, state.size,
-                                      panelStyle.background,
+                                      modalBg,
                                       panelStyle.cornerRadius, 16.0f);
-  ctx->renderer.DrawRect(state.position, state.size, panelStyle.borderColor,
-                         panelStyle.cornerRadius);
 
-  // Dibujar título
+  // Dibujar título con el color de cabecera del tema
   Vec2 titleBgPos = state.position;
   Vec2 titleBgSize(state.size.x, titleHeight);
+
   ctx->renderer.DrawRectFilled(titleBgPos, titleBgSize,
                                panelStyle.headerBackground,
                                panelStyle.cornerRadius);
+
+  // Rectángulo para enderezar las esquinas inferiores del título
+  ctx->renderer.DrawRectFilled(Vec2(titleBgPos.x, titleBgPos.y + titleHeight * 0.5f),
+                               Vec2(titleBgSize.x, titleHeight * 0.5f),
+                               panelStyle.headerBackground, 0.0f);
+
+  // Dibujar un borde para el modal
+  ctx->renderer.DrawRect(state.position, state.size, panelStyle.borderColor,
+                         panelStyle.cornerRadius);
 
   // Dibujar botón de cerrar (X)
   float closeButtonSize = titleHeight - panelStyle.padding.y * 1.5f;
@@ -426,15 +502,17 @@ bool BeginModal(const std::string &id, const std::string &title, bool *open,
                                panelStyle.cornerRadius * 0.4f);
 
   // Dibujar X en el botón de cerrar
-  float xSize = closeButtonSize * 0.3f;
-  Vec2 xCenter(closeButtonPos.x + closeButtonSize * 0.5f,
-               closeButtonPos.y + closeButtonSize * 0.5f);
-  Vec2 xStart1(xCenter.x - xSize, xCenter.y - xSize);
-  Vec2 xEnd1(xCenter.x + xSize, xCenter.y + xSize);
-  Vec2 xStart2(xCenter.x - xSize, xCenter.y + xSize);
-  Vec2 xEnd2(xCenter.x + xSize, xCenter.y - xSize);
-  ctx->renderer.DrawLine(xStart1, xEnd1, Color(1.0f, 1.0f, 1.0f, 1.0f), 2.0f);
-  ctx->renderer.DrawLine(xStart2, xEnd2, Color(1.0f, 1.0f, 1.0f, 1.0f), 2.0f);
+  float xSize = std::round(closeButtonSize * 0.25f);
+  Vec2 xCenter(std::round(closeButtonPos.x + closeButtonSize * 0.5f),
+               std::round(closeButtonPos.y + closeButtonSize * 0.5f));
+
+  float thickness = 1.5f;
+  ctx->renderer.DrawLine(Vec2(xCenter.x - xSize, xCenter.y - xSize),
+                         Vec2(xCenter.x + xSize, xCenter.y + xSize),
+                         Color(1.0f, 1.0f, 1.0f, 1.0f), thickness);
+  ctx->renderer.DrawLine(Vec2(xCenter.x - xSize, xCenter.y + xSize),
+                         Vec2(xCenter.x + xSize, xCenter.y - xSize),
+                         Color(1.0f, 1.0f, 1.0f, 1.0f), thickness);
 
   // Manejar click en el botón de cerrar
   if (hoverClose && ctx->input.IsMousePressed(0)) {
@@ -453,7 +531,7 @@ bool BeginModal(const std::string &id, const std::string &title, bool *open,
   Vec2 contentPos(state.position.x + panelStyle.padding.x,
                   state.position.y + titleHeight + panelStyle.padding.y);
   Vec2 contentSize(state.size.x - panelStyle.padding.x * 2.0f,
-                   state.size.y - titleHeight - panelStyle.padding.y * 2.0f);
+                   state.size.y - titleHeight - verticalPadding);
 
   // Aplicar clipping al área de contenido
   ctx->renderer.PushClipRect(contentPos, contentSize);
@@ -464,7 +542,7 @@ bool BeginModal(const std::string &id, const std::string &title, bool *open,
   ctx->lastItemSize = Vec2(0.0f, 0.0f);
 
   // Iniciar layout vertical para el contenido
-  BeginVertical(ctx->style.spacing, contentSize, Vec2(0.0f, 0.0f));
+  BeginVertical(ctx->style.spacing, Vec2(contentSize.x, 0.0f), Vec2(0.0f, 0.0f));
 
   // Manejar tecla Escape para cerrar
   if (ctx->input.IsKeyPressed(SDL_SCANCODE_ESCAPE)) {
@@ -480,14 +558,45 @@ void EndModal() {
   if (!ctx)
     return;
 
-  // Cerrar el layout vertical
-  if (!ctx->layoutStack.empty()) {
-    EndVertical(false);
+  // Get the modal ID from the stack
+  uint32_t modalId = 0;
+  if (!ctx->modalStack.empty()) {
+    modalId = ctx->modalStack.back();
+    ctx->modalStack.pop_back();
   }
 
+  // Measure content size before closing layout
+  Vec2 measuredContent{0.0f, 0.0f};
+  if (!ctx->layoutStack.empty()) {
+    EndVertical(false);
+    measuredContent = ctx->lastItemSize;
+  }
 
-  // Remover clipping
+  // Update content size in modal state for next frame auto-sizing
+  if (modalId != 0) {
+    auto it = ctx->modalStates.find(modalId);
+    if (it != ctx->modalStates.end()) {
+      it->second.contentSize = measuredContent;
+    }
+  }
+
+  // Remover clipping del área de contenido del modal
   ctx->renderer.PopClipRect();
+
+  // REMOVER CAPA DE OVERLAY
+  ctx->renderer.SetLayer(RenderLayer::Default);
+
+  // RESTAURAR CLIPPING ORIGINAL using the specific modal's saved stack
+  if (modalId != 0) {
+    auto it = ctx->modalStates.find(modalId);
+    if (it != ctx->modalStates.end() && !it->second.savedClipStack.empty()) {
+      ctx->renderer.FlushBatch();
+      for (const auto& rect : it->second.savedClipStack) {
+        ctx->renderer.PushClipRect(Vec2((float)rect.x, (float)rect.y), Vec2((float)rect.width, (float)rect.height));
+      }
+      it->second.savedClipStack.clear();
+    }
+  }
 }
 
 } // namespace FluentUI

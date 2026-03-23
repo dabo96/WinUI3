@@ -5,22 +5,46 @@
 using namespace FluentUI;
 
 App::App(const char *titulo)
-    : m_textInput(""), m_searchText(""), m_multilineText(""),
+    : window(nullptr), ctx(nullptr), m_textInput(""), m_searchText(""), m_multilineText(""),
       m_passwordText(""), m_modalInput(""), m_statusText("Ready") {
-    SDL_Init(SDL_INIT_VIDEO);
+    
+    std::cout << "Initializing SDL..." << std::endl;
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        std::cerr << "SDL_Init Error: " << SDL_GetError() << std::endl;
+        return;
+    }
 
+    std::cout << "Creating Window..." << std::endl;
     window = SDL_CreateWindow(titulo, 1280, 720,
                               SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+    
+    if (!window) {
+        std::cerr << "SDL_CreateWindow Error: " << SDL_GetError() << std::endl;
+        SDL_Quit();
+        return;
+    }
 
+    std::cout << "Creating FluentUI Context..." << std::endl;
     ctx = CreateContext(window);
     if (!ctx) {
+        std::cerr << "Failed to create FluentUI Context" << std::endl;
         SDL_DestroyWindow(window);
         SDL_Quit();
+        window = nullptr;
+        return;
     }
 
     ctx->style = GetDarkFluentStyle();
+    
+    // IMPORTANTE: Sincronizar viewport inicial
+    int w, h;
+    SDL_GetWindowSize(window, &w, &h);
+    ctx->renderer.SetViewport(w, h);
+    
     SDL_StartTextInput(window);
     lastTime = SDL_GetTicks();
+    
+    std::cout << "Initializing App State..." << std::endl;
 
     // Initialize tab labels
     m_mainTabLabels = {"Basic", "Input", "Containers", "Lists & Trees",
@@ -55,8 +79,14 @@ App::~App() {
 }
 
 void App::Run() {
+    if (!window || !ctx) {
+        std::cerr << "Cannot run App: Initialization failed." << std::endl;
+        return;
+    }
+
     SDL_Event e;
     bool running = true;
+    std::cout << "Starting main loop..." << std::endl;
 
     while (running) {
         uint64_t currentTime = SDL_GetTicks();

@@ -1,28 +1,22 @@
 #include "core/FontMSDF.h"
+#include "core/Context.h"
+#include "core/RenderBackend.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
 #include <filesystem>
 #include <vector>
-#include <SDL3/SDL.h>
 
-// stb_image is included in Renderer.cpp with implementation. 
-// We should ideally move implementation or include header here. 
-// For now, assuming we link against Renderer, but we need the header declarations.
-// Actually, STB_IMAGE_IMPLEMENTATION should be in ONE cpp file. 
-// It is in Renderer.cpp. So here we just include header.
-#include "../../external/stb_image.h" 
+#include "../external/stb_image.h" 
 
 namespace FluentUI {
 
+    FontMSDF::FontMSDF(RenderBackend* backend) : backend(backend) {}
+
     FontMSDF::~FontMSDF() {
-        if (textureID != 0) {
-            glDeleteTextures(1, &textureID);
-            textureID = 0;
-        }
-        if (shaderProgram != 0) {
-            glDeleteProgram(shaderProgram);
-            shaderProgram = 0;
+        if (textureHandle && backend) {
+            backend->DeleteTexture(textureHandle);
+            textureHandle = nullptr;
         }
     }
 
@@ -35,7 +29,6 @@ namespace FluentUI {
             return false;
         }
 
-        CreateShader();
         loaded = true;
         return true;
     }
@@ -48,124 +41,51 @@ namespace FluentUI {
         return nullptr;
     }
 
-        bool FontMSDF::Bind(const float* projectionMatrix) {
-        if (!loaded || shaderProgram == 0) return false;
-
-        glUseProgram(shaderProgram);
-        
-        if (projectionUniform >= 0) {
-            glUniformMatrix4fv(projectionUniform, 1, GL_FALSE, projectionMatrix);
-        }
-        
-        if (pxRangeUniform >= 0) {
-            glUniform1f(pxRangeUniform, pixelRange);
-        }
-
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, textureID);
-        
-        if (textureUniform >= 0) {
-            glUniform1i(textureUniform, 0);
-        }
-        
-        // Note: color uniform is set by Renderer after Bind() is called
-
-        return true;
-    }
-    
-    void FontMSDF::SetColor(const Color& color) {
-        if (colorUniform >= 0) {
-            glUniform4f(colorUniform, color.r, color.g, color.b, color.a);
-        }
-    }
-
-    void FontMSDF::Unbind() {
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glUseProgram(0);
-    }
-
-    void FontMSDF::BindShaderOnly(const float* projectionMatrix) {
-        if (shaderProgram == 0) {
-            CreateShader(); // Create shader if not already created
-        }
-        if (shaderProgram == 0) return;
-
-        glUseProgram(shaderProgram);
-        
-        if (projectionUniform >= 0) {
-            glUniformMatrix4fv(projectionUniform, 1, GL_FALSE, projectionMatrix);
-        }
-        
-        // Set pixel range - use stored value or default to 4.0 for dynamic MSDF
-        // Dynamic MSDF uses 4.0 pixel range by default
-        float rangeToUse = pixelRange > 0 ? pixelRange : 4.0f;
-        if (pxRangeUniform >= 0) {
-            glUniform1f(pxRangeUniform, rangeToUse);
-        }
-    }
-
-    void FontMSDF::UnbindShader() {
-        glUseProgram(0);
-    }
-
     bool FontMSDF::LoadTexture(const std::string& imagePath) {
-        std::cout << "Loading MSDF texture: " << imagePath << std::endl;
+        if (!backend) return false;
+
+        Log(LogLevel::Debug, "Loading MSDF texture: %s", imagePath.c_str());
         
-        // We use stbi_load. IMPORTANT: maintain flip settings consistent with JSON parsing.
         stbi_set_flip_vertically_on_load(false);
         
         int width, height, channels;
-        unsigned char* imageData = stbi_load(imagePath.c_str(), &width, &height, &channels, 0);
+        // Forzar 4 canales (RGBA) para que coincida con lo que el backend espera
+        unsigned char* imageData = stbi_load(imagePath.c_str(), &width, &height, &channels, 4);
         
         if (!imageData) {
-            std::cerr << "Failed to load MSDF atlas image: " << imagePath << std::endl;
+            Log(LogLevel::Error, "Failed to load MSDF atlas image: %s", imagePath.c_str());
+            Log(LogLevel::Error, "Reason: %s", stbi_failure_reason());
             return false;
         }
 
-        GLenum format = (channels == 4) ? GL_RGBA : GL_RGB;
+        Log(LogLevel::Debug, "Texture loaded: %dx%d (original channels: %d)", width, height, channels);
 
         // Delete old texture if reloading
-        if (textureID != 0) {
-            glDeleteTextures(1, &textureID);
-            textureID = 0;
+        if (textureHandle != nullptr) {
+            backend->DeleteTexture(textureHandle);
+            textureHandle = nullptr;
         }
 
-        glGenTextures(1, &textureID);
-        glBindTexture(GL_TEXTURE_2D, textureID);
-        
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, imageData);
-        
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        // Use linear filtering for MSDF - it works well with distance fields
-        // The shader will handle the sharpness through proper screen-space calculations
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        
-        glBindTexture(GL_TEXTURE_2D, 0);
+        textureHandle = backend->CreateTexture(width, height, imageData, false);
         stbi_image_free(imageData);
         
         this->atlasWidth = width;
         this->atlasHeight = height;
         
-        return true;
+        return textureHandle != nullptr;
     }
 
     bool FontMSDF::ParseJson(const std::string& jsonPath) {
         std::ifstream file(jsonPath);
         if (!file.is_open()) {
-            std::cerr << "Failed to open MSDF JSON: " << jsonPath << std::endl;
+            Log(LogLevel::Error, "Failed to open MSDF JSON: %s", jsonPath.c_str());
             return false;
         }
 
         std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
         file.close();
 
-        // Basic manual JSON parsing to avoid pulling in a heavy JSON library dependency
-        // Similar logic to what was in Renderer.cpp
-
-        // Parse Metrics
+        // Metrics parsing
         size_t metricsPos = content.find("\"metrics\"");
         if (metricsPos != std::string::npos) {
             auto findValue = [&](const std::string& key, float& outVal) {
@@ -174,9 +94,7 @@ namespace FluentUI {
                     size_t colonPos = content.find(":", keyPos);
                     size_t commaPos = content.find_first_of(",}", colonPos);
                     std::string valStr = content.substr(colonPos + 1, commaPos - colonPos - 1);
-                    try { outVal = std::stof(valStr); } catch(const std::exception& e) {
-                        std::cerr << "Warning: failed to parse " << key << ": " << e.what() << std::endl;
-                    }
+                    try { outVal = std::stof(valStr); } catch(...) {}
                 }
             };
             findValue("emSize", emSize);
@@ -184,10 +102,12 @@ namespace FluentUI {
             findValue("ascender", ascender);
         }
 
-        // Validate parsed metrics
-        if (emSize <= 0.0f) emSize = 1.0f;
+        // Default values if missing or invalid
+        if (emSize <= 0.0f) emSize = 32.0f; // Typical MSDF emSize
+        if (lineHeight <= 0.0f) lineHeight = 1.2f;
+        if (ascender <= 0.0f) ascender = 0.8f;
 
-        // Parse Atlas Info
+        // Atlas Info parsing
         size_t atlasPos = content.find("\"atlas\"");
         if (atlasPos != std::string::npos) {
             auto findValue = [&](const std::string& key, float& outVal) {
@@ -196,19 +116,16 @@ namespace FluentUI {
                     size_t colonPos = content.find(":", keyPos);
                     size_t commaPos = content.find_first_of(",}", colonPos);
                     std::string valStr = content.substr(colonPos + 1, commaPos - colonPos - 1);
-                    try { outVal = std::stof(valStr); } catch(const std::exception& e) {
-                        std::cerr << "Warning: failed to parse " << key << ": " << e.what() << std::endl;
-                    }
+                    try { outVal = std::stof(valStr); } catch(...) {}
                 }
             };
             findValue("size", fontSize);
             findValue("distanceRange", pixelRange);
         }
 
-        // Validate atlas metrics
         if (pixelRange <= 0.0f) pixelRange = 4.0f;
 
-        // Parse Glyphs
+        // Glyphs parsing
         size_t glyphsPos = content.find("\"glyphs\"");
         if (glyphsPos == std::string::npos) return false;
 
@@ -232,7 +149,6 @@ namespace FluentUI {
 
             std::string glyphObj = content.substr(objStart, objEnd - objStart + 1);
 
-            // Extract unicode
             size_t unicodePos = glyphObj.find("\"unicode\"");
             if (unicodePos == std::string::npos) {
                 pos = objEnd + 1;
@@ -247,7 +163,6 @@ namespace FluentUI {
             Glyph glyph;
             glyph.valid = true;
 
-            // Extract advance
             size_t advancePos = glyphObj.find("\"advance\"");
             if (advancePos != std::string::npos) {
                 colonPos = glyphObj.find(":", advancePos);
@@ -255,7 +170,6 @@ namespace FluentUI {
                 try { glyph.advance = std::stof(glyphObj.substr(colonPos + 1, commaPos - colonPos - 1)); } catch(...) {}
             }
 
-            // Helper to parse rects
             auto parseRect = [&](const std::string& key, Vec2& outSize, Vec2& outOrigin, bool isAtlas) {
                 size_t keyPos = glyphObj.find("\"" + key + "\"");
                 if (keyPos != std::string::npos) {
@@ -274,173 +188,29 @@ namespace FluentUI {
                             return std::stof(glyphObj.substr(c + 1, cm - c - 1));
                         };
                         try {
-                            l = extract(leftPos);
-                            r = extract(rightPos);
-                            b = extract(bottomPos);
-                            t = extract(topPos);
+                            l = extract(leftPos); r = extract(rightPos);
+                            b = extract(bottomPos); t = extract(topPos);
                         } catch(...) {}
 
                         outSize = Vec2(r - l, t - b);
                         if (!isAtlas) {
-                            outOrigin = Vec2(l, t); // Bearing: Left, Top
+                            outOrigin = Vec2(l, t);
                         } else {
-                            // Atlas UV calculation
-                            // Invert Y for OpenGL (Bottom-Origin) vs Image Load (Top-Down)
-                            // JSON Origin: Bottom
-                            // Image Data: Inverted relative to JSON if loaded without flip? 
-                            // Verified Fix: V = 1.0 - (Y / H)
-                            
-                            glyph.uv0 = Vec2(
-                                l / static_cast<float>(atlasWidth),
-                                1.0f - (t / static_cast<float>(atlasHeight))
-                            );
-                            glyph.uv1 = Vec2(
-                                r / static_cast<float>(atlasWidth),
-                                1.0f - (b / static_cast<float>(atlasHeight))
-                            );
+                            glyph.uv0 = Vec2(l / static_cast<float>(atlasWidth), 1.0f - (t / static_cast<float>(atlasHeight)));
+                            glyph.uv1 = Vec2(r / static_cast<float>(atlasWidth), 1.0f - (b / static_cast<float>(atlasHeight)));
                         }
                     }
                 }
             };
 
             parseRect("planeBounds", glyph.planeBounds, glyph.bearing, false);
-            parseRect("atlasBounds", glyph.atlasBounds, glyph.atlasBounds, true); // Dummy for origin
+            parseRect("atlasBounds", glyph.atlasBounds, glyph.atlasBounds, true);
 
             glyphs[unicode] = glyph;
             pos = objEnd + 1;
         }
 
-        std::cout << "Loaded " << glyphs.size() << " glyphs from " << jsonPath << std::endl;
         return !glyphs.empty();
-    }
-
-    void FontMSDF::CreateShader() {
-         try {
-             std::string vertexSrc = LoadShaderSource("shaders/text_vertex_msdf.glsl");
-             std::string fragmentSrc = LoadShaderSource("shaders/text_fragment_msdf.glsl");
-             
-             if (vertexSrc.empty() || fragmentSrc.empty()) {
-                 std::cerr << "Failed to load MSDF shader sources" << std::endl;
-                 return;
-             }
-             
-             shaderProgram = CreateShaderProgram(vertexSrc, fragmentSrc);
-             
-             if (shaderProgram == 0) {
-                 std::cerr << "Failed to create MSDF shader program" << std::endl;
-                 return;
-             }
-             
-             glUseProgram(shaderProgram);
-             projectionUniform = glGetUniformLocation(shaderProgram, "uProjection");
-             colorUniform = glGetUniformLocation(shaderProgram, "uTextColor1");
-             pxRangeUniform = glGetUniformLocation(shaderProgram, "pxRange");
-             textureUniform = glGetUniformLocation(shaderProgram, "msdfTexture");
-             
-             if (textureUniform >= 0) glUniform1i(textureUniform, 0);
-             glUseProgram(0);
-             
-             std::cout << "MSDF shader created successfully" << std::endl;
-
-         } catch (const std::exception& e) {
-             std::cerr << "Error creating MSDF shader: " << e.what() << std::endl;
-         }
-    }
-
-    std::string FontMSDF::LoadShaderSource(const std::string& filepath) {
-        // Try to resolve path using the same logic as Renderer
-        std::filesystem::path candidate(filepath);
-        
-        // Try absolute path first
-        if (candidate.is_absolute() && std::filesystem::exists(candidate)) {
-            std::ifstream file(candidate, std::ios::binary);
-            if (file.is_open()) {
-                std::stringstream buffer;
-                buffer << file.rdbuf();
-                return buffer.str();
-            }
-        }
-        
-        // Try relative paths
-        std::vector<std::filesystem::path> searchPaths = {
-            std::filesystem::current_path(),
-            std::filesystem::current_path() / "..",
-            std::filesystem::current_path() / "../.."
-        };
-        
-        if (const char* base = SDL_GetBasePath()) {
-            searchPaths.push_back(std::filesystem::path(base));
-            searchPaths.push_back(std::filesystem::path(base) / "..");
-        }
-        
-        for (const auto& root : searchPaths) {
-            auto full = (root / candidate).lexically_normal();
-            if (std::filesystem::exists(full)) {
-                std::ifstream file(full, std::ios::binary);
-                if (file.is_open()) {
-                    std::stringstream buffer;
-                    buffer << file.rdbuf();
-                    return buffer.str();
-                }
-            }
-        }
-        
-        std::cerr << "Failed to load shader: " << filepath << std::endl;
-        return "";
-    }
-    
-    GLuint FontMSDF::CompileShader(GLenum type, const std::string& source) {
-        if (source.empty()) {
-            std::cerr << "Empty shader source" << std::endl;
-            return 0;
-        }
-        
-        GLuint shader = glCreateShader(type);
-        const char* src = source.c_str();
-        glShaderSource(shader, 1, &src, nullptr);
-        glCompileShader(shader);
-        
-        GLint success;
-        glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-        if (!success) {
-            char infoLog[512];
-            glGetShaderInfoLog(shader, 512, nullptr, infoLog);
-            std::cerr << "Shader compile error (" << (type == GL_VERTEX_SHADER ? "vertex" : "fragment") << "): " << infoLog << std::endl;
-            glDeleteShader(shader);
-            return 0;
-        }
-        return shader;
-    }
-
-    GLuint FontMSDF::CreateShaderProgram(const std::string& vertexSource, const std::string& fragmentSource) {
-        GLuint vertexShader = CompileShader(GL_VERTEX_SHADER, vertexSource);
-        GLuint fragmentShader = CompileShader(GL_FRAGMENT_SHADER, fragmentSource);
-        
-        if (vertexShader == 0 || fragmentShader == 0) {
-            if (vertexShader != 0) glDeleteShader(vertexShader);
-            if (fragmentShader != 0) glDeleteShader(fragmentShader);
-            return 0;
-        }
-        
-        GLuint program = glCreateProgram();
-        glAttachShader(program, vertexShader);
-        glAttachShader(program, fragmentShader);
-        glLinkProgram(program);
-        
-        GLint success;
-        glGetProgramiv(program, GL_LINK_STATUS, &success);
-        if (!success) {
-            char infoLog[512];
-            glGetProgramInfoLog(program, 512, nullptr, infoLog);
-            std::cerr << "Shader program link error: " << infoLog << std::endl;
-            glDeleteProgram(program);
-            program = 0;
-        }
-        
-        glDeleteShader(vertexShader);
-        glDeleteShader(fragmentShader);
-        
-        return program;
     }
 
 } // namespace FluentUI

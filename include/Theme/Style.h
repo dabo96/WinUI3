@@ -1,6 +1,7 @@
 #pragma once
 #include "Math/Color.h"
 #include "Math/Vec2.h"
+#include <string>
 
 namespace FluentUI {
 
@@ -39,6 +40,7 @@ namespace FluentUI {
         float lineHeight = 0.0f;
         FontWeight weight = FontWeight::Regular;
         Color color = Color(1.0f, 1.0f, 1.0f, 1.0f);
+        std::string fontName;  // Empty = default font, otherwise uses FontManager named font
     };
 
     struct Typography {

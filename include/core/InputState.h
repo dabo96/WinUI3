@@ -6,6 +6,7 @@
 #include <memory>
 #include <array>
 #include <string>
+#include <vector>
 #include <SDL3/SDL.h>
 
 namespace FluentUI {
@@ -39,6 +40,16 @@ public:
 
   const std::string& TextInputBuffer() const;
 
+  // IME composition accessors
+  const std::string& CompositionText() const;
+  int CompositionCursor() const;
+  int CompositionLength() const;
+  bool HasComposition() const;
+
+  // File drop support
+  const std::vector<std::string>& DroppedFiles() const { return droppedFiles; }
+  bool HasDroppedFiles() const { return !droppedFiles.empty(); }
+
 public:
   bool anyKeyPressed = false;
 
@@ -59,5 +70,8 @@ private:
   float mouseWheelX = 0.0f, mouseWheelY = 0.0f;
 
   std::unique_ptr<TextInputData> textInputData;
+
+  // File drop state (cleared each frame in Update())
+  std::vector<std::string> droppedFiles;
 };
 } // namespace FluentUI
