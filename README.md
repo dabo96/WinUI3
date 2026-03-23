@@ -1,6 +1,6 @@
 # FluentGUI
 
-Una libreria de interfaz grafica inmediata (Immediate Mode GUI) para C++ inspirada en el Fluent Design System de Microsoft (WinUI3). Similar a Dear ImGui pero con el estilo visual moderno de Fluent Design.
+Una libreria de interfaz grafica híbrida (Immediate Mode GUI + Retainend Mode) para C++ inspirada en el Fluent Design System de Microsoft (WinUI3). Similar a Dear ImGui pero con el estilo visual moderno de Fluent Design.
 
 *[English version](README_EN.md)*
 
