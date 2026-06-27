@@ -75,6 +75,18 @@ public:
                       float cornerRadius = 0.0f);
   void DrawRectWithElevation(const Vec2 &pos, const Vec2 &size, const Color &color,
                              float cornerRadius = 0.0f, float elevation = 0.0f);
+  // Soft drop shadow approximated by stacked, expanding rounded rects whose
+  // alpha accumulates into a smooth penumbra. pos/size/cornerRadius describe the
+  // element casting the shadow; blur is the penumbra spread (px); color.a is the
+  // peak opacity reached at the element edge; offset shifts the shadow (e.g.
+  // downward). Draw this BEFORE the element's own fill.
+  void DrawRectShadow(const Vec2 &pos, const Vec2 &size, float cornerRadius,
+                      float blur, const Color &color, const Vec2 &offset = Vec2(0.0f, 0.0f));
+  // Draw a soft drop shadow derived from a semantic z (depth) level via the
+  // unified Elevation curve. Use Elevation::Z::* for the level. opacityScale
+  // fades the whole shadow (e.g. for tooltip fade-in). Draw BEFORE the fill.
+  void DrawElevationShadow(const Vec2 &pos, const Vec2 &size, float cornerRadius,
+                           float z, float opacityScale = 1.0f);
   void DrawRectGradient(const Vec2 &pos, const Vec2 &size,
                         const Color &topLeft, const Color &topRight,
                         const Color &bottomLeft, const Color &bottomRight);
@@ -84,6 +96,8 @@ public:
                 float width = 1.0f);
   void DrawCircle(const Vec2 &center, float radius, const Color &color,
                   bool filled = true);
+  void DrawTriangleFilled(const Vec2 &p0, const Vec2 &p1, const Vec2 &p2,
+                          const Color &color);
   void DrawRipple(const Vec2 &center, float radius, float opacity);
 
   // Image drawing
@@ -95,12 +109,38 @@ public:
   void DrawBezier(const Vec2& p0, const Vec2& p1, const Vec2& p2, const Vec2& p3,
                   const Color& color, float thickness = 1.0f, int segments = 32);
 
+  // --- Path API (Phase A1) ---
+  // Accumulate a polyline/polygon and stroke or fill it as a single AA-fringed entity.
+  // Pattern: PathClear(); PathLineTo(...); PathArcTo(...); ...; PathFillConvex(color);
+  void PathClear();
+  void PathLineTo(const Vec2& p);
+  void PathArcTo(const Vec2& center, float radius, float a_min, float a_max,
+                 int num_segments = 0);
+  // Fast variant: a_min12/a_max12 are integer steps where 12 == full 360° (uses cosTable/sinTable).
+  void PathArcToFast(const Vec2& center, float radius, int a_min12, int a_max12);
+  void PathBezierCubicCurveTo(const Vec2& p2, const Vec2& p3, const Vec2& p4,
+                              int segments = 0);
+  void PathRect(const Vec2& p_min, const Vec2& p_max, float rounding = 0.0f);
+  void PathFillConvex(const Color& color);
+  void PathStroke(const Color& color, bool closed, float thickness = 1.0f);
+  const std::vector<Vec2>& PathPoints() const { return pathPoints; }
+
   // Texto básico
   void DrawText(const Vec2 &pos, const std::string &text, const Color &color,
                 float fontSize = 16.0f);
   bool LoadFont(const std::string &filepath, int pixelHeight);
   bool IsFontLoaded() const { return fontLoaded; }
   Vec2 MeasureText(const std::string &text, float fontSize = 16.0f);
+  // Métricas del font activo (en proporción al fontSize). Se usan para
+  // centrar verticalmente texto dentro de un campo: el ascender devuelve
+  // el offset desde pos.y hasta la baseline, así el centro visual del
+  // texto = pos.y + ascender * fontSize / 2 (aprox., sin descenders).
+  float GetFontAscender() const;
+
+  // Icon font (secondary font for UI icons like Lucide)
+  bool LoadIconFont(const std::string &filepath, int pixelHeight);
+  void DrawIconGlyph(const Vec2 &pos, uint32_t codepoint, const Color &color, float fontSize = 16.0f);
+  bool IsIconFontLoaded() const { return iconFontLoaded; }
 
   // Issue 8: Public glyph advance accessor for FindCaretPosition
   float GetGlyphAdvance(uint32_t codepoint, float fontSize);
@@ -117,6 +157,14 @@ public:
   void SetViewport(int width, int height);
   Vec2 GetViewportSize() const { return viewportSize; }
 
+  // Phase A4: DPI scale propagated from UIContext so the AA fringe stays at 1 physical
+  // pixel (instead of 1 logical pixel) on Hi-DPI displays.
+  void SetDPIScale(float scale) { dpiScale = std::max(0.5f, std::min(4.0f, scale)); }
+  float GetDPIScale() const { return dpiScale; }
+
+  // Phase C6 (eyedropper): read a single pixel from the framebuffer.
+  Color ReadPixel(int x, int y);
+
   void FlushBatch();
   void FlushBatch(ShaderType type, void* texture = nullptr, const Color& textColor = Color(1,1,1,1));
 
@@ -124,6 +172,8 @@ private:
   RenderBackend* backend = nullptr;
   Vec2 viewportSize = {800.0f, 600.0f};
   RenderLayer currentLayer = RenderLayer::Default;
+  // Phase A4: DPI scale used to size the AA fringe (1 physical pixel always).
+  float dpiScale = 1.0f;
 
   // Perf 1.3: Cached projection matrix — recomputed only on SetViewport()
   float cachedProjection[16] = {};
@@ -165,6 +215,15 @@ private:
   int atlasNextY = 0;
   int atlasCurrentRowHeight = 0;
 
+  // Icon font (secondary)
+  FT_Face iconFontFace = nullptr;
+  bool iconFontLoaded = false;
+  float iconFontPixelHeight = 16.0f;
+  float iconFontAscent = 0.0f;
+  std::unordered_map<uint32_t, Glyph> iconGlyphCache;
+  bool LoadIconGlyph(uint32_t cp);
+  const Glyph* GetIconGlyph(uint32_t cp);
+
   std::unique_ptr<FontMSDF> msdfFont;
   std::unique_ptr<MSDFGenerator> msdfGenerator;
 
@@ -195,6 +254,13 @@ private:
   // Issue 15: Helper for acrylic multi-fill optimization
   void DrawMultipleFilledRoundedRects(const Vec2& pos, const Vec2& size, float cornerRadius,
                                        const Color* colors, int count);
+
+  // Phase A1: Path state and fan-with-fringe emitter (Basic shader, untextured)
+  std::vector<Vec2> pathPoints;
+  void EmitConvexFanWithFringe(const Vec2* points, int count, const Color& color);
+  // Phase A2: continuous AA stroke with miter joins (Basic shader, untextured)
+  void StrokePolyline(const Vec2* points, int count, bool closed,
+                      const Color& color, float thickness);
 
   std::vector<RenderVertex> quadVertices;
   std::vector<unsigned int> quadIndices;

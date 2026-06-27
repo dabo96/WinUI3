@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""
+Regenerate include/UI/Icons.h from the bundled Lucide TTF.
+
+Usage:
+    python tools/gen_icons.py [path/to/lucide.ttf] [path/to/Icons.h]
+
+If arguments are omitted, defaults are:
+    assets/fonts/lucide.ttf   ->   include/UI/Icons.h
+
+The script extracts every Unicode mapping in the font's `cmap` and writes a
+self-contained header with:
+
+    * `enum class Lucide : uint32_t` listing every glyph by PascalCase name
+    * Implicit conversion to `uint32_t` so widget overloads accept it directly
+    * A handful of semantic aliases (Pointer, Stop, ...) for ergonomic call sites
+
+Requires: fonttools (`pip install fonttools`)
+"""
+from __future__ import annotations
+
+import re
+import sys
+from datetime import date
+from pathlib import Path
+
+try:
+    from fontTools.ttLib import TTFont
+except ImportError:
+    sys.exit("error: fonttools not installed. Run: pip install fonttools")
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_TTF = REPO_ROOT / "assets" / "fonts" / "lucide.ttf"
+DEFAULT_HEADER = REPO_ROOT / "include" / "UI" / "Icons.h"
+
+# Hand-curated aliases for editor / engine workflows. The right-hand side is
+# the canonical Lucide name; the left-hand side is a shorter alias users can
+# type without remembering the upstream name.
+ALIASES: dict[str, str] = {
+    "Pointer":  "MousePointer",
+    "Move":     "Move",
+    "Rotate":   "RotateCw",
+    "Scale":    "Scale",
+    "Folder":   "Folder",
+    "FolderOpen": "FolderOpen",
+    "File":     "File",
+    "Save":     "Save",
+    "Open":     "FolderOpen",
+    "New":      "FilePlus",
+    "Copy":     "Copy",
+    "Cut":      "Scissors",
+    "Paste":    "Clipboard",
+    "Delete":   "Trash2",
+    "Trash":    "Trash2",
+    "Undo":     "Undo2",
+    "Redo":     "Redo2",
+    "Edit":     "Pencil",
+    "Search":   "Search",
+    "Filter":   "Filter",
+    "Settings": "Settings",
+    "Play":     "Play",
+    "Pause":    "Pause",
+    "Stop":     "Square",
+    "Record":   "Circle",
+    "SkipBack": "SkipBack",
+    "SkipForward": "SkipForward",
+    "Check":    "Check",
+    "Close":    "X",
+    "Info":     "Info",
+    "Warning":  "TriangleAlert",
+    "Error":    "CircleAlert",
+    "Help":     "CircleHelp",
+    "Loader":   "Loader",
+    "Home":     "House",
+    "Menu":     "Menu",
+    "Eye":      "Eye",
+    "EyeOff":   "EyeOff",
+    "Camera":   "Camera",
+    "Image":    "Image",
+    "Video":    "Video",
+    "Lock":     "Lock",
+    "Unlock":   "LockOpen",
+    "Link":     "Link",
+    "Unlink":   "Unlink",
+    "Tag":      "Tag",
+    "Bookmark": "Bookmark",
+    "Star":     "Star",
+    "Heart":    "Heart",
+    "Bell":     "Bell",
+    "Activity": "Activity",
+    "Zap":      "Zap",
+    "Box":      "Box",
+    "Cube":     "Box",
+    "Package":  "Package",
+    "Database": "Database",
+    "Cpu":      "Cpu",
+    "HardDrive": "HardDrive",
+    "Monitor":  "Monitor",
+    "Terminal": "Terminal",
+    "Wrench":   "Wrench",
+    "Plus":     "Plus",
+    "Minus":    "Minus",
+    "ChevronUp":    "ChevronUp",
+    "ChevronDown":  "ChevronDown",
+    "ChevronLeft":  "ChevronLeft",
+    "ChevronRight": "ChevronRight",
+    "ArrowUp":    "ArrowUp",
+    "ArrowDown":  "ArrowDown",
+    "ArrowLeft":  "ArrowLeft",
+    "ArrowRight": "ArrowRight",
+}
+
+
+def to_pascal_case(name: str) -> str:
+    """Convert kebab-case / snake_case glyph names into PascalCase identifiers."""
+    parts = re.split(r"[-_]", name)
+    out = []
+    for p in parts:
+        if not p:
+            continue
+        if p[0].isdigit():
+            out.append("N" + p)
+        else:
+            out.append(p[0].upper() + p[1:])
+    ident = "".join(out) if out else "Unknown"
+    # Sanitize anything that isn't [A-Za-z0-9_]
+    ident = re.sub(r"[^A-Za-z0-9_]", "", ident)
+    if not ident:
+        ident = "Unknown"
+    return ident
+
+
+def extract_mapping(ttf_path: Path) -> dict[str, int]:
+    """Return {pascal_name: codepoint} for every cmap entry in the PUA."""
+    font = TTFont(str(ttf_path))
+    cmap = font.getBestCmap()
+    if not cmap:
+        sys.exit(f"error: no cmap found in {ttf_path}")
+
+    glyph_set = font.getGlyphSet()
+    out: dict[str, int] = {}
+    seen_idents: set[str] = set()
+
+    for codepoint, glyph_name in cmap.items():
+        # Skip ASCII / symbol slots — Lucide lives entirely in the PUA.
+        if codepoint < 0xE000 or codepoint > 0xF8FF:
+            continue
+        if glyph_name in (".notdef", "uni0000"):
+            continue
+        # `uniXXXX` glyph names mean the source had no human-readable name
+        if re.fullmatch(r"uni[0-9A-Fa-f]{4}", glyph_name):
+            continue
+
+        ident = to_pascal_case(glyph_name)
+        # Avoid clashes (e.g. duplicate glyph names): suffix with codepoint
+        if ident in seen_idents:
+            ident = f"{ident}_{codepoint:04X}"
+        seen_idents.add(ident)
+        out[ident] = codepoint
+
+    return out
+
+
+HEADER_TEMPLATE = """\
+// AUTO-GENERATED — do not edit by hand.
+// Generated by tools/gen_icons.py from {ttf_rel} on {today}.
+// To regenerate: python tools/gen_icons.py
+//
+// This catalog mirrors the codepoints baked into the bundled Lucide TTF.
+// Bump Lucide by replacing assets/fonts/lucide.ttf and rerunning the script.
+
+#pragma once
+#include <cstdint>
+
+namespace FluentUI {{
+namespace Icons {{
+
+/// Full catalog of icons available in the bundled Lucide font.
+///
+/// This is a plain (non-scoped) enum so it implicitly converts to `uint32_t`
+/// — i.e. it slots straight into any widget overload that takes an
+/// `iconCodepoint` parameter without `static_cast`:
+///
+///     if (Button("Save", Icons::Save)) save();
+///     SegmentedControl("tool", {{
+///         {{"", Icons::Pointer}}, {{"", Icons::Move}},
+///         {{"", Icons::Rotate}},  {{"", Icons::Scale}},
+///     }}, &tool);
+///
+/// Pass 0 (or omit the icon parameter) for "no icon".
+///
+/// The enum is wrapped in `namespace Icons` so all names are still scoped
+/// (`Icons::Save`, not just `Save`). Semantic aliases like `Icons::Pointer`
+/// (→ MousePointer), `Icons::Stop` (→ Square), `Icons::Trash` (→ Trash2) are
+/// declared just below the enum.
+enum Lucide : uint32_t {{
+    None = 0,
+{enum_body}}};
+
+// Semantic aliases — shorter names for editor / engine workflows.
+{aliases_body}
+}} // namespace Icons
+}} // namespace FluentUI
+"""
+
+
+def render_header(mapping: dict[str, int], ttf_rel: str) -> str:
+    enum_lines = []
+    for name in sorted(mapping):
+        cp = mapping[name]
+        enum_lines.append(f"    {name} = 0x{cp:04X},")
+    enum_body = "\n".join(enum_lines) + "\n"
+
+    alias_lines = []
+    for alias, target in sorted(ALIASES.items()):
+        if target in mapping and alias not in mapping:
+            # Only emit aliases whose name doesn't already collide with an
+            # enum entry of the same name.
+            alias_lines.append(f"inline constexpr Lucide {alias} = {target};")
+    aliases_body = "\n".join(alias_lines) + ("\n" if alias_lines else "")
+
+    return HEADER_TEMPLATE.format(
+        ttf_rel=ttf_rel,
+        today=date.today().isoformat(),
+        enum_body=enum_body,
+        aliases_body=aliases_body,
+    )
+
+
+def main() -> int:
+    ttf = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_TTF
+    out = Path(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_HEADER
+
+    if not ttf.exists():
+        sys.exit(f"error: {ttf} not found")
+
+    mapping = extract_mapping(ttf)
+    if not mapping:
+        sys.exit("error: no PUA codepoints found in the font — wrong file?")
+
+    try:
+        ttf_rel = str(ttf.relative_to(REPO_ROOT)).replace("\\", "/")
+    except ValueError:
+        ttf_rel = str(ttf)
+
+    header = render_header(mapping, ttf_rel)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(header, encoding="utf-8")
+
+    print(f"Wrote {len(mapping)} icons to {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

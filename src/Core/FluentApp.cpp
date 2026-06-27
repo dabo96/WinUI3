@@ -6,6 +6,8 @@
 #include "UI/Widgets.h"
 #include "Theme/FluentTheme.h"
 #include <algorithm>
+#include <cstdlib>
+#include <filesystem>
 #include <iostream>
 
 namespace FluentUI {
@@ -122,6 +124,7 @@ void AppWindow::updateDPIScale() {
     float scale = SDL_GetWindowDisplayScale(window_);
     if (scale <= 0.0f) scale = 1.0f;
     ctx_->dpiScale = scale;
+    ctx_->renderer.SetDPIScale(scale); // Phase A4: keep AA fringe at 1 physical pixel
 }
 
 void AppWindow::processFrame(float dt, SDL_Window* parentWindow, SDL_GLContext parentGLContext) {
@@ -158,10 +161,80 @@ void AppWindow::processFrame(float dt, SDL_Window* parentWindow, SDL_GLContext p
 
 // ===================== FluentApp =====================
 
+namespace {
+
+// Resolve the icon font path: explicit override -> exe_dir/assets/fonts/lucide.ttf
+// -> cwd/assets/fonts/lucide.ttf -> $FLUENTUI_ASSETS_DIR/fonts/lucide.ttf.
+// Returns empty when nothing exists. We try every location even if some
+// std::filesystem queries throw (e.g. permissions) — soft-fail is the contract.
+std::string ResolveIconFontPath(const std::string& explicitPath) {
+    namespace fs = std::filesystem;
+    auto tryFile = [](const fs::path& p) -> std::string {
+        std::error_code ec;
+        if (fs::exists(p, ec) && fs::is_regular_file(p, ec)) {
+            return p.string();
+        }
+        return {};
+    };
+
+    if (!explicitPath.empty()) {
+        std::string hit = tryFile(explicitPath);
+        if (!hit.empty()) return hit;
+        Log(LogLevel::Warning, "FluentApp: iconFontPath '%s' not found, falling back to defaults",
+            explicitPath.c_str());
+    }
+
+    // Executable directory. SDL3 returns a const char* owned by SDL — do NOT free.
+    if (const char* exeBase = SDL_GetBasePath()) {
+        fs::path candidate = fs::path(exeBase) / "assets" / "fonts" / "lucide.ttf";
+        std::string hit = tryFile(candidate);
+        if (!hit.empty()) return hit;
+    }
+
+    // Current working directory
+    {
+        std::error_code ec;
+        fs::path candidate = fs::current_path(ec) / "assets" / "fonts" / "lucide.ttf";
+        if (!ec) {
+            std::string hit = tryFile(candidate);
+            if (!hit.empty()) return hit;
+        }
+    }
+
+    // Environment override
+    if (const char* envDir = std::getenv("FLUENTUI_ASSETS_DIR")) {
+        fs::path candidate = fs::path(envDir) / "fonts" / "lucide.ttf";
+        std::string hit = tryFile(candidate);
+        if (!hit.empty()) return hit;
+    }
+
+    return {};
+}
+
+void AutoLoadIconFont(UIContext* ctx, const std::string& explicitPath, int pixelHeight) {
+    if (!ctx) return;
+    // The renderer auto-loads a default Lucide font during initialization, so
+    // icons already work everywhere. Only act here when the user supplied an
+    // explicit path (to override the default) or when nothing got loaded yet.
+    if (explicitPath.empty() && ctx->renderer.IsIconFontLoaded()) return;
+    std::string path = ResolveIconFontPath(explicitPath);
+    if (path.empty()) {
+        Log(LogLevel::Warning,
+            "FluentApp: lucide.ttf not found — icons will not be drawn. "
+            "Place it at <exe>/assets/fonts/lucide.ttf or set FLUENTUI_ASSETS_DIR.");
+        return;
+    }
+    if (!ctx->renderer.LoadIconFont(path, pixelHeight)) {
+        Log(LogLevel::Warning, "FluentApp: failed to load icon font from '%s'", path.c_str());
+    }
+}
+
+} // namespace
+
 FluentApp::FluentApp(const std::string& title, const AppConfig& config)
     : targetFPS_(config.targetFPS), enableDPI_(config.enableDPI) {
 
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         Log(LogLevel::Error, "FluentApp: SDL_Init failed: %s", SDL_GetError());
         return;
     }
@@ -191,6 +264,8 @@ FluentApp::FluentApp(const std::string& title, const AppConfig& config)
 
     ctx_->style = config.darkMode ? GetDarkFluentStyle() : GetDefaultFluentStyle();
 
+    AutoLoadIconFont(ctx_, config.iconFontPath, config.iconFontSize);
+
     int w, h;
     SDL_GetWindowSize(window_, &w, &h);
     ctx_->renderer.SetViewport(w, h);
@@ -219,10 +294,8 @@ FluentApp::FluentApp(SDL_Window* externalWindow, SDL_GLContext externalGLContext
     window_ = externalWindow;
     mainGLContext_ = externalGLContext;
 
-    // Ensure the provided GL context is current before creating UIContext
-    SDL_GL_MakeCurrent(window_, mainGLContext_);
-
-    ctx_ = CreateContext(window_);
+    // Pass the external GL context so the backend reuses it instead of creating a new one
+    ctx_ = CreateContext(window_, mainGLContext_);
     if (!ctx_) {
         Log(LogLevel::Error, "FluentApp: Failed to create UIContext");
         window_ = nullptr;
@@ -230,6 +303,8 @@ FluentApp::FluentApp(SDL_Window* externalWindow, SDL_GLContext externalGLContext
     }
 
     ctx_->style = darkMode ? GetDarkFluentStyle() : GetDefaultFluentStyle();
+
+    AutoLoadIconFont(ctx_, /*explicitPath=*/std::string(), /*pixelHeight=*/16);
 
     int w, h;
     SDL_GetWindowSize(window_, &w, &h);
@@ -239,6 +314,7 @@ FluentApp::FluentApp(SDL_Window* externalWindow, SDL_GLContext externalGLContext
         updateDPIScale();
     }
 
+    SDL_StartTextInput(window_);
     lastTime_ = SDL_GetTicks();
     initialized_ = true;
 }
@@ -257,8 +333,11 @@ FluentApp::~FluentApp() {
             SDL_DestroyWindow(window_);
         }
         SDL_Quit();
+    } else if (window_) {
+        // External window: leave window/SDL alone but undo the StartTextInput
+        // we issued in the external-window constructor.
+        SDL_StopTextInput(window_);
     }
-    // If !ownsWindow_, the caller owns the window/SDL — don't touch them
 }
 
 void FluentApp::root(std::function<void(UIBuilder&)> buildFn) {
@@ -540,12 +619,14 @@ void FluentApp::endFrame() {
 
 bool FluentApp::saveLayout(const std::string& filepath) {
     if (!ctx_) return false;
-    return LayoutSerializer::SaveLayout(filepath, ctx_->dockSpace, ctx_);
+    // Phase E5: include detached viewports.
+    return LayoutSerializer::SaveLayout(filepath, ctx_->dockSpace, ctx_, getViewports());
 }
 
 bool FluentApp::loadLayout(const std::string& filepath) {
     if (!ctx_) return false;
-    return LayoutSerializer::LoadLayout(filepath, ctx_->dockSpace, ctx_);
+    // Phase E5: populate pendingViewports_ for the caller to restore.
+    return LayoutSerializer::LoadLayout(filepath, ctx_->dockSpace, ctx_, &pendingViewports_);
 }
 
 // --- Multi-Window ---
@@ -572,6 +653,62 @@ void FluentApp::closeWindow(AppWindow* win) {
     win->close();
 }
 
+// Phase E: Multi-viewport — detach a docked panel into its own OS-window.
+AppWindow* FluentApp::detachPanelToWindow(const std::string& panelId,
+                                          std::function<void(UIBuilder&)> buildFn,
+                                          int x, int y, int width, int height) {
+    if (!ctx_) return nullptr;
+    // Remove from main dock layout (UndockPanel restores it to floating; we then
+    // remove from the dock root entirely by making the dock space drop the leaf).
+    if (ctx_->dockSpace.IsPanelDocked(panelId)) {
+        ctx_->dockSpace.UndockPanel(panelId);
+    }
+
+    AppWindow* win = createWindow(panelId, width, height);
+    if (!win) return nullptr;
+    if (win->window()) {
+        SDL_SetWindowPosition(win->window(), x, y);
+    }
+    // Phase E5: tag the window with its panel id so it can be serialized later.
+    win->panelId_ = panelId;
+    win->root(std::move(buildFn));
+    return win;
+}
+
+void FluentApp::setOnPanelDragOut(std::function<void(const std::string&, int, int)> cb) {
+    onPanelDragOut_ = std::move(cb);
+    if (ctx_) ctx_->dockDrag.onPanelDragOut = onPanelDragOut_;
+}
+
+std::vector<ViewportInfo> FluentApp::getViewports() const {
+    std::vector<ViewportInfo> out;
+    out.reserve(secondaryWindows_.size());
+    for (const auto& w : secondaryWindows_) {
+        if (!w || w->panelId().empty() || !w->window_) continue;
+        ViewportInfo v;
+        v.panelId = w->panelId();
+        int x = 0, y = 0, ww = 0, hh = 0;
+        SDL_GetWindowPosition(w->window_, &x, &y);
+        SDL_GetWindowSize(w->window_, &ww, &hh);
+        v.x = x; v.y = y;
+        v.width = ww > 0 ? ww : v.width;
+        v.height = hh > 0 ? hh : v.height;
+        out.push_back(v);
+    }
+    return out;
+}
+
+void FluentApp::restoreViewports(
+    std::function<std::function<void(UIBuilder&)>(const std::string&)> factory) {
+    if (!factory) return;
+    for (const auto& v : pendingViewports_) {
+        auto buildFn = factory(v.panelId);
+        if (!buildFn) continue;
+        detachPanelToWindow(v.panelId, std::move(buildFn), v.x, v.y, v.width, v.height);
+    }
+    pendingViewports_.clear();
+}
+
 // --- DPI Scaling ---
 
 float FluentApp::getDPIScale() const {
@@ -581,6 +718,7 @@ float FluentApp::getDPIScale() const {
 void FluentApp::setDPIScale(float scale) {
     if (!ctx_) return;
     ctx_->dpiScale = std::max(0.5f, std::min(4.0f, scale));
+    ctx_->renderer.SetDPIScale(ctx_->dpiScale); // Phase A4
 }
 
 void FluentApp::updateDPIScale() {
@@ -588,6 +726,7 @@ void FluentApp::updateDPIScale() {
     float scale = SDL_GetWindowDisplayScale(window_);
     if (scale <= 0.0f) scale = 1.0f;
     ctx_->dpiScale = scale;
+    ctx_->renderer.SetDPIScale(scale); // Phase A4
 }
 
 // --- Dock Space Access ---

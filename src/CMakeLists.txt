@@ -5,6 +5,7 @@ add_library(FluentUI
     Core/MSDFGenerator.cpp
     Core/InputState.cpp
     Core/OpenGLBackend.cpp
+    Core/VulkanBackend.cpp
     Core/UIBuilder.cpp
     Core/FluentApp.cpp
     Core/DockSystem.cpp
@@ -12,6 +13,7 @@ add_library(FluentUI
     Core/FontManager.cpp
     Core/Accessibility.cpp
     Core/FileDialog.cpp
+    Core/DragDrop.cpp
     UI/WidgetHelpers.cpp
     UI/BasicWidgets.cpp
     UI/InputWidgets.cpp
@@ -19,6 +21,11 @@ add_library(FluentUI
     UI/ListWidgets.cpp
     UI/MenuWidgets.cpp
     UI/OverlayWidgets.cpp
+    UI/PlotWidgets.cpp
+    UI/DateTimeWidgets.cpp
+    Demo/DemoWindow.cpp
+    Demo/StyleEditor.cpp
+    Demo/ItemPicker.cpp
     Theme/FluentTheme.cpp)
 
 # Include dirs are set in the parent CMakeLists.txt via BUILD_INTERFACE/INSTALL_INTERFACE

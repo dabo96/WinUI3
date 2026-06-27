@@ -65,6 +65,10 @@ struct LayoutStack {
   bool isVertical = true;
   float lineHeight = 0.0f;
   int itemCount = 0;
+  // Horizontal offset applied by CollapsingHeader to subsequent siblings in a
+  // vertical layout. Reset on each layout pop. Auto-resets when another header
+  // at the same level is rendered.
+  float collapseIndent = 0.0f;
 };
 
 struct TabContentFrame {
@@ -83,6 +87,9 @@ struct DragWidgetState {
   float dragStartMouseX = 0.0f;
   std::string editText;
   uint64_t lastClickTime = 0;  // For double-click detection (SDL_GetTicks)
+  // Phase B4: drag threshold — small movements after mouse-down don't change the value.
+  // Set to true once total mouse movement exceeds the threshold; cleared on release.
+  bool dragThresholdPassed = false;
 };
 
 struct PanelFrameContext {
@@ -138,6 +145,13 @@ struct TableInternalState {
   float resizeStartX = 0.0f;
   float resizeStartWidth = 0.0f;
   bool initialized = false;
+  // Phase C7: anchor row for shift-range multi-row selection
+  int lastSelectedRow = -1;
+  // Phase C7: horizontal scroll state (non-frozen columns only)
+  float scrollOffsetX = 0.0f;
+  bool draggingHScrollbar = false;
+  Vec2 hDragStartMouse{0.0f, 0.0f};
+  float hDragStartScroll = 0.0f;
 };
 
 struct TableFrameContext {
@@ -162,6 +176,18 @@ struct TableFrameContext {
   bool clipPushed = false;
   float contentWidth = 0.0f;  // Total width of all columns
   float scrollbarWidth = 0.0f;
+  // Phase C7: forwarded fields from external TableState.
+  int frozenColumns = 0;
+  std::vector<int>* selectedRowsPtr = nullptr;
+  // Anchor row id for shift-range selection (per-table)
+  int lastSelectedRow = -1;
+  // Phase C7: horizontal scroll for non-frozen columns
+  float scrollOffsetX = 0.0f;
+  float frozenContentWidth = 0.0f;   // Sum of widths of frozen columns
+  float totalColumnsWidth = 0.0f;    // Sum of widths of all columns
+  float dataAreaHeight = 0.0f;       // Height available for data rows (excludes h-scrollbar)
+  bool needsHScrollbar = false;
+  bool cellClipPushed = false;       // Whether TableSetCell has a pending clip to pop
 };
 
 struct UIContext {
@@ -224,12 +250,44 @@ struct UIContext {
   std::unordered_map<uint32_t, RippleEffect> rippleEffects;
 
   std::unordered_map<uint32_t, bool> boolStates;
+  // Id del único ComboBox que puede estar abierto a la vez (0 = ninguno). Al
+  // abrir uno se cierra cualquier otro automáticamente.
+  uint32_t openComboId = 0;
+  // Rectángulo en pantalla del dropdown del combo abierto. Sirve para que los
+  // widgets que quedan DEBAJO del dropdown (renderizado diferido, encima) no
+  // procesen el click que en realidad va dirigido a una opción del dropdown.
+  Vec2 openComboDropdownPos;
+  Vec2 openComboDropdownSize;
+  // true mientras se procesa/dibuja el contenido interactivo de un overlay
+  // (items de combo o de menú). Exime a ese contenido del bloqueo de input por
+  // overlay, de modo que el propio overlay sí reciba los clicks de sus items.
+  bool insideOverlayRender = false;
+  // Rect persistente del dropdown del menú abierto (análogo a openComboId). Se
+  // usa para bloquear los widgets de fondo aun cuando MenuItem cierre el menú a
+  // mitad de frame: el rect persiste del frame anterior y se limpia al FINAL
+  // del frame (en RenderDeferredDropdowns) cuando el menú ya no está abierto.
+  uint32_t openMenuId = 0;
+  Vec2 openMenuDropdownPos;
+  Vec2 openMenuDropdownSize;
   std::unordered_map<uint32_t, float> floatStates;
   std::unordered_map<uint32_t, int> intStates;
   std::unordered_map<uint32_t, std::string> stringStates;
   std::unordered_map<uint32_t, size_t> caretPositions;
   std::unordered_map<uint32_t, size_t> selectionAnchors; // Selection anchor (start of selection)
   std::unordered_map<uint32_t, float> textScrollOffsets;
+
+  // Per-TextInput multi-click tracking (double/triple-click word/line selection)
+  struct TextClickInfo {
+    uint64_t lastClickTime = 0;  // SDL_GetTicks of last click
+    Vec2 lastClickPos{0, 0};
+    int clickCount = 0;          // 1 = single, 2 = double, 3 = triple
+  };
+  std::unordered_map<uint32_t, TextClickInfo> textClickInfo;
+
+  // Pending callback for the next TextInput call (consumed once).
+  // Use std::any-like opaque pointer to avoid pulling Widgets.h here.
+  void* pendingTextInputCallback = nullptr; // opaque: const FluentUI::TextInputCallback*
+  uint32_t pendingTextInputCallbackMask = 0;
 
   // Per-TextInput undo/redo stacks
   struct TextUndoEntry {
@@ -275,8 +333,10 @@ struct UIContext {
     Vec2 absolutePos{0.0f, 0.0f}; // Posición absoluta guardada
     Vec2 dragPositionOffset{0.0f, 0.0f}; // Offset from layout position when dragged
     bool hasBeenDragged = false; // Track if panel has been manually repositioned
+    bool hasBeenManuallyResized = false; // Track if user manually resized the panel
+    Vec2 manualSize{0.0f, 0.0f}; // Size set by manual resize
     Vec2 contentSize{0.0f, 0.0f}; // Real content size measured in previous frame
-    
+
     // Scroll support
     Vec2 scrollOffset{0.0f, 0.0f};
     bool draggingScrollbar = false;
@@ -318,6 +378,8 @@ struct UIContext {
     bool useAbsolutePos =
         false; // Si se usó posición absoluta (pos != Vec2(0,0))
     Vec2 absolutePos{0.0f, 0.0f}; // Posición absoluta guardada
+    float tabBarScrollX = 0.0f;   // Horizontal scroll offset for tab bar overflow
+    float totalTabsWidth = 0.0f;  // Total width of all tabs (calculated each frame)
   };
 
   std::unordered_map<uint32_t, TabViewState> tabViewStates;
@@ -347,16 +409,27 @@ struct UIContext {
 
   std::unordered_map<uint32_t, ModalState> modalStates;
   std::vector<uint32_t> modalStack;  // Track active modal IDs for EndModal
+  uint32_t activeModalId = 0; // Modal abierto (0 = ninguno): bloquea el fondo
+  bool insideModal = false;   // true entre BeginModal/EndModal (contenido exento)
 
   struct ContextMenuState {
     Vec2 position{0.0f, 0.0f};
-    Vec2 size{0.0f, 0.0f};
+    Vec2 size{0.0f, 0.0f};       // Visual size (clamped to viewport)
+    Vec2 contentSize{0.0f, 0.0f}; // Full content size (may exceed visual)
+    float scrollOffset = 0.0f;
     bool open = false;
     bool initialized = false;
+    // Saved parent state to restore after EndContextMenu
+    Vec2 savedCursorPos{0.0f, 0.0f};
+    Vec2 savedLastItemPos{0.0f, 0.0f};
+    Vec2 savedLastItemSize{0.0f, 0.0f};
+    std::vector<Renderer::ClipRect> savedClipStack;
+    size_t savedLayoutStackSize = 0;
   };
 
   std::unordered_map<uint32_t, ContextMenuState> contextMenuStates;
   uint32_t activeContextMenuId = 0; // ID del context menu activo
+  bool insideContextMenu = false;  // true entre BeginContextMenu/EndContextMenu
 
   struct ListViewState {
     int selectedItem = -1;
@@ -385,10 +458,23 @@ struct UIContext {
     bool useAbsolutePos =
         false; // Si se usó posición absoluta (pos != Vec2(0,0))
     Vec2 absolutePos{0.0f, 0.0f}; // Posición absoluta guardada
+    // Scroll support
+    float scrollOffset = 0.0f;
+    float contentHeight = 0.0f; // Measured from previous frame
+    Vec2 viewPos{0.0f, 0.0f};   // Position of the tree view area
+    Vec2 viewSize{0.0f, 0.0f};  // Visual size of the tree view area
+    // Scrollbar drag state (for interactive DrawScrollbar)
+    bool draggingScrollbar = false;
+    Vec2 dragStartMouse{0.0f, 0.0f};
+    float dragStartScroll = 0.0f;
   };
 
   std::unordered_map<uint32_t, TreeViewState> treeViewStates;
   std::unordered_map<std::string, bool> treeNodeStates; // Map id -> isOpen
+
+  // Phase C5: per-tree visit order and selection anchor for range-select.
+  std::unordered_map<uint32_t, std::vector<int>> treeVisitOrder;
+  std::unordered_map<uint32_t, int> treeLastSelectedId;
 
   // DragFloat / DragInt widget state
   std::unordered_map<uint32_t, DragWidgetState> dragStates;
@@ -411,6 +497,8 @@ struct UIContext {
     bool draggingAlpha = false;
     std::string hexText;
     bool editingHex = false;
+    // Phase C6: eyedropper mode — when true, the next click anywhere reads the framebuffer pixel.
+    bool eyedropperActive = false;
   };
 
   std::unordered_map<uint32_t, ColorPickerState> colorPickerStates;
@@ -495,6 +583,20 @@ struct UIContext {
   uint32_t activeWidgetId = 0;
   ActiveWidgetType activeWidgetType = ActiveWidgetType::None;
 
+  // Phase D: Drag-drop typed payload state
+  struct DragDropState {
+    bool active = false;             // True while a drag is in progress
+    bool delivered = false;          // True for one frame when payload was accepted
+    std::string payloadType;         // User-defined type tag (e.g. "FILE_PATH")
+    std::vector<uint8_t> payloadBytes; // Raw payload bytes (POD copy)
+    Vec2 startPos{0,0}, currentPos{0,0};
+    uint32_t sourceWidgetId = 0;
+    uint32_t hoverTargetId = 0;
+    bool acceptedThisFrame = false;
+    void* previewDrawCtx = nullptr;   // Opaque holder for std::function preview
+  };
+  DragDropState dragDrop;
+
   // Sistema de focus mejorado
   uint32_t focusedWidgetId = 0;
   std::vector<uint32_t> focusableWidgets; // Orden de widgets enfocables
@@ -515,6 +617,7 @@ struct UIContext {
     Vec2 size;
     Color bgColor;
     Color textColor;
+    uint32_t iconCodepoint = 0;
   };
 
   // Deferred rendering for Overlays
@@ -526,15 +629,6 @@ struct UIContext {
   };
   std::vector<DeferredTooltip> deferredTooltips;
 
-  struct DeferredModalContent {
-    uint32_t id;
-    std::string title;
-    bool* openPtr;
-    Vec2 size;
-    Vec2 pos;
-    // Callback or ID to render the content
-  };
-  // Modals use a more complex structure, for now we will just defer the Backdrop and the Modal Frame
 
   // Deferred context menus
   struct DeferredContextMenuContent {
@@ -548,13 +642,13 @@ struct UIContext {
   bool isRenderingOverlays = false;
 
   // Deferred rendering for ComboBox dropdowns
-  // Perf 3.2: Store pointer to items instead of copying the vector
   struct DeferredComboDropdown {
     Vec2 fieldPos;
     Vec2 fieldSize;
     Vec2 dropdownPos;
     Vec2 dropdownSize;
-    const std::vector<std::string>* items; // Pointer, valid until Render()
+    std::vector<std::string> items; // Owned copy (safe against caller temporaries)
+    std::vector<uint32_t> iconCodepoints; // Per-item icon (0 = none); empty = no icons
     int selectedIndex;
     int highlightIndex = -1; // Keyboard highlight (-1 = none)
     uint32_t comboId;
@@ -586,6 +680,10 @@ struct UIContext {
 
   // Scroll consumed flag - reset each frame in NewFrame()
   bool scrollConsumedThisFrame = false;
+
+  // WantCaptureMouse — tracks whether mouse is over any widget (for host app to skip 3D picking)
+  bool mouseOverAnyWidget = false;           // Set by IsMouseOver during current frame's widget rendering
+  bool mouseOverAnyWidgetLastFrame = false;  // Previous frame's value, safe to query during event processing
 
   // GC for state maps — Issue 11: amortized rotation
   std::unordered_map<uint32_t, uint32_t> lastSeenFrame;
@@ -632,6 +730,8 @@ struct UIContext {
     DockPosition hoverZone = DockPosition::Float;  // Which zone mouse is over
     std::string hoverTargetId;   // Which panel the dock zone belongs to
     bool showZones = false;      // Show dock zone indicators
+    // Phase E3: drag-out callback fired when user releases outside the window.
+    std::function<void(const std::string&, int, int)> onPanelDragOut;
 
     void Reset() {
       isDragging = false;
@@ -645,6 +745,28 @@ struct UIContext {
 
   // --- DPI Scaling (Phase 4) ---
   float dpiScale = 1.0f;  // Display scale factor (1.0 = 100%, 1.5 = 150%, 2.0 = 200%)
+
+  // --- Phase B1: Last item published state ---
+  // Each widget that returns a bool (button, textInput, slider, drag, checkbox, etc.)
+  // publishes its state into lastItem before returning. The free functions IsItemActivated /
+  // IsItemEdited / IsItemDeactivated / IsItemDeactivatedAfterEdit / IsItemHovered /
+  // IsItemFocused / GetItemRect read from lastItem.
+  struct LastItemData {
+    uint32_t id = 0;
+    Vec2 bboxMin{0, 0};
+    Vec2 bboxMax{0, 0};
+    bool hovered = false;
+    bool active = false;          // Held / being interacted this frame
+    bool focused = false;
+    bool edited = false;          // Value changed this frame
+    bool activated = false;       // Became active this frame (transition off→on)
+    bool deactivated = false;     // Stopped being active this frame (transition on→off)
+    bool deactivatedAfterEdit = false; // Deactivated AND edits happened during the active span
+  };
+  LastItemData lastItem;
+  // Internal tracking: id → was-active-last-frame, plus edited-since-activation flag.
+  std::unordered_map<uint32_t, bool> prevActiveItems;     // id → active last frame
+  std::unordered_map<uint32_t, bool> editedSinceActivate; // id → edits seen during current active span
 
   // Global statics moved from Widgets.cpp
   int treeViewDepth = 0;
@@ -661,9 +783,34 @@ struct UIContext {
   std::vector<TableFrameContext> tableStack;
 };
 
-UIContext *CreateContext(SDL_Window *window);
+// Selects which RenderBackend the factory instantiates. Defaults to OpenGL so
+// existing code is unaffected. Call SetPreferredBackend(RenderBackendType::Vulkan)
+// before CreateContext()/CreateStandaloneContext() to use the Vulkan backend; in
+// that case the `existingContext` argument is a VulkanSharedContext* (or nullptr
+// for standalone) instead of an SDL_GLContext.
+enum class RenderBackendType { OpenGL, Vulkan };
+void SetPreferredBackend(RenderBackendType type);
+RenderBackendType GetPreferredBackend();
+
+UIContext *CreateContext(SDL_Window *window, void* existingGLContext = nullptr);
+// Convenience overload: pick the backend and create the context in one call, so
+// the backend choice and its matching `existingContext` handle can't get out of
+// sync. For Vulkan pass a VulkanSharedContext* (shared mode) or nullptr
+// (standalone); for OpenGL pass an SDL_GLContext or nullptr.
+UIContext *CreateContext(SDL_Window *window, RenderBackendType backend, void* existingContext = nullptr);
 UIContext *GetContext();
 void DestroyContext();
+
+// Wrap a host-owned GPU texture (e.g. an engine-rendered viewport) so it can be
+// drawn with Image()/DrawImage(). Returns an opaque handle to pass to those APIs,
+// or nullptr on failure / unsupported backend. The library does NOT take ownership
+// of the underlying image — keep it alive and in the sampled layout while in use,
+// and call DestroyExternalTexture() (or backend DeleteTexture) to free the wrapper.
+//   Vulkan: nativeView = VkImageView; sampler = VkSampler (null → default linear);
+//           layout = VkImageLayout when sampled (0 → SHADER_READ_ONLY_OPTIMAL).
+void* RegisterExternalTexture(void* nativeView, void* sampler = nullptr, int layout = 0);
+// Release a handle returned by RegisterExternalTexture (frees only the wrapper).
+void DestroyExternalTexture(void* handle);
 
 // Multi-context support (Phase 4: Multi-Window)
 // SetCurrentContext swaps which context is used by NewFrame/Render/widgets
@@ -676,5 +823,26 @@ void DestroyStandaloneContext(UIContext* ctx, RenderBackend* backend);
 
 void NewFrame(float deltaTime = 0.016f);
 void Render();
+
+/// Returns true if the mouse was over any FluentUI widget last frame.
+/// Host app should skip 3D picking / viewport interaction when this returns true.
+bool WantCaptureMouse();
+
+// --- Phase B1: Public item-state queries ---
+// Read from UIContext::lastItem populated by the most recent widget call.
+// All return false if no widget published state this frame.
+bool IsItemHovered();
+bool IsItemActive();
+bool IsItemFocused();
+bool IsItemEdited();
+bool IsItemActivated();
+bool IsItemDeactivated();
+bool IsItemDeactivatedAfterEdit();
+// Returns the bbox of the last published widget (zero-rect if none).
+void GetItemRect(Vec2* outMin, Vec2* outMax);
+// Internal: widget code calls this to publish its state into ctx->lastItem.
+// edited is the per-frame value-changed flag returned by the widget.
+void SetLastItem(uint32_t id, const Vec2& bboxMin, const Vec2& bboxMax,
+                 bool hovered, bool active, bool focused, bool edited);
 
 } // namespace FluentUI

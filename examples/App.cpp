@@ -1,4 +1,5 @@
 #include "App.h"
+#include <SDL3/SDL_vulkan.h>
 #include <cmath>
 #include <cstdio>
 
@@ -14,10 +15,27 @@ App::App(const char *titulo)
         return;
     }
 
-    std::cout << "Creating Window..." << std::endl;
-    window = SDL_CreateWindow(titulo, 1280, 720,
-                              SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
-    
+    // Pick the window flag that matches the configured render backend.
+    m_useVulkan = (GetPreferredBackend() == RenderBackendType::Vulkan);
+
+    Uint32 apiFlag = SDL_WINDOW_OPENGL;
+    if (m_useVulkan) {
+        // If SDL itself has Vulkan support, let it own the surface (needs the
+        // SDL_WINDOW_VULKAN flag). If not, create a plain window — the backend
+        // builds a native (Win32) surface from the HWND instead.
+        if (SDL_Vulkan_LoadLibrary(nullptr)) {
+            apiFlag = SDL_WINDOW_VULKAN;
+        } else {
+            apiFlag = 0;
+            std::cout << "SDL has no Vulkan support (" << SDL_GetError()
+                      << "); backend will create a native surface." << std::endl;
+        }
+    }
+
+    std::cout << "Creating Window (" << (m_useVulkan ? "Vulkan" : "OpenGL") << ")..." << std::endl;
+    Uint32 winFlags = SDL_WINDOW_RESIZABLE | apiFlag;
+    window = SDL_CreateWindow(titulo, 1280, 720, winFlags);
+
     if (!window) {
         std::cerr << "SDL_CreateWindow Error: " << SDL_GetError() << std::endl;
         SDL_Quit();
@@ -117,7 +135,9 @@ void App::Run() {
         NewFrame(deltaTime);
         BuildUI();
         Render();
-        SDL_GL_SwapWindow(window);
+        // OpenGL presents via the swap; the Vulkan backend presents inside EndFrame().
+        if (!m_useVulkan)
+            SDL_GL_SwapWindow(window);
     }
 }
 
@@ -280,8 +300,11 @@ void App::BuildBasicWidgets() {
         m_statusText = m_checkbox1 ? "Notifications enabled" : "Notifications disabled";
     }
     if (Checkbox("Dark mode (synced)", &m_isDarkTheme)) {
-        ctx->style =
-            m_isDarkTheme ? GetDarkFluentStyle() : GetDefaultFluentStyle();
+        // Preservar el acento elegido al cambiar de tema (no resetear a azul).
+        Color accents[] = {FluentColors::AccentBlue,  FluentColors::AccentGreen,
+                           FluentColors::AccentPurple, FluentColors::AccentOrange,
+                           FluentColors::AccentPink,   FluentColors::AccentTeal};
+        ctx->style = CreateCustomFluentStyle(accents[m_accentColorIdx], m_isDarkTheme);
         m_statusText =
             m_isDarkTheme ? "Dark mode ON" : "Dark mode OFF";
     }
@@ -732,7 +755,11 @@ void App::BuildThemeSettings() {
                        FluentColors::AccentPink,   FluentColors::AccentTeal};
 
     for (int i = 0; i < 6; i++) {
-        RadioButton(m_accentNames[i], &m_accentColorIdx, i, "accent");
+        if (RadioButton(m_accentNames[i], &m_accentColorIdx, i, "accent")) {
+            // Aplicar en el acto al elegir el color (no esperar a "Apply").
+            ctx->style = CreateCustomFluentStyle(accents[m_accentColorIdx], m_isDarkTheme);
+            m_statusText = "Accent: " + m_accentNames[i];
+        }
     }
 
     Spacing(4);

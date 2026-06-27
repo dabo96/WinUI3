@@ -1,9 +1,11 @@
 #include "UI/Widgets.h"
 #include "UI/WidgetHelpers.h"
+#include "UI/Icons.h"
 #include "Theme/FluentTheme.h"
 #include "core/Animation.h"
 #include "core/Context.h"
 #include "core/Renderer.h"
+#include "core/Elevation.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -35,38 +37,59 @@ static size_t Utf8NextCodepoint(const std::string& s, size_t pos) {
   return (next > s.size()) ? s.size() : next;
 }
 
+bool Checkbox(const std::string &label, uint32_t iconCodepoint, bool *value, std::optional<Vec2> pos);
+
 bool Checkbox(const std::string &label, bool *value, std::optional<Vec2> pos) {
+  return Checkbox(label, 0u, value, pos);
+}
+
+bool Checkbox(const std::string &label, uint32_t iconCodepoint, bool *value, std::optional<Vec2> pos) {
   UIContext *ctx = GetContext();
   if (!ctx)
     return false;
 
-  Vec2 boxSize(S(20.0f), S(20.0f));
+  // Fluent 2 spec: medium checkbox = 16×16px, borderRadiusSmall = 2px,
+  // border 1px (thin), check stroke ~1.5px, fill = brand accent when checked.
+  Vec2 boxSize(S(16.0f), S(16.0f));
+  float boxRadius = S(2.0f);
   const TextStyle &textStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
-  Vec2 textSize = MeasureTextCached(ctx,label, textStyle.fontSize);
-  Vec2 totalSize(boxSize.x + S(8.0f) + textSize.x,
-                 std::max(boxSize.y, textSize.y));
-  LayoutConstraints constraints = ConsumeNextConstraints();
+  Vec2 textSize = MeasureTextCached(ctx, label, textStyle.fontSize);
+  float trailingIconSize = textStyle.fontSize;
+  float trailingIconSlot = (iconCodepoint != 0u) ? (S(6.0f) + trailingIconSize) : 0.0f;
+  Vec2 totalSize(boxSize.x + S(8.0f) + textSize.x + trailingIconSlot,
+                 std::max(boxSize.y, std::max(textSize.y, trailingIconSize)));
+  LayoutConstraints constraints = ConsumeNextConstraints(SizeConstraint::Fill);
   Vec2 layoutSize = ApplyConstraints(ctx, constraints, totalSize);
 
-  // Resolver posición: usar pos si se proporciona, sino usar cursor
-  // directamente
-  Vec2 boxPos;
-  if (pos.has_value()) {
-    boxPos = ResolveAbsolutePosition(ctx, pos.value(), layoutSize);
-  } else {
-    boxPos = ctx->cursorPos;
-  }
+  Vec2 widgetPos = pos.has_value()
+                       ? ResolveAbsolutePosition(ctx, pos.value(), layoutSize)
+                       : ctx->cursorPos;
+  // Center the 16px box vertically within the line height
+  Vec2 boxPos(widgetPos.x,
+              widgetPos.y + (layoutSize.y - boxSize.y) * 0.5f);
 
   uint32_t id = GenerateId("CHK:", label.c_str());
+
+  // Phase F1: register as focusable
+  ctx->focusableWidgets.push_back(id);
 
   auto boolEntry = ctx->boolStates.try_emplace(id, false);
   bool currentValue = value ? *value : boolEntry.first->second;
 
-  // Expand hitbox to include label area
-  bool hover = IsMouseOver(ctx, boxPos, layoutSize);
+  // Hit area = caja + gap + label (contenido real), NO el ancho rellenado por
+  // Fill, para no dejar seleccionable la fila entera a la derecha.
+  Vec2 hitSize(totalSize.x, layoutSize.y);
+  bool hover = IsMouseOver(ctx, widgetPos, hitSize);
 
   bool toggled = false;
   if (hover && ctx->input.IsMousePressed(0)) {
+    currentValue = !currentValue;
+    toggled = true;
+  }
+  // Phase F1: keyboard activation (Space / Enter when focused)
+  if (ctx->focusedWidgetId == id &&
+      (ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE) ||
+       ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN))) {
     currentValue = !currentValue;
     toggled = true;
   }
@@ -76,7 +99,6 @@ bool Checkbox(const std::string &label, bool *value, std::optional<Vec2> pos) {
   else
     boolEntry.first->second = currentValue;
 
-  // Invoke valueChanged callback if toggled
   if (toggled) {
     std::string idStr = "CHK:" + label;
     auto cbIt = ctx->valueChangedCallbacks.find(idStr);
@@ -84,44 +106,65 @@ bool Checkbox(const std::string &label, bool *value, std::optional<Vec2> pos) {
   }
 
   const PanelStyle &panelStyle = ctx->style.panel;
-  const ColorState &toggleAccent = ctx->style.button.background;
+  Color accent = ctx->style.accentColor;
+  Color accentHover(std::min(1.0f, accent.r * 1.15f),
+                    std::min(1.0f, accent.g * 1.15f),
+                    std::min(1.0f, accent.b * 1.15f), accent.a);
 
-  // Fondo del checkbox - contraste sutil sin borde
-  bool hoverBox = IsMouseOver(ctx, boxPos, boxSize);
-  Color boxFill = panelStyle.background;
-  if (hoverBox) {
-    boxFill = panelStyle.headerBackground;
-  }
-  // Hacer el fondo más distintivo según el tema para mejor visibilidad (sin borde)
-  boxFill = AdjustContainerBackground(boxFill, ctx->style.isDarkTheme);
-
-  // Focus ring for keyboard navigation
   if (ctx->focusedWidgetId == id) {
-    DrawFocusRing(ctx, boxPos, boxSize, panelStyle.cornerRadius * 0.5f);
+    DrawFocusRing(ctx, boxPos, boxSize, boxRadius);
   }
-
-  // Relleno sin borde - solo contraste de fondo
-  ctx->renderer.DrawRectFilled(boxPos, boxSize, boxFill,
-                               panelStyle.cornerRadius * 0.5f);
 
   if (currentValue) {
-    Vec2 innerPos(boxPos.x + 4.0f, boxPos.y + 4.0f);
-    Vec2 innerSize(boxSize.x - 8.0f, boxSize.y - 8.0f);
-    Color fillColor = hover ? toggleAccent.hover : toggleAccent.normal;
-    ctx->renderer.DrawRectFilled(innerPos, innerSize, fillColor,
-                                 panelStyle.cornerRadius * 0.3f);
+    // Checked: filled with accent (brand) color
+    Color fillColor = hover ? accentHover : accent;
+    ctx->renderer.DrawRectFilled(boxPos, boxSize, fillColor, boxRadius);
+    // Draw checkmark (two strokes, 1.5px each)
+    float cs = boxSize.x; // 16
+    Vec2 p1(boxPos.x + cs * 0.22f, boxPos.y + cs * 0.52f);
+    Vec2 p2(boxPos.x + cs * 0.42f, boxPos.y + cs * 0.72f);
+    Vec2 p3(boxPos.x + cs * 0.78f, boxPos.y + cs * 0.30f);
+    Color checkColor(1.0f, 1.0f, 1.0f, 1.0f);
+    ctx->renderer.DrawLine(p1, p2, checkColor, S(1.5f));
+    ctx->renderer.DrawLine(p2, p3, checkColor, S(1.5f));
+  } else {
+    // Unchecked: transparent fill + 1px border, hover lightens border
+    Color borderCol = hover ? ctx->style.label.text.color
+                            : Color(panelStyle.borderColor.r,
+                                    panelStyle.borderColor.g,
+                                    panelStyle.borderColor.b, 0.85f);
+    ctx->renderer.DrawRect(boxPos, boxSize, borderCol, boxRadius);
   }
 
-  Vec2 textPos(boxPos.x + boxSize.x + 8.0f,
-               boxPos.y + (boxSize.y - textSize.y) * 0.5f);
+  Vec2 textPos(boxPos.x + boxSize.x + S(8.0f),
+               widgetPos.y + (layoutSize.y - textSize.y) * 0.5f);
   ctx->renderer.DrawText(textPos, label, textStyle.color, textStyle.fontSize);
 
-  ctx->lastItemPos = boxPos;
+  if (iconCodepoint != 0u) {
+    DrawWidgetIcon(ctx, widgetPos, layoutSize, iconCodepoint, textStyle.color,
+                   trailingIconSize,
+                   (textPos.x - widgetPos.x) + textSize.x + S(6.0f), 0.0f);
+  }
+
+  ctx->lastItemPos = widgetPos;
   AdvanceCursor(ctx, layoutSize);
+
+  bool focused = (ctx->focusedWidgetId == id);
+  // Phase B1: checkbox is "active" while the mouse is held over it (toggle on press).
+  bool active = hover && ctx->input.IsMouseDown(0);
+  SetLastItem(id, widgetPos, widgetPos + hitSize, hover, active, focused, toggled);
   return toggled;
 }
 
+bool RadioButton(const std::string &label, uint32_t iconCodepoint, int *value, int optionValue,
+                 const std::string &group, std::optional<Vec2> pos);
+
 bool RadioButton(const std::string &label, int *value, int optionValue,
+                 const std::string &group, std::optional<Vec2> pos) {
+  return RadioButton(label, 0u, value, optionValue, group, pos);
+}
+
+bool RadioButton(const std::string &label, uint32_t iconCodepoint, int *value, int optionValue,
                  const std::string &group, std::optional<Vec2> pos) {
   UIContext *ctx = GetContext();
   if (!ctx)
@@ -130,9 +173,11 @@ bool RadioButton(const std::string &label, int *value, int optionValue,
   Vec2 circleSize(20.0f, 20.0f);
   const TextStyle &textStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
   Vec2 textSize = MeasureTextCached(ctx,label, textStyle.fontSize);
-  Vec2 totalSize(circleSize.x + 8.0f + textSize.x,
-                 std::max(circleSize.y, textSize.y));
-  LayoutConstraints constraints = ConsumeNextConstraints();
+  float trailingIconSize = textStyle.fontSize;
+  float trailingIconSlot = (iconCodepoint != 0u) ? (6.0f + trailingIconSize) : 0.0f;
+  Vec2 totalSize(circleSize.x + 8.0f + textSize.x + trailingIconSlot,
+                 std::max(circleSize.y, std::max(textSize.y, trailingIconSize)));
+  LayoutConstraints constraints = ConsumeNextConstraints(SizeConstraint::Fill);
   Vec2 layoutSize = ApplyConstraints(ctx, constraints, totalSize);
 
   // Resolver posición: usar pos si se proporciona, sino usar cursor
@@ -150,12 +195,18 @@ bool RadioButton(const std::string &label, int *value, int optionValue,
   const char* groupKey = group.empty() ? "DEFAULT_RADIO_GROUP:" : group.c_str();
   uint32_t id = GenerateId("RADIO:", groupKey, label.c_str());
 
+  // Phase F1: register as focusable
+  ctx->focusableWidgets.push_back(id);
+
   // Obtener valor actual del grupo
   int currentValue = value ? *value : 0;
   bool isSelected = (currentValue == optionValue);
 
-  // Expand hitbox to include label area
-  bool hover = IsMouseOver(ctx, circlePos, layoutSize);
+  // Hit area = círculo + gap + label (contenido real), NO el ancho rellenado por
+  // Fill (layoutSize.x ocupa todo el contenedor, lo que dejaba seleccionable la
+  // fila entera a la derecha aunque no hubiera nada que clicar).
+  Vec2 hitSize(totalSize.x, layoutSize.y);
+  bool hover = IsMouseOver(ctx, circlePos, hitSize);
 
   bool clicked = false;
   if (hover && ctx->input.IsMousePressed(0)) {
@@ -164,44 +215,67 @@ bool RadioButton(const std::string &label, int *value, int optionValue,
     }
     clicked = true;
   }
+  // Phase F1: keyboard activation (Space / Enter when focused)
+  if (ctx->focusedWidgetId == id &&
+      (ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE) ||
+       ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN))) {
+    if (value) *value = optionValue;
+    clicked = true;
+  }
 
   const PanelStyle &panelStyle = ctx->style.panel;
-  const ColorState &accentState = ctx->style.button.background;
-
-  // Fondo del radio button - contraste sutil sin borde
-  float mx = ctx->input.MouseX();
-  float my = ctx->input.MouseY();
-  float dx = mx - circleCenter.x;
-  float dy = my - circleCenter.y;
-  bool hoverCircle = (dx * dx + dy * dy) <= radius * radius;
-  Color circleFill = panelStyle.background;
-  if (hoverCircle) {
-    circleFill = panelStyle.headerBackground;
-  }
-  // Hacer el fondo más distintivo según el tema para mejor visibilidad (sin borde)
-  circleFill = AdjustContainerBackground(circleFill, ctx->style.isDarkTheme);
+  Color accent = ctx->style.accentColor;
+  Color accentHover(std::min(1.0f, accent.r * 1.15f),
+                    std::min(1.0f, accent.g * 1.15f),
+                    std::min(1.0f, accent.b * 1.15f), accent.a);
 
   // Focus ring for keyboard navigation
   if (ctx->focusedWidgetId == id) {
     DrawFocusRing(ctx, circlePos, circleSize, radius);
   }
 
-  // Círculo de fondo con contraste (sin borde)
-  ctx->renderer.DrawCircle(circleCenter, radius, circleFill, true);
-
-  // Dibujar círculo interior si está seleccionado
+  // Estilo consistente con el Checkbox: el fondo del contenedor suele coincidir
+  // con el del radio, así que un relleno sólo no contrasta — se dibuja un borde
+  // (anillo) visible cuando no está seleccionado, y un disco de acento con punto
+  // blanco al centro cuando lo está.
   if (isSelected) {
-    float innerRadius = radius * 0.5f;
-    Color fillColor = hover ? accentState.hover : accentState.normal;
-    ctx->renderer.DrawCircle(circleCenter, innerRadius, fillColor, true);
+    Color fillColor = hover ? accentHover : accent;
+    ctx->renderer.DrawCircle(circleCenter, radius, fillColor, true);
+    ctx->renderer.DrawCircle(circleCenter, radius * 0.40f,
+                             Color(1.0f, 1.0f, 1.0f, 1.0f), true);
+  } else {
+    // Hover: relleno sutil para dar feedback de afordancia.
+    if (hover) {
+      Color hoverFill = AdjustContainerBackground(panelStyle.headerBackground,
+                                                  ctx->style.isDarkTheme);
+      ctx->renderer.DrawCircle(circleCenter, radius, hoverFill, true);
+    }
+    // Borde (anillo) — mismo criterio de color que el borde del Checkbox.
+    Color borderCol = hover ? ctx->style.label.text.color
+                            : Color(panelStyle.borderColor.r,
+                                    panelStyle.borderColor.g,
+                                    panelStyle.borderColor.b, 0.85f);
+    ctx->renderer.DrawCircle(circleCenter, radius, borderCol, false);
   }
 
   Vec2 textPos(circlePos.x + circleSize.x + 8.0f,
                circlePos.y + (circleSize.y - textSize.y) * 0.5f);
   ctx->renderer.DrawText(textPos, label, textStyle.color, textStyle.fontSize);
 
+  if (iconCodepoint != 0u) {
+    DrawWidgetIcon(ctx, circlePos, layoutSize, iconCodepoint, textStyle.color,
+                   trailingIconSize,
+                   (textPos.x - circlePos.x) + textSize.x + 6.0f, 0.0f);
+  }
+
   ctx->lastItemPos = circlePos;
   AdvanceCursor(ctx, layoutSize);
+  // Phase B1: publish radio state
+  {
+    bool active = hover && ctx->input.IsMouseDown(0);
+    SetLastItem(id, circlePos, circlePos + hitSize,
+                hover, active, ctx->focusedWidgetId == id, clicked);
+  }
   return clicked;
 }
 
@@ -219,22 +293,25 @@ bool SliderFloat(const std::string &label, float *value, float minValue,
   if (!ctx)
     return false;
 
-  float labelSpacing = 4.0f;
-  float sliderHeight = 20.0f;
+  // Fluent 2 spec: track = 4px thick (rail), thumb = 20px diameter (medium).
+  // Hit area is full 20px height so the slider is easy to grab.
+  float labelSpacing = 6.0f;
+  float hitHeight = 20.0f;
+  float trackThickness = 4.0f;
+  float thumbRadius = 10.0f;  // 20px diameter
   const TextStyle &labelStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
   const TextStyle &valueStyle =
       ctx->style.GetTextStyle(TypographyStyle::Caption);
   const PanelStyle &panelStyle = ctx->style.panel;
-  const ColorState &accentState = ctx->style.button.background;
 
-  Vec2 labelSize = MeasureTextCached(ctx,label, labelStyle.fontSize);
+  Vec2 labelSize = MeasureTextCached(ctx, label, labelStyle.fontSize);
   float trackWidth = width > 0.0f ? width : 200.0f;
-  Vec2 trackSize(trackWidth, sliderHeight);
+  Vec2 trackSize(trackWidth, hitHeight);  // hit/layout size, visual track is thinner
 
   // Calcular tamaño total primero
   Vec2 totalSize(trackSize.x + 100.0f,
                  labelSize.y + labelSpacing + trackSize.y);
-  LayoutConstraints constraints = ConsumeNextConstraints();
+  LayoutConstraints constraints = ConsumeNextConstraints(SizeConstraint::Fill);
   Vec2 finalSize = ApplyConstraints(ctx, constraints, totalSize);
 
   // Resolver posición: usar pos si se proporciona, sino usar cursor
@@ -249,9 +326,57 @@ bool SliderFloat(const std::string &label, float *value, float minValue,
 
   uint32_t id = GenerateId("SLDR_F:", label.c_str());
 
+  // Phase F1: register as focusable
+  ctx->focusableWidgets.push_back(id);
+
   auto floatEntry = ctx->floatStates.try_emplace(id, minValue);
   float currentValue = value ? *value : floatEntry.first->second;
   currentValue = std::clamp(currentValue, minValue, maxValue);
+
+  // Phase F1: keyboard adjust (Left/Right arrows when focused)
+  bool kbChanged = false;
+  if (ctx->focusedWidgetId == id) {
+    float step = (maxValue - minValue) / 100.0f;
+    if (step <= 0.0f) step = 0.01f;
+    SDL_Keymod km = SDL_GetModState();
+    bool shiftKb = (km & SDL_KMOD_SHIFT) != 0;
+    if (shiftKb) step *= 10.0f;
+    if (ctx->input.IsKeyPressed(SDL_SCANCODE_LEFT)) {
+      currentValue = std::clamp(currentValue - step, minValue, maxValue);
+      kbChanged = true;
+    } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_RIGHT)) {
+      currentValue = std::clamp(currentValue + step, minValue, maxValue);
+      kbChanged = true;
+    } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_HOME)) {
+      currentValue = minValue;
+      kbChanged = true;
+    } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_END)) {
+      currentValue = maxValue;
+      kbChanged = true;
+    }
+  }
+
+  // Pre-calculate the value text to determine final track width BEFORE interaction
+  if (!format) {
+    format = "%.2f";
+  }
+  char valueBuffer[64];
+  std::snprintf(valueBuffer, sizeof(valueBuffer), format, currentValue);
+  std::string valueText(valueBuffer);
+  Vec2 valueSize = MeasureTextCached(ctx, valueText, valueStyle.fontSize);
+  Vec2 valuePos(trackPos.x + trackSize.x + 8.0f,
+                trackPos.y + (trackSize.y - valueSize.y) * 0.5f);
+  if (finalSize.x > 0.0f) {
+    float adjustedTrackWidth =
+        std::max(10.0f, finalSize.x - valueSize.x - 8.0f);
+    trackSize.x = adjustedTrackWidth;
+    valuePos.x = trackPos.x + trackSize.x + 8.0f;
+    totalSize.x = finalSize.x;
+  }
+
+  if (finalSize.y > totalSize.y) {
+    totalSize.y = finalSize.y;
+  }
 
   float mouseX = ctx->input.MouseX();
   bool hover = IsMouseOver(ctx, trackPos, trackSize);
@@ -290,42 +415,47 @@ bool SliderFloat(const std::string &label, float *value, float minValue,
     if (cbIt != ctx->valueChangedCallbacks.end()) cbIt->second(idStr, value);
   }
 
-  float fraction = CalculateSliderFraction(currentValue, minValue, maxValue);
-
-  if (!format) {
-    format = "%.2f";
-  }
-  char valueBuffer[64];
+  // Recalculate value text after interaction may have changed it
   std::snprintf(valueBuffer, sizeof(valueBuffer), format, currentValue);
-  std::string valueText(valueBuffer);
-  Vec2 valueSize = MeasureTextCached(ctx,valueText, valueStyle.fontSize);
-  Vec2 valuePos(trackPos.x + trackSize.x + 8.0f,
-                trackPos.y + (trackSize.y - valueSize.y) * 0.5f);
-  if (finalSize.x > 0.0f) {
-    float adjustedTrackWidth =
-        std::max(10.0f, finalSize.x - valueSize.x - 8.0f);
-    trackSize.x = adjustedTrackWidth;
-    valuePos.x = trackPos.x + trackSize.x + 8.0f;
-    totalSize.x = finalSize.x;
-  }
+  valueText = valueBuffer;
+  valueSize = MeasureTextCached(ctx, valueText, valueStyle.fontSize);
+  valuePos = Vec2(trackPos.x + trackSize.x + 8.0f,
+                  trackPos.y + (trackSize.y - valueSize.y) * 0.5f);
 
-  if (finalSize.y > totalSize.y) {
-    totalSize.y = finalSize.y;
-  }
+  float fraction = CalculateSliderFraction(currentValue, minValue, maxValue);
 
   // Focus ring for keyboard navigation
   if (ctx->focusedWidgetId == id) {
-    DrawFocusRing(ctx, trackPos, trackSize, panelStyle.cornerRadius);
+    DrawFocusRing(ctx, trackPos, trackSize, S(thumbRadius));
   }
 
-  Color trackColor =
-      hover ? panelStyle.headerBackground : panelStyle.background;
-  ctx->renderer.DrawRectFilled(trackPos, trackSize, trackColor,
-                               panelStyle.cornerRadius);
+  // Draw the rail (4px thick, centered vertically in hit area)
+  float trackY = trackPos.y + (trackSize.y - S(trackThickness)) * 0.5f;
+  Vec2 railPos(trackPos.x, trackY);
+  Vec2 railSize(trackSize.x, S(trackThickness));
+  Color railColor = panelStyle.headerBackground;
+  ctx->renderer.DrawRectFilled(railPos, railSize, railColor,
+                               S(trackThickness) * 0.5f);
 
-  Vec2 fillSize(trackSize.x * fraction, trackSize.y);
-  ctx->renderer.DrawRectFilled(trackPos, fillSize, accentState.normal,
-                               panelStyle.cornerRadius);
+  // Filled portion (brand accent) — sliderFillColor only used if alpha>0
+  Color sliderFill = (ctx->style.sliderFillColor.a > 0.01f)
+      ? ctx->style.sliderFillColor
+      : ctx->style.accentColor;
+  Vec2 fillSize(railSize.x * fraction, railSize.y);
+  ctx->renderer.DrawRectFilled(railPos, fillSize, sliderFill,
+                               S(trackThickness) * 0.5f);
+
+  // Thumb: 20px circle at the fraction position, centered on the rail
+  float thumbCx = trackPos.x + trackSize.x * fraction;
+  float thumbCy = trackPos.y + trackSize.y * 0.5f;
+  float r = S(thumbRadius);
+  // Outer ring (border in accent color)
+  ctx->renderer.DrawCircle(Vec2(thumbCx, thumbCy), r, sliderFill, true);
+  // Inner dot — slightly smaller, white/neutral fill so the accent shows as a ring
+  bool active = ctx->activeWidgetId == id;
+  float innerScale = active ? 0.40f : (hover ? 0.45f : 0.55f);
+  Color innerColor(1.0f, 1.0f, 1.0f, 1.0f);
+  ctx->renderer.DrawCircle(Vec2(thumbCx, thumbCy), r * innerScale, innerColor, true);
 
   ctx->renderer.DrawText(widgetPos, label, labelStyle.color,
                          labelStyle.fontSize);
@@ -333,8 +463,22 @@ bool SliderFloat(const std::string &label, float *value, float minValue,
   ctx->renderer.DrawText(valuePos, valueText, valueStyle.color,
                          valueStyle.fontSize);
 
+  // Phase F1: apply keyboard change to value if it happened
+  if (kbChanged) {
+    if (value) *value = currentValue;
+    floatEntry.first->second = currentValue;
+    valueChanged = true;
+  }
+
   ctx->lastItemPos = widgetPos;
   AdvanceCursor(ctx, finalSize);
+  // Phase B1: publish slider state
+  {
+    bool isActiveSlider = (ctx->activeWidgetId == id &&
+                           ctx->activeWidgetType == ActiveWidgetType::Slider);
+    SetLastItem(id, widgetPos, widgetPos + finalSize,
+                hover, isActiveSlider, ctx->focusedWidgetId == id, valueChanged);
+  }
   return valueChanged;
 }
 
@@ -350,8 +494,16 @@ bool SliderInt(const std::string &label, int *value, int minValue, int maxValue,
 
   uint32_t id = GenerateId("SLDR_I:", label.c_str());
   auto intEntry = ctx->intStates.try_emplace(id, minValue);
-  int currentValue = value ? *value : intEntry.first->second;
-  currentValue = std::clamp(currentValue, minValue, maxValue);
+  int originalValue = value ? *value : intEntry.first->second;
+  int currentValue = std::clamp(originalValue, minValue, maxValue);
+
+  // Write back clamped value immediately if out of range
+  if (currentValue != originalValue) {
+    if (value)
+      *value = currentValue;
+    else
+      intEntry.first->second = currentValue;
+  }
 
   float asFloat = static_cast<float>(currentValue);
   bool changed = SliderFloat(label, &asFloat, static_cast<float>(minValue),
@@ -366,7 +518,7 @@ bool SliderInt(const std::string &label, int *value, int minValue, int maxValue,
       intEntry.first->second = newInt;
     return true;
   }
-  return false;
+  return currentValue != originalValue;
 }
 
 // ============================================================================
@@ -483,13 +635,15 @@ bool TextInput(const std::string &label, std::string *value, float width,
   const PanelStyle &panelStyle = ctx->style.panel;
   const ColorState &accentState = ctx->style.button.background;
 
-  float singleLineHeight = inputTextStyle.fontSize + panelStyle.padding.y * 2.0f;
+  // Compact input height (~30px for 14px font), independent of panel padding
+  // so panel theming doesn't inflate field heights.
+  float singleLineHeight = inputTextStyle.fontSize + 16.0f;
   float inputHeight = multiline ? std::max(100.0f, singleLineHeight * 4.0f) : singleLineHeight;
   Vec2 labelSize = MeasureTextCached(ctx,label, labelStyle.fontSize);
   Vec2 fieldSize(width, inputHeight);
 
   Vec2 totalSize(fieldSize.x, labelSize.y + labelSpacing + fieldSize.y);
-  LayoutConstraints constraints = ConsumeNextConstraints();
+  LayoutConstraints constraints = ConsumeNextConstraints(SizeConstraint::Fill);
   Vec2 finalSize = ApplyConstraints(ctx, constraints, totalSize);
 
   // Resolver posición: usar pos si se proporciona, sino usar cursor
@@ -514,6 +668,9 @@ bool TextInput(const std::string &label, std::string *value, float width,
   }
 
   uint32_t id = GenerateId("TXT:", label.c_str());
+
+  // Phase F1: register as focusable
+  ctx->focusableWidgets.push_back(id);
 
   // Si value no es nullptr, usar su valor directamente
   // Si value es nullptr, usar el valor almacenado en stringStates
@@ -554,7 +711,8 @@ bool TextInput(const std::string &label, std::string *value, float width,
   };
 
   Vec2 mousePos(ctx->input.MouseX(), ctx->input.MouseY());
-  bool hover = PointInRect(mousePos, fieldPos, fieldSize);
+  bool hover = PointInRect(mousePos, fieldPos, fieldSize) &&
+               !IsMouseInputBlocked(ctx);
   bool leftPressed = ctx->input.IsMousePressed(0);
   bool leftDown = ctx->input.IsMouseDown(0);
 
@@ -567,8 +725,14 @@ bool TextInput(const std::string &label, std::string *value, float width,
     if (hover) {
       ctx->activeWidgetId = id;
       ctx->activeWidgetType = ActiveWidgetType::TextInput;
+
+      // Check shift state to extend selection from existing anchor
+      SDL_Keymod modState_click = SDL_GetModState();
+      bool shiftClick = (modState_click & SDL_KMOD_SHIFT) != 0;
+
+      // Compute caret position from click location
+      size_t newCaret = caret;
       if (multiline) {
-        // Multiline: determine which line was clicked, then find caret within that line
         float textPad = panelStyle.padding.x * 0.5f;
         float lineH = inputTextStyle.fontSize * 1.4f;
         float localY = mousePos.y - (fieldPos.y + panelStyle.padding.y * 0.5f) + mlScroll;
@@ -580,13 +744,72 @@ bool TextInput(const std::string &label, std::string *value, float width,
         size_t lineEndOff = LineEnd(textRef, clickedLine);
         std::string lineText = textRef.substr(lineStartOff, lineEndOff - lineStartOff);
         size_t posInLine = FindCaretInLine(lineText, std::max(localX, 0.0f), ctx);
-        caret = lineStartOff + posInLine;
+        newCaret = lineStartOff + posInLine;
       } else {
         float localX = mousePos.x - (fieldPos.x + panelStyle.padding.x) + scroll;
-        caret = FindCaretPosition(textRef, std::max(localX, 0.0f), ctx);
+        newCaret = FindCaretPosition(textRef, std::max(localX, 0.0f), ctx);
       }
-      selAnchor = caret; // Set anchor for potential drag selection
-      ClearSelection();
+
+      // Multi-click detection
+      auto &clickInfo = ctx->textClickInfo[id];
+      uint64_t now = SDL_GetTicks();
+      const uint64_t MULTICLICK_MS = 350;
+      const float MULTICLICK_DIST = 4.0f;
+      float dx = mousePos.x - clickInfo.lastClickPos.x;
+      float dy = mousePos.y - clickInfo.lastClickPos.y;
+      bool isMulticlick = (now - clickInfo.lastClickTime) <= MULTICLICK_MS &&
+                          std::abs(dx) <= MULTICLICK_DIST &&
+                          std::abs(dy) <= MULTICLICK_DIST;
+      if (isMulticlick) {
+        clickInfo.clickCount = std::min(clickInfo.clickCount + 1, 3);
+      } else {
+        clickInfo.clickCount = 1;
+      }
+      clickInfo.lastClickTime = now;
+      clickInfo.lastClickPos = mousePos;
+
+      auto isWordChar = [](unsigned char c) {
+        return std::isalnum(c) || c == '_';
+      };
+
+      if (shiftClick && selAnchor != SIZE_MAX) {
+        // Extend selection from existing anchor; do not reset
+        caret = newCaret;
+        clickInfo.clickCount = 1; // Shift+click resets multi-click tracking
+      } else if (clickInfo.clickCount == 2) {
+        // Double-click: select word containing newCaret
+        size_t wStart = newCaret;
+        size_t wEnd = newCaret;
+        while (wStart > 0 && isWordChar(static_cast<unsigned char>(textRef[wStart - 1]))) {
+          --wStart;
+        }
+        while (wEnd < textRef.size() && isWordChar(static_cast<unsigned char>(textRef[wEnd]))) {
+          ++wEnd;
+        }
+        if (wStart == wEnd && wEnd < textRef.size()) {
+          // Not on a word char: select single char
+          wEnd = wStart + 1;
+        }
+        selAnchor = wStart;
+        caret = wEnd;
+      } else if (clickInfo.clickCount >= 3) {
+        // Triple-click: select entire line
+        size_t lStart = newCaret;
+        size_t lEnd = newCaret;
+        while (lStart > 0 && textRef[lStart - 1] != '\n') {
+          --lStart;
+        }
+        while (lEnd < textRef.size() && textRef[lEnd] != '\n') {
+          ++lEnd;
+        }
+        selAnchor = lStart;
+        caret = lEnd;
+      } else {
+        // Single click: position caret, reset selection
+        caret = newCaret;
+        selAnchor = caret;
+        ClearSelection();
+      }
     } else if (ctx->activeWidgetId == id &&
                ctx->activeWidgetType == ActiveWidgetType::TextInput) {
       ctx->activeWidgetId = 0;
@@ -628,6 +851,30 @@ bool TextInput(const std::string &label, std::string *value, float width,
   // Capture pre-edit state for undo (snapshot before any modifications)
   std::string preEditText = textRef;
   size_t preEditCaret = caret;
+
+  // Consume any pending TextInput callback set by the callback-overload wrapper.
+  // Pointer is opaque in Context.h to avoid header dependency cycle.
+  const TextInputCallback* cbPtr =
+      static_cast<const TextInputCallback*>(ctx->pendingTextInputCallback);
+  uint32_t cbMask = ctx->pendingTextInputCallbackMask;
+  ctx->pendingTextInputCallback = nullptr;
+  ctx->pendingTextInputCallbackMask = 0;
+
+  auto invokeCallback = [&](TextInputCallbackType evtType, uint32_t key, uint32_t charInput) -> uint32_t {
+    if (!cbPtr || !*cbPtr) return charInput;
+    if ((cbMask & static_cast<uint32_t>(evtType)) == 0) return charInput;
+    TextInputCallbackData data;
+    data.type = evtType;
+    data.buffer = &textRef;
+    data.cursorPos = caret;
+    data.selectionStart = HasSelection() ? SelectionStart() : SIZE_MAX;
+    data.selectionEnd = HasSelection() ? SelectionEnd() : SIZE_MAX;
+    data.key = key;
+    data.charInput = charInput;
+    (*cbPtr)(data);
+    if (data.cursorPos <= textRef.size()) caret = data.cursorPos;
+    return data.charInput;
+  };
 
   // Query keyboard modifier state
   SDL_Keymod modState = SDL_GetModState();
@@ -729,20 +976,55 @@ bool TextInput(const std::string &label, std::string *value, float width,
       if (!ctrlHeld) {
         const std::string &inputText = ctx->input.TextInputBuffer();
         if (!inputText.empty()) {
-          if (HasSelection()) {
-            DeleteSelection();
+          // Apply CharFilter callback per byte (best-effort; full UTF-8 codepoint pre-decode would be ideal).
+          std::string filtered;
+          filtered.reserve(inputText.size());
+          if (cbPtr && (cbMask & static_cast<uint32_t>(TextInputCallbackType::CharFilter))) {
+            for (unsigned char c : inputText) {
+              uint32_t cp = c;
+              uint32_t kept = invokeCallback(TextInputCallbackType::CharFilter, 0, cp);
+              if (kept != 0) filtered.push_back(static_cast<char>(kept));
+            }
+          } else {
+            filtered = inputText;
           }
-          // Enforce maxLength limit
-          std::string toInsert = inputText;
-          if (maxLength > 0 && textRef.size() + toInsert.size() > maxLength) {
-            size_t canInsert = (textRef.size() < maxLength) ? maxLength - textRef.size() : 0;
-            toInsert = toInsert.substr(0, canInsert);
+          if (!filtered.empty()) {
+            if (HasSelection()) {
+              DeleteSelection();
+            }
+            // Enforce maxLength limit
+            std::string toInsert = filtered;
+            if (maxLength > 0 && textRef.size() + toInsert.size() > maxLength) {
+              size_t canInsert = (textRef.size() < maxLength) ? maxLength - textRef.size() : 0;
+              toInsert = toInsert.substr(0, canInsert);
+            }
+            if (!toInsert.empty()) {
+              textRef.insert(caret, toInsert);
+              caret += toInsert.size();
+              valueChanged = true;
+            }
           }
-          if (!toInsert.empty()) {
-            textRef.insert(caret, toInsert);
-            caret += toInsert.size();
-            valueChanged = true;
-          }
+        }
+      }
+
+      // Tab → Completion callback
+      if (cbPtr && (cbMask & static_cast<uint32_t>(TextInputCallbackType::Completion)) &&
+          ctx->input.IsKeyPressed(SDL_SCANCODE_TAB)) {
+        std::string before = textRef;
+        invokeCallback(TextInputCallbackType::Completion, SDL_SCANCODE_TAB, 0);
+        if (textRef != before) valueChanged = true;
+      }
+
+      // Up/Down (single-line only) → History callback
+      if (!multiline && cbPtr && (cbMask & static_cast<uint32_t>(TextInputCallbackType::History))) {
+        if (ctx->input.IsKeyPressed(SDL_SCANCODE_UP)) {
+          std::string before = textRef;
+          invokeCallback(TextInputCallbackType::History, SDL_SCANCODE_UP, 0);
+          if (textRef != before) valueChanged = true;
+        } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_DOWN)) {
+          std::string before = textRef;
+          invokeCallback(TextInputCallbackType::History, SDL_SCANCODE_DOWN, 0);
+          if (textRef != before) valueChanged = true;
         }
       }
 
@@ -885,16 +1167,10 @@ bool TextInput(const std::string &label, std::string *value, float width,
   ctx->renderer.DrawText(widgetPos, label, labelStyle.color,
                          labelStyle.fontSize);
 
-  // Fondo más distintivo para TextInput - sin borde visible (solo focus)
-  Color bgColor = panelStyle.background;
-  bool isDarkTheme = ctx->style.isDarkTheme;
-  if (isDarkTheme) {
-    bgColor = Color(bgColor.r * 1.12f, bgColor.g * 1.12f, bgColor.b * 1.12f, 1.0f);
-  } else {
-    bgColor = Color(bgColor.r * 0.94f, bgColor.g * 0.94f, bgColor.b * 0.94f, 1.0f);
-  }
+  // Fondo recesado (consistente con DragFloat/ComboBox) para que el campo se
+  // distinga claramente de la superficie del panel.
+  Color bgColor = InputFieldBackground(ctx, hover && !hasFocus);
 
-  // Solo mostrar borde cuando tiene focus
   if (hasFocus) {
     DrawFocusRing(ctx, fieldPos, fieldSize, panelStyle.cornerRadius);
     bgColor = accentState.hover;
@@ -903,6 +1179,11 @@ bool TextInput(const std::string &label, std::string *value, float width,
 
   ctx->renderer.DrawRectFilled(fieldPos, fieldSize, bgColor,
                                panelStyle.cornerRadius);
+  // Borde 1px visible salvo cuando el focus ring ya lo marca.
+  if (!hasFocus) {
+    ctx->renderer.DrawRect(fieldPos, fieldSize, InputFieldBorder(ctx, hover),
+                           panelStyle.cornerRadius);
+  }
 
   float textPadding = panelStyle.padding.x * 0.5f;
 
@@ -1157,7 +1438,36 @@ bool TextInput(const std::string &label, std::string *value, float width,
 
   ctx->lastItemPos = widgetPos;
   AdvanceCursor(ctx, finalSize);
+
+  // Phase B2: callbacks (Edit fires when buffer mutated this frame; Always fires every focus frame)
+  if (cbPtr) {
+    if (valueChanged && (cbMask & static_cast<uint32_t>(TextInputCallbackType::Edit))) {
+      invokeCallback(TextInputCallbackType::Edit, 0, 0);
+    }
+    if (hasFocus && (cbMask & static_cast<uint32_t>(TextInputCallbackType::Always))) {
+      invokeCallback(TextInputCallbackType::Always, 0, 0);
+    }
+  }
+
+  // Phase B1: publish text-input state
+  {
+    bool isActiveTI = (ctx->activeWidgetId == id &&
+                       ctx->activeWidgetType == ActiveWidgetType::TextInput);
+    SetLastItem(id, widgetPos, widgetPos + finalSize,
+                hover, isActiveTI, ctx->focusedWidgetId == id, valueChanged);
+  }
   return valueChanged;
+}
+
+// TextInput overload with callback support (Phase B2).
+bool TextInput(const std::string &label, std::string *value, float width,
+               bool multiline, std::optional<Vec2> pos, const char* placeholder, size_t maxLength,
+               const TextInputCallback& callback, uint32_t callbackMask) {
+  UIContext *ctx = GetContext();
+  if (!ctx) return false;
+  ctx->pendingTextInputCallback = const_cast<void*>(static_cast<const void*>(&callback));
+  ctx->pendingTextInputCallbackMask = callbackMask;
+  return TextInput(label, value, width, multiline, pos, placeholder, maxLength);
 }
 
 // ============================================================================
@@ -1179,17 +1489,20 @@ bool DragFloat(const std::string& label, float* value, float speed,
 
   float labelSpacing = 4.0f;
   Vec2 labelSize = MeasureTextCached(ctx, label, labelStyle.fontSize);
-  float fieldHeight = valueStyle.fontSize + panelStyle.padding.y * 2.0f;
+  float defaultFieldHeight = valueStyle.fontSize + 16.0f;
 
-  // Total widget width: label (40%) + field (60%) laid out horizontally
-  float totalWidth = 250.0f; // Default width
-  Vec2 totalSize(totalWidth, std::max(labelSize.y, fieldHeight));
-  LayoutConstraints constraints = ConsumeNextConstraints();
+  // Total widget width: label (40%) + field (60%) laid out horizontally.
+  // If there's no label, collapse the label slot entirely.
+  bool hasLabel = !label.empty();
+  float totalWidth = hasLabel ? 250.0f : 100.0f; // Default width
+  Vec2 totalSize(totalWidth, std::max(labelSize.y, defaultFieldHeight));
+  LayoutConstraints constraints = ConsumeNextConstraints(SizeConstraint::Fill);
   Vec2 finalSize = ApplyConstraints(ctx, constraints, totalSize);
   totalWidth = finalSize.x;
+  float fieldHeight = finalSize.y;
 
-  float labelWidth = totalWidth * 0.4f;
-  float fieldWidth = totalWidth * 0.6f;
+  float labelWidth = hasLabel ? totalWidth * 0.4f : 0.0f;
+  float fieldWidth = totalWidth - labelWidth;
 
   Vec2 widgetPos;
   if (pos.has_value()) {
@@ -1210,7 +1523,8 @@ bool DragFloat(const std::string& label, float* value, float speed,
   bool valueChanged = false;
 
   Vec2 mousePos(ctx->input.MouseX(), ctx->input.MouseY());
-  bool hoverField = PointInRect(mousePos, fieldPos, fieldSize);
+  bool hoverField = PointInRect(mousePos, fieldPos, fieldSize) &&
+                    !IsMouseInputBlocked(ctx);
   bool leftPressed = ctx->input.IsMousePressed(0);
   bool leftDown = ctx->input.IsMouseDown(0);
 
@@ -1319,6 +1633,7 @@ bool DragFloat(const std::string& label, float* value, float speed,
         state.isDragging = true;
         state.dragStartValue = currentValue;
         state.dragStartMouseX = mousePos.x;
+        state.dragThresholdPassed = false; // Phase B4
         ctx->activeWidgetId = id;
         ctx->activeWidgetType = ActiveWidgetType::DragWidget;
       }
@@ -1330,20 +1645,34 @@ bool DragFloat(const std::string& label, float* value, float speed,
         bool shiftHeld = (modState & SDL_KMOD_SHIFT) != 0;
         float effectiveSpeed = speed * (shiftHeld ? 0.1f : 1.0f);
 
-        float delta = (mousePos.x - state.dragStartMouseX) * effectiveSpeed;
-        float newValue = state.dragStartValue + delta;
+        // Phase B4: ignore micro-movements within the drag threshold so a fast click
+        // (no real intention to drag) doesn't perturb the value.
+        constexpr float DRAG_THRESHOLD_PX = 4.0f;
+        float pixelDelta = mousePos.x - state.dragStartMouseX;
+        if (!state.dragThresholdPassed) {
+          if (std::abs(pixelDelta) >= DRAG_THRESHOLD_PX) {
+            state.dragThresholdPassed = true;
+            // Reset the start position so the value doesn't jump by the threshold
+            // amount when crossing it.
+            state.dragStartMouseX = mousePos.x;
+          }
+        } else {
+          float delta = pixelDelta * effectiveSpeed;
+          float newValue = state.dragStartValue + delta;
 
-        if (min < max) {
-          newValue = std::clamp(newValue, min, max);
-        }
+          if (min < max) {
+            newValue = std::clamp(newValue, min, max);
+          }
 
-        if (std::abs(newValue - currentValue) > 0.00001f) {
-          currentValue = newValue;
-          valueChanged = true;
+          if (std::abs(newValue - currentValue) > 0.00001f) {
+            currentValue = newValue;
+            valueChanged = true;
+          }
         }
       } else {
         // Mouse released: stop dragging
         state.isDragging = false;
+        state.dragThresholdPassed = false; // Phase B4
         ctx->activeWidgetId = 0;
         ctx->activeWidgetType = ActiveWidgetType::None;
       }
@@ -1355,26 +1684,19 @@ bool DragFloat(const std::string& label, float* value, float speed,
 
   // --- Drawing ---
 
-  // Label on the left
-  Vec2 labelPos(widgetPos.x,
-                widgetPos.y + (fieldHeight - labelSize.y) * 0.5f);
-  ctx->renderer.DrawText(labelPos, label, labelStyle.color, labelStyle.fontSize);
-
-  // Field background
-  bool isDark = ctx->style.isDarkTheme;
-  Color fieldBg = panelStyle.background;
-  if (isDark) {
-    fieldBg = Color(fieldBg.r * 1.12f, fieldBg.g * 1.12f, fieldBg.b * 1.12f, 1.0f);
-  } else {
-    fieldBg = Color(fieldBg.r * 0.94f, fieldBg.g * 0.94f, fieldBg.b * 0.94f, 1.0f);
+  // Label on the left (only if non-empty)
+  if (hasLabel) {
+    Vec2 labelPos(widgetPos.x,
+                  widgetPos.y + (fieldHeight - labelSize.y) * 0.5f);
+    ctx->renderer.DrawText(labelPos, label, labelStyle.color, labelStyle.fontSize);
   }
 
+  // Field background — recessed (dark) / near-white (light) so it stands out.
+  Color fieldBg = InputFieldBackground(ctx, hoverField && !state.isEditing);
   if (state.isDragging) {
     // Highlight during drag
     fieldBg = accentState.hover;
     fieldBg.a = 0.25f;
-  } else if (hoverField && !state.isEditing) {
-    fieldBg = panelStyle.headerBackground;
   }
 
   // Focus ring when editing or dragging
@@ -1383,14 +1705,29 @@ bool DragFloat(const std::string& label, float* value, float speed,
   }
 
   ctx->renderer.DrawRectFilled(fieldPos, fieldSize, fieldBg, panelStyle.cornerRadius);
+  // Visible 1px border so the field stands out from the surface (focus ring
+  // takes over while editing/dragging).
+  if (!state.isEditing && !state.isDragging) {
+    ctx->renderer.DrawRect(fieldPos, fieldSize,
+                           InputFieldBorder(ctx, hoverField),
+                           panelStyle.cornerRadius);
+  }
 
   // Draw value text or edit text
   float textPadding = panelStyle.padding.x * 0.5f;
+  // Centrado vertical óptico (mismo cálculo que ComboBox): el ascender
+  // del JSON puede ser >1 (ej. Inter 1.08), así que el bbox de fontSize
+  // no centra visualmente el texto. Calculamos el centro del bbox visual
+  // (top = baseline - capHeight, bottom = baseline) y lo alineamos al medio.
+  const float dragAscender = ctx->renderer.GetFontAscender();
+  const float dragCapHeight = 0.7f;
+  const float dragVisualCenterOffset =
+      (dragAscender - dragCapHeight * 0.5f) * valueStyle.fontSize;
   if (state.isEditing) {
     // Draw edit text with caret
     Vec2 textSize = MeasureTextCached(ctx, state.editText, valueStyle.fontSize);
     Vec2 textPos(fieldPos.x + textPadding,
-                 fieldPos.y + (fieldSize.y - valueStyle.fontSize) * 0.5f);
+                 fieldPos.y + fieldSize.y * 0.5f - dragVisualCenterOffset);
     ctx->renderer.DrawText(textPos, state.editText, valueStyle.color, valueStyle.fontSize);
 
     // Draw caret
@@ -1411,9 +1748,9 @@ bool DragFloat(const std::string& label, float* value, float speed,
     std::snprintf(buf, sizeof(buf), format ? format : "%.2f", currentValue);
     std::string valueText(buf);
     Vec2 textSize = MeasureTextCached(ctx, valueText, valueStyle.fontSize);
-    // Center value text in the field
+    // Center value text in the field (centrado vertical óptico, no bbox)
     Vec2 textPos(fieldPos.x + (fieldSize.x - textSize.x) * 0.5f,
-                 fieldPos.y + (fieldSize.y - valueStyle.fontSize) * 0.5f);
+                 fieldPos.y + fieldSize.y * 0.5f - dragVisualCenterOffset);
     ctx->renderer.DrawText(textPos, valueText, valueStyle.color, valueStyle.fontSize);
   }
 
@@ -1430,6 +1767,13 @@ bool DragFloat(const std::string& label, float* value, float speed,
 
   ctx->lastItemPos = widgetPos;
   AdvanceCursor(ctx, finalSize);
+  // Phase B1: publish drag-float state
+  {
+    bool isActiveDrag = (ctx->activeWidgetId == id &&
+                         ctx->activeWidgetType == ActiveWidgetType::DragWidget);
+    SetLastItem(id, widgetPos, widgetPos + finalSize,
+                hoverField, isActiveDrag, ctx->focusedWidgetId == id, valueChanged);
+  }
   return valueChanged;
 }
 
@@ -1464,12 +1808,14 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
   const TextStyle& labelStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
   Vec2 labelSize = MeasureTextCached(ctx, label, labelStyle.fontSize);
 
-  float fieldHeight = labelStyle.fontSize + ctx->style.panel.padding.y * 2.0f;
-  float totalWidth = 400.0f;
-  Vec2 totalSize(totalWidth, fieldHeight);
-  LayoutConstraints constraints = ConsumeNextConstraints();
+  float defaultFieldHeight = labelStyle.fontSize + 16.0f;
+  bool hasLabel = !label.empty();
+  float totalWidth = hasLabel ? 400.0f : 300.0f;
+  Vec2 totalSize(totalWidth, defaultFieldHeight);
+  LayoutConstraints constraints = ConsumeNextConstraints(SizeConstraint::Fill);
   Vec2 finalSize = ApplyConstraints(ctx, constraints, totalSize);
   totalWidth = finalSize.x;
+  float fieldHeight = finalSize.y;
 
   Vec2 widgetPos;
   if (pos.has_value()) {
@@ -1478,18 +1824,21 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
     widgetPos = ctx->cursorPos;
   }
 
-  // Draw label on left (30%)
-  float labelWidth = totalWidth * 0.25f;
-  Vec2 labelPos(widgetPos.x,
-                widgetPos.y + (fieldHeight - labelSize.y) * 0.5f);
-  ctx->renderer.DrawText(labelPos, label, labelStyle.color, labelStyle.fontSize);
+  // Draw label on left (25%) only if present
+  float labelWidth = hasLabel ? totalWidth * 0.25f : 0.0f;
+  if (hasLabel) {
+    Vec2 labelPos(widgetPos.x,
+                  widgetPos.y + (fieldHeight - labelSize.y) * 0.5f);
+    ctx->renderer.DrawText(labelPos, label, labelStyle.color, labelStyle.fontSize);
+  }
 
-  // Three drag fields share the remaining 75% with small gaps
-  float fieldsWidth = totalWidth * 0.75f;
-  float gap = 4.0f;
+  // Three drag fields share the remaining width with small gaps
+  float fieldsWidth = totalWidth - labelWidth;
+  float gap = 6.0f;
   float singleFieldWidth = (fieldsWidth - gap * 2.0f) / 3.0f;
 
   bool anyChanged = false;
+  bool anyHover = false;
 
   // Component labels and accent colors for X, Y, Z
   const char* componentLabels[3] = {"X", "Y", "Z"};
@@ -1512,7 +1861,9 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
     float currentVal = values[i];
 
     Vec2 mousePos(ctx->input.MouseX(), ctx->input.MouseY());
-    bool hoverField = PointInRect(mousePos, fieldPos, fieldSize);
+    bool hoverField = PointInRect(mousePos, fieldPos, fieldSize) &&
+                      !IsMouseInputBlocked(ctx);
+    if (hoverField) anyHover = true;
     bool leftPressed = ctx->input.IsMousePressed(0);
     bool leftDown = ctx->input.IsMouseDown(0);
 
@@ -1600,6 +1951,7 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
           state.isDragging = true;
           state.dragStartValue = currentVal;
           state.dragStartMouseX = mousePos.x;
+          state.dragThresholdPassed = false; // Phase B4
           ctx->activeWidgetId = id;
           ctx->activeWidgetType = ActiveWidgetType::DragWidget;
         }
@@ -1610,15 +1962,26 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
           SDL_Keymod modState = SDL_GetModState();
           bool shiftHeld = (modState & SDL_KMOD_SHIFT) != 0;
           float effectiveSpeed = speed * (shiftHeld ? 0.1f : 1.0f);
-          float delta = (mousePos.x - state.dragStartMouseX) * effectiveSpeed;
-          float newVal = state.dragStartValue + delta;
-          if (min < max) newVal = std::clamp(newVal, min, max);
-          if (std::abs(newVal - currentVal) > 0.00001f) {
-            currentVal = newVal;
-            compChanged = true;
+          // Phase B4: drag threshold
+          constexpr float DRAG_THRESHOLD_PX = 4.0f;
+          float pixelDelta = mousePos.x - state.dragStartMouseX;
+          if (!state.dragThresholdPassed) {
+            if (std::abs(pixelDelta) >= DRAG_THRESHOLD_PX) {
+              state.dragThresholdPassed = true;
+              state.dragStartMouseX = mousePos.x;
+            }
+          } else {
+            float delta = pixelDelta * effectiveSpeed;
+            float newVal = state.dragStartValue + delta;
+            if (min < max) newVal = std::clamp(newVal, min, max);
+            if (std::abs(newVal - currentVal) > 0.00001f) {
+              currentVal = newVal;
+              compChanged = true;
+            }
           }
         } else {
           state.isDragging = false;
+          state.dragThresholdPassed = false; // Phase B4
           if (ctx->activeWidgetId == id) {
             ctx->activeWidgetId = 0;
             ctx->activeWidgetType = ActiveWidgetType::None;
@@ -1635,20 +1998,11 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
     // --- Draw component ---
     const PanelStyle& ps = ctx->style.panel;
     const ColorState& accent = ctx->style.button.background;
-    bool isDark = ctx->style.isDarkTheme;
 
-    Color fieldBg = ps.background;
-    if (isDark) {
-      fieldBg = Color(fieldBg.r * 1.12f, fieldBg.g * 1.12f, fieldBg.b * 1.12f, 1.0f);
-    } else {
-      fieldBg = Color(fieldBg.r * 0.94f, fieldBg.g * 0.94f, fieldBg.b * 0.94f, 1.0f);
-    }
-
+    Color fieldBg = InputFieldBackground(ctx, hoverField && !state.isEditing);
     if (state.isDragging) {
       fieldBg = accent.hover;
       fieldBg.a = 0.25f;
-    } else if (hoverField && !state.isEditing) {
-      fieldBg = ps.headerBackground;
     }
 
     if (state.isEditing || state.isDragging) {
@@ -1656,17 +2010,35 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
     }
 
     ctx->renderer.DrawRectFilled(fieldPos, fieldSize, fieldBg, ps.cornerRadius);
-
-    // Color indicator strip on left edge
-    ctx->renderer.DrawRectFilled(
-        fieldPos, Vec2(3.0f, fieldSize.y), componentColors[i], ps.cornerRadius);
+    if (!state.isEditing && !state.isDragging) {
+      ctx->renderer.DrawRect(fieldPos, fieldSize,
+                             InputFieldBorder(ctx, hoverField), ps.cornerRadius);
+    }
 
     float textPadding = ps.padding.x * 0.5f;
     const TextStyle& valStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
+    const TextStyle& axisStyle = ctx->style.GetTextStyle(TypographyStyle::BodyStrong);
+    // Centrado vertical óptico: usa ascender real + capHeight aproximado
+    const float dragAscender = ctx->renderer.GetFontAscender();
+    const float dragCapHeight = 0.7f;
+    const float dragVisualCenterOffset =
+        (dragAscender - dragCapHeight * 0.5f) * valStyle.fontSize;
+
+    // Axis letter prefix (X / Y / Z) in component color, replaces the 3px strip.
+    std::string axisStr(1, componentLabels[i][0]);
+    Vec2 axisSize = MeasureTextCached(ctx, axisStr, axisStyle.fontSize);
+    float prefixGap = 4.0f;
+    float prefixAreaW = axisSize.x + textPadding + prefixGap;
+    Vec2 axisPos(fieldPos.x + textPadding,
+                 fieldPos.y + fieldSize.y * 0.5f - dragVisualCenterOffset);
+    ctx->renderer.DrawText(axisPos, axisStr, componentColors[i], axisStyle.fontSize);
+
+    float valueAreaX = fieldPos.x + prefixAreaW;
+    float valueAreaW = std::max(0.0f, fieldSize.x - prefixAreaW - textPadding);
 
     if (state.isEditing) {
-      Vec2 textPos(fieldPos.x + textPadding + 4.0f,
-                   fieldPos.y + (fieldSize.y - valStyle.fontSize) * 0.5f);
+      Vec2 textPos(valueAreaX,
+                   fieldPos.y + fieldSize.y * 0.5f - dragVisualCenterOffset);
       ctx->renderer.DrawText(textPos, state.editText, valStyle.color, valStyle.fontSize);
 
       auto caretIt = ctx->caretPositions.find(id);
@@ -1685,8 +2057,8 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
       std::snprintf(buf, sizeof(buf), format ? format : "%.2f", currentVal);
       std::string valText(buf);
       Vec2 textSize = MeasureTextCached(ctx, valText, valStyle.fontSize);
-      Vec2 textPos(fieldPos.x + (fieldSize.x - textSize.x) * 0.5f,
-                   fieldPos.y + (fieldSize.y - valStyle.fontSize) * 0.5f);
+      Vec2 textPos(valueAreaX + (valueAreaW - textSize.x) * 0.5f,
+                   fieldPos.y + fieldSize.y * 0.5f - dragVisualCenterOffset);
       ctx->renderer.DrawText(textPos, valText, valStyle.color, valStyle.fontSize);
     }
 
@@ -1704,17 +2076,64 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
 
   ctx->lastItemPos = widgetPos;
   AdvanceCursor(ctx, finalSize);
+  // Phase B1: publish drag-float3 state (use base id so the whole row queries together)
+  {
+    uint32_t baseId = GenerateId("DRAGF3:", label.c_str());
+    SetLastItem(baseId, widgetPos, widgetPos + finalSize,
+                anyHover, false /* multi-component, no single active */,
+                ctx->focusedWidgetId == baseId, anyChanged);
+  }
   return anyChanged;
 }
+
+static bool ComboBoxImpl(const std::string &label, int *currentItem,
+                         const std::vector<std::string> &items,
+                         const std::vector<uint32_t> *icons,
+                         float width, std::optional<Vec2> pos,
+                         bool drawHeader);
 
 bool ComboBox(const std::string &label, int *currentItem,
               const std::vector<std::string> &items, float width,
               std::optional<Vec2> pos) {
+  return ComboBoxImpl(label, currentItem, items, nullptr, width, pos, true);
+}
+
+bool ComboBox(const std::string &label, int *currentItem,
+              const std::vector<std::pair<std::string, uint32_t>> &items,
+              float width, std::optional<Vec2> pos) {
+  std::vector<std::string> labels;
+  std::vector<uint32_t> ics;
+  labels.reserve(items.size());
+  ics.reserve(items.size());
+  for (const auto &p : items) { labels.push_back(p.first); ics.push_back(p.second); }
+  return ComboBoxImpl(label, currentItem, labels, &ics, width, pos, true);
+}
+
+bool ComboBoxNoLabel(const std::string &id, int *currentItem,
+                     const std::vector<std::string> &items, float width,
+                     std::optional<Vec2> pos) {
+  return ComboBoxImpl(id, currentItem, items, nullptr, width, pos, false);
+}
+
+bool ComboBoxNoLabel(const std::string &id, int *currentItem,
+                     const std::vector<std::pair<std::string, uint32_t>> &items,
+                     float width, std::optional<Vec2> pos) {
+  std::vector<std::string> labels;
+  std::vector<uint32_t> ics;
+  labels.reserve(items.size());
+  ics.reserve(items.size());
+  for (const auto &p : items) { labels.push_back(p.first); ics.push_back(p.second); }
+  return ComboBoxImpl(id, currentItem, labels, &ics, width, pos, false);
+}
+
+static bool ComboBoxImpl(const std::string &label, int *currentItem,
+                         const std::vector<std::string> &items,
+                         const std::vector<uint32_t> *icons,
+                         float width, std::optional<Vec2> pos,
+                         bool drawHeader) {
   UIContext *ctx = GetContext();
   if (!ctx || items.empty())
     return false;
-  if (width <= 0.0f)
-    width = 200.0f;
 
   uint32_t id = GenerateId("COMBO:", label.c_str());
 
@@ -1734,12 +2153,44 @@ bool ComboBox(const std::string &label, int *currentItem,
   const PanelStyle &panelStyle = ctx->style.panel;
   const ColorState &accentState = ctx->style.button.background;
 
-  Vec2 labelSize = MeasureTextCached(ctx,label, labelStyle.fontSize);
-  float fieldHeight = itemStyle.fontSize + panelStyle.padding.y * 2.0f;
-  Vec2 fieldSize(width, fieldHeight);
+  // Constantes de slot para icono y chevron (compartidas con dibujo)
+  const float fieldIconSize = itemStyle.fontSize;
+  const float fieldIconGap = 6.0f;
+  // Chevron Lucide a tamaño de texto para coherencia visual con los iconos
+  // del item seleccionado y el resto de la UI.
+  const float arrowSize = itemStyle.fontSize;
+  // Gap texto↔chevron igual al padding lateral para simetría visual:
+  // (paddingX | texto | arrowGap | chevron | paddingX) con los tres espacios iguales.
+  const float arrowGap = panelStyle.padding.x;
+  const float arrowSlot = arrowSize + arrowGap;
 
-  Vec2 totalSize(fieldSize.x, labelSize.y + labelSpacing + fieldSize.y);
-  LayoutConstraints constraints = ConsumeNextConstraints();
+  // Calcular SIEMPRE el ancho natural (texto del item más ancho + iconSlot
+  // + paddings + chevron). Se usa tanto para auto-width como para garantizar
+  // un mínimo después de aplicar constraints (Fill no debe achicarlo de más).
+  float maxItemWidth = 0.0f;
+  for (size_t i = 0; i < items.size(); ++i) {
+    Vec2 itemTextSize = MeasureTextCached(ctx, items[i], itemStyle.fontSize);
+    float itemIconSlot = 0.0f;
+    if (icons && i < icons->size() && (*icons)[i] != 0u) {
+      itemIconSlot = fieldIconSize + fieldIconGap;
+    }
+    float itemWidth = itemIconSlot + itemTextSize.x;
+    if (itemWidth > maxItemWidth) maxItemWidth = itemWidth;
+  }
+  const float naturalWidth = panelStyle.padding.x * 2.0f + maxItemWidth + arrowSlot;
+  if (width <= 0.0f) {
+    width = naturalWidth;
+  }
+
+  Vec2 labelSize = drawHeader
+                       ? MeasureTextCached(ctx, label, labelStyle.fontSize)
+                       : Vec2(0.0f, 0.0f);
+  float headerOffset = drawHeader ? (labelSize.y + labelSpacing) : 0.0f;
+  float defaultFieldHeight = itemStyle.fontSize + 16.0f;
+  Vec2 fieldSize(width, defaultFieldHeight);
+
+  Vec2 totalSize(fieldSize.x, headerOffset + fieldSize.y);
+  LayoutConstraints constraints = ConsumeNextConstraints(SizeConstraint::Fill);
   Vec2 finalSize = ApplyConstraints(ctx, constraints, totalSize);
 
   // Resolver posición: usar pos si se proporciona, sino usar cursor
@@ -1750,10 +2201,13 @@ bool ComboBox(const std::string &label, int *currentItem,
   } else {
     widgetPos = ctx->cursorPos;
   }
-  Vec2 fieldPos(widgetPos.x, widgetPos.y + labelSize.y + labelSpacing);
+  Vec2 fieldPos(widgetPos.x, widgetPos.y + headerOffset);
   if (finalSize.x > 0.0f) {
     fieldSize.x = finalSize.x;
   }
+  // Respetar la altura del constraint: el campo ocupa lo que sobre tras el header.
+  fieldSize.y = std::max(0.0f, finalSize.y - headerOffset);
+  float fieldHeight = fieldSize.y;
 
   float mouseX = ctx->input.MouseX();
   float mouseY = ctx->input.MouseY();
@@ -1763,19 +2217,54 @@ bool ComboBox(const std::string &label, int *currentItem,
   auto boolEntry = ctx->boolStates.try_emplace(id, false);
   bool isOpen = boolEntry.first->second;
 
+  // Solo un ComboBox abierto a la vez: si otro pasó a ser el abierto, éste
+  // se considera cerrado.
+  if (isOpen && ctx->openComboId != 0 && ctx->openComboId != id) {
+    isOpen = false;
+  }
+
+  // Nota: si este campo cae bajo el dropdown de OTRO combo abierto, hoverField
+  // ya es false (IsMouseOver aplica el bloqueo de input por overlay), así que
+  // no hace falta una comprobación extra aquí: el click no abre el de debajo.
   bool clicked = hoverField && ctx->input.IsMousePressed(0);
   if (clicked) {
     isOpen = !isOpen;
+    // Al abrir, este combo pasa a ser el único abierto (cierra los demás).
+    ctx->openComboId = isOpen ? id : 0;
   }
 
-  // Cerrar si se hace click fuera
+  // Geometría del dropdown (puede abrir hacia arriba o hacia abajo según el
+  // espacio disponible). Se calcula una sola vez y se reutiliza para el
+  // hit-test de "click fuera" y para el encolado del render diferido, así
+  // ambos coinciden incluso cuando el dropdown abre hacia arriba.
+  float comboItemH = itemStyle.fontSize + panelStyle.padding.y;
+  Vec2 comboViewport = ctx->renderer.GetViewportSize();
+  float comboDesired = static_cast<float>(items.size()) * comboItemH;
+  float comboSpaceBelow = comboViewport.y - (fieldPos.y + fieldSize.y) - 8.0f;
+  float comboSpaceAbove = fieldPos.y - 8.0f;
+  bool comboOpenUp =
+      (comboDesired > comboSpaceBelow && comboSpaceAbove > comboSpaceBelow);
+  float comboAvail = comboOpenUp ? comboSpaceAbove : comboSpaceBelow;
+  int comboMaxRows = std::max(1, static_cast<int>(comboAvail / comboItemH));
+  int comboVisibleRows = std::min(static_cast<int>(items.size()), comboMaxRows);
+  float comboDropHeight = static_cast<float>(comboVisibleRows) * comboItemH;
+  float comboDropY = comboOpenUp ? (fieldPos.y - comboDropHeight)
+                                 : (fieldPos.y + fieldSize.y);
+  Vec2 comboDropPos(fieldPos.x, comboDropY);
+  Vec2 comboDropSize(fieldSize.x, comboDropHeight);
+
+  // Publica el rect del dropdown para que los widgets de debajo bloqueen el
+  // click cuando este combo es el abierto.
+  if (isOpen) {
+    ctx->openComboDropdownPos = comboDropPos;
+    ctx->openComboDropdownSize = comboDropSize;
+  }
+
+  // Cerrar si se hace click fuera (del campo y del dropdown real)
   if (isOpen && ctx->input.IsMousePressed(0) && !hoverField) {
-    float itemH = itemStyle.fontSize + panelStyle.padding.y;
-    float dropH = static_cast<float>(items.size()) * itemH;
     bool hoverDropdown =
-        (mouseX >= fieldPos.x && mouseX <= fieldPos.x + fieldSize.x &&
-         mouseY >= fieldPos.y + fieldSize.y &&
-         mouseY <= fieldPos.y + fieldSize.y + dropH);
+        (mouseX >= comboDropPos.x && mouseX <= comboDropPos.x + comboDropSize.x &&
+         mouseY >= comboDropPos.y && mouseY <= comboDropPos.y + comboDropSize.y);
     if (!hoverDropdown) {
       isOpen = false;
     }
@@ -1820,19 +2309,14 @@ bool ComboBox(const std::string &label, int *currentItem,
 
   // Actualizar estado
   boolEntry.first->second = isOpen;
+  // Si este combo dejó de estar abierto (click fuera, ESC/Enter, o selección
+  // de item vía dropdown diferido), liberar el slot único de "abierto".
+  if (!isOpen && ctx->openComboId == id) {
+    ctx->openComboId = 0;
+  }
 
-  // Dibujar campo con fondo más distintivo - sin borde visible
-  Color fieldBg = panelStyle.background;
-  if (hoverField) {
-    fieldBg = panelStyle.headerBackground;
-  }
-  // Hacer el fondo más distintivo según el tema (sin borde)
-  bool isDarkTheme = ctx->style.isDarkTheme;
-  if (isDarkTheme) {
-    fieldBg = Color(fieldBg.r * 1.12f, fieldBg.g * 1.12f, fieldBg.b * 1.12f, 1.0f);
-  } else {
-    fieldBg = Color(fieldBg.r * 0.94f, fieldBg.g * 0.94f, fieldBg.b * 0.94f, 1.0f);
-  }
+  // Campo con fondo distintivo (recessed en oscuro / casi blanco en claro).
+  Color fieldBg = InputFieldBackground(ctx, hoverField);
 
   // Solo mostrar borde cuando tiene focus
   if (hasFocus) {
@@ -1842,28 +2326,64 @@ bool ComboBox(const std::string &label, int *currentItem,
   }
   ctx->renderer.DrawRectFilled(fieldPos, fieldSize, fieldBg,
                                panelStyle.cornerRadius);
+  if (!hasFocus) {
+    ctx->renderer.DrawRect(fieldPos, fieldSize,
+                           InputFieldBorder(ctx, hoverField),
+                           panelStyle.cornerRadius);
+  }
 
-  // Texto seleccionado
-  Vec2 textPadding(panelStyle.padding.x, panelStyle.padding.y);
-  Vec2 textPos(fieldPos.x + textPadding.x, fieldPos.y + textPadding.y);
+  // Texto seleccionado (con icono opcional del item activo)
+  uint32_t selectedCp = (icons && static_cast<size_t>(selectedIndex) < icons->size())
+                          ? (*icons)[selectedIndex] : 0u;
+  float fieldIconSlot = (selectedCp != 0u) ? (fieldIconSize + fieldIconGap) : 0.0f;
+
+  // Padding interno adaptativo: distribuye el espacio sobrante (después del
+  // texto y el chevron) en TRES huecos iguales — izquierda, gap texto↔chevron,
+  // y derecha. Así el control siempre se ve simétrico aunque el width sea
+  // estrecho (FixedSize) o muy holgado (Fill). Se cota a [4, panel.padding.x]
+  // para no quedar pegado en estrechos ni con paddings exagerados en anchos.
+  float availableChrome = fieldSize.x - maxItemWidth - arrowSize;
+  float perPadding = std::clamp(availableChrome / 3.0f, 4.0f, panelStyle.padding.x);
+  Vec2 textPadding(perPadding, panelStyle.padding.y);
+
+  if (selectedCp != 0u) {
+    DrawWidgetIcon(ctx, fieldPos, fieldSize, selectedCp, itemStyle.color,
+                   fieldIconSize, textPadding.x, fieldIconGap);
+  }
+
+  // Texto: clip al área disponible para no solaparse con el chevron.
+  // Centrado vertical exacto. DrawText pone la baseline en
+  //   baseline = pos.y + ascender * fontSize
+  // y el TOP visual de un glifo en cap-height en
+  //   top    = baseline - capHeight * fontSize.
+  // Para texto sin descenders (la mayoría: "Default", "Layer", etc.)
+  // el bbox visual va de top a baseline, y su centro es:
+  //   centerOffset = (ascender - capHeight/2) * fontSize
+  // Centramos ese punto en el medio del field:
+  //   pos.y = fieldCenter - centerOffset
+  // Esto tolera fonts con ascender atípico (ej. Inter usa ~1.08, no 1.0).
+  const float ascender = ctx->renderer.GetFontAscender();
+  const float capHeight = 0.7f;  // EM units; típico para sans-serif
+  const float visualCenterOffset = (ascender - capHeight * 0.5f) * itemStyle.fontSize;
+  Vec2 textPos(fieldPos.x + textPadding.x + fieldIconSlot,
+               fieldPos.y + fieldSize.y * 0.5f - visualCenterOffset);
+  float textAreaWidth = std::max(0.0f, fieldSize.x - 2.0f * textPadding.x - fieldIconSlot - arrowSize);
+  ctx->renderer.PushClipRect(
+      Vec2(fieldPos.x + textPadding.x + fieldIconSlot, fieldPos.y),
+      Vec2(textAreaWidth, fieldSize.y));
   ctx->renderer.DrawText(textPos, selectedText, itemStyle.color,
                          itemStyle.fontSize);
+  ctx->renderer.PopClipRect();
 
-  // Flecha dropdown
-  float arrowSize = 8.0f;
-  Vec2 arrowPos(fieldPos.x + fieldSize.x - arrowSize - textPadding.x,
-                fieldPos.y + (fieldSize.y - arrowSize) * 0.5f);
-  // Dibujar triángulo simple (usando líneas)
-  Vec2 arrowTop(arrowPos.x + arrowSize * 0.5f, arrowPos.y);
-  Vec2 arrowBottom(arrowPos.x, arrowPos.y + arrowSize);
-  Vec2 arrowBottom2(arrowPos.x + arrowSize, arrowPos.y + arrowSize);
-  ctx->renderer.DrawLine(arrowTop, arrowBottom, itemStyle.color, 1.5f);
-  ctx->renderer.DrawLine(arrowTop, arrowBottom2, itemStyle.color, 1.5f);
-  ctx->renderer.DrawLine(arrowBottom, arrowBottom2, itemStyle.color, 1.5f);
+  // Chevron Lucide: DrawWidgetIcon ya centra verticalmente respecto al rect.
+  DrawWidgetIcon(ctx, fieldPos, fieldSize, Icons::ChevronDown, itemStyle.color,
+                 arrowSize, fieldSize.x - arrowSize - textPadding.x, 0.0f);
 
-  // Dibujar label
-  ctx->renderer.DrawText(widgetPos, label, labelStyle.color,
-                         labelStyle.fontSize);
+  // Dibujar label (sólo en variantes con header)
+  if (drawHeader) {
+    ctx->renderer.DrawText(widgetPos, label, labelStyle.color,
+                           labelStyle.fontSize);
+  }
 
   // Check if a deferred dropdown reported a change for this combo
   bool valueChanged = false;
@@ -1877,28 +2397,21 @@ bool ComboBox(const std::string &label, int *currentItem,
     if (cbIt != ctx->valueChangedCallbacks.end()) cbIt->second(idStr, currentItem);
   }
 
-  // Queue dropdown for deferred rendering (to ensure it appears on top)
+  // Queue dropdown for deferred rendering (to ensure it appears on top).
+  // Reusa la geometría calculada arriba (abre arriba/abajo, recortada a filas).
   if (isOpen) {
-    // Each dropdown item: text height + vertical padding for spacing
-    float itemH = itemStyle.fontSize + panelStyle.padding.y;
-    float dropdownHeight = static_cast<float>(items.size()) * itemH;
-
-    // Clamp to viewport
-    Vec2 viewport = ctx->renderer.GetViewportSize();
-    float maxDropH = viewport.y - (fieldPos.y + fieldSize.y) - 8.0f;
-    dropdownHeight = std::min(dropdownHeight, std::max(maxDropH, itemH));
-
     UIContext::DeferredComboDropdown dropdown;
     dropdown.fieldPos = fieldPos;
     dropdown.fieldSize = fieldSize;
-    dropdown.dropdownPos = Vec2(fieldPos.x, fieldPos.y + fieldSize.y);
-    dropdown.dropdownSize = Vec2(fieldSize.x, dropdownHeight);
-    dropdown.items = &items;
+    dropdown.dropdownPos = comboDropPos;
+    dropdown.dropdownSize = comboDropSize;
+    dropdown.items = items;
+    if (icons) dropdown.iconCodepoints = *icons;
     dropdown.selectedIndex = selectedIndex;
     dropdown.comboId = id;
     dropdown.highlightIndex = highlightEntry;
     dropdown.currentItemPtr = currentItem;
-    dropdown.fieldHeight = itemH;
+    dropdown.fieldHeight = comboItemH;
 
     ctx->deferredComboDropdowns.push_back(dropdown);
   }
@@ -1908,7 +2421,113 @@ bool ComboBox(const std::string &label, int *currentItem,
 
   ctx->lastItemPos = widgetPos;
   AdvanceCursor(ctx, finalSize);
+  // Phase B1: publish combo box state
+  SetLastItem(id, widgetPos, widgetPos + finalSize,
+              hoverField, isOpen, hasFocus, valueChanged);
   return valueChanged;
+}
+
+// Phase C4: Searchable ComboBox. Filters items by case-insensitive substring,
+// then delegates rendering to the regular ComboBox using the filtered list.
+// Maps the filtered selection back to the original index.
+bool ComboBoxSearchable(const std::string &label, int *currentItem,
+                        const std::vector<std::string> &items, float width,
+                        std::optional<Vec2> pos) {
+  UIContext *ctx = GetContext();
+  if (!ctx || items.empty()) return false;
+
+  uint32_t searchId = GenerateId("COMBO_SEARCH:", label.c_str());
+  std::string &filter = ctx->stringStates[searchId];
+
+  auto toLower = [](std::string s) {
+    for (auto &c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+  };
+  std::string flo = toLower(filter);
+
+  std::vector<std::string> filtered;
+  std::vector<int> indexMap;
+  filtered.reserve(items.size());
+  indexMap.reserve(items.size());
+  for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+    if (flo.empty() || toLower(items[i]).find(flo) != std::string::npos) {
+      filtered.push_back(items[i]);
+      indexMap.push_back(i);
+    }
+  }
+  if (filtered.empty()) {
+    filtered.push_back("(no match)");
+    indexMap.push_back(currentItem ? *currentItem : 0);
+  }
+
+  // Show inline search field; advances cursor before the combo
+  TextInput("##search_" + label, &filter, width);
+
+  // Map currentItem to filtered index
+  int filteredCur = 0;
+  if (currentItem) {
+    for (int i = 0; i < static_cast<int>(indexMap.size()); ++i) {
+      if (indexMap[i] == *currentItem) { filteredCur = i; break; }
+    }
+  }
+  int prev = filteredCur;
+  bool changed = ComboBox(label, &filteredCur, filtered, width, pos);
+  if (filteredCur != prev || changed) {
+    if (currentItem && filteredCur >= 0 && filteredCur < static_cast<int>(indexMap.size())) {
+      *currentItem = indexMap[filteredCur];
+    }
+    return true;
+  }
+  return false;
+}
+
+bool ComboBoxSearchable(const std::string &label, int *currentItem,
+                        const std::vector<std::pair<std::string, uint32_t>> &items,
+                        float width, std::optional<Vec2> pos) {
+  UIContext *ctx = GetContext();
+  if (!ctx || items.empty()) return false;
+
+  uint32_t searchId = GenerateId("COMBO_SEARCH:", label.c_str());
+  std::string &filter = ctx->stringStates[searchId];
+
+  auto toLower = [](std::string s) {
+    for (auto &c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+  };
+  std::string flo = toLower(filter);
+
+  std::vector<std::pair<std::string, uint32_t>> filtered;
+  std::vector<int> indexMap;
+  filtered.reserve(items.size());
+  indexMap.reserve(items.size());
+  for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+    if (flo.empty() || toLower(items[i].first).find(flo) != std::string::npos) {
+      filtered.push_back(items[i]);
+      indexMap.push_back(i);
+    }
+  }
+  if (filtered.empty()) {
+    filtered.push_back({"(no match)", 0u});
+    indexMap.push_back(currentItem ? *currentItem : 0);
+  }
+
+  TextInput("##search_" + label, &filter, width);
+
+  int filteredCur = 0;
+  if (currentItem) {
+    for (int i = 0; i < static_cast<int>(indexMap.size()); ++i) {
+      if (indexMap[i] == *currentItem) { filteredCur = i; break; }
+    }
+  }
+  int prev = filteredCur;
+  bool changed = ComboBox(label, &filteredCur, filtered, width, pos);
+  if (filteredCur != prev || changed) {
+    if (currentItem && filteredCur >= 0 && filteredCur < static_cast<int>(indexMap.size())) {
+      *currentItem = indexMap[filteredCur];
+    }
+    return true;
+  }
+  return false;
 }
 
 void RenderDeferredDropdowns() {
@@ -1922,6 +2541,10 @@ void RenderDeferredDropdowns() {
   float mouseX = ctx->input.MouseX();
   float mouseY = ctx->input.MouseY();
 
+  // Los items del combo se procesan aquí (encima de todo): exime su propio
+  // hover/click del bloqueo de input por overlay mientras dura este bloque.
+  ctx->insideOverlayRender = true;
+
   // Render each queued dropdown
   for (auto &dropdown : ctx->deferredComboDropdowns) {
     Vec2 dropdownPos = dropdown.dropdownPos;
@@ -1931,10 +2554,11 @@ void RenderDeferredDropdowns() {
     // Flush batch before drawing dropdown to ensure it's on top
     ctx->renderer.FlushBatch();
 
-    // Draw dropdown background with elevation
+    // Draw dropdown background with elevation (a dropdown is a flyout)
     ctx->renderer.DrawRectWithElevation(dropdownPos, dropdownSize,
                                         panelStyle.background,
-                                        panelStyle.cornerRadius, 16.0f);
+                                        panelStyle.cornerRadius,
+                                        Elevation::Z::Flyout);
 
     // Use acrylic effect for dropdown (Fluent Design)
     ctx->renderer.DrawRectAcrylic(dropdownPos, dropdownSize,
@@ -1947,34 +2571,74 @@ void RenderDeferredDropdowns() {
     ctx->renderer.DrawRect(dropdownPos, dropdownSize, dropdownBorder,
                            panelStyle.cornerRadius);
 
-    // Draw dropdown items
+    // Draw dropdown items. Only draw the rows that fit inside the box so a
+    // clamped dropdown (list taller than the available space) never paints a
+    // row outside its background/border.
     bool itemClicked = false;
     int clickedIndex = -1;
 
-    for (size_t i = 0; i < dropdown.items->size(); ++i) {
+    size_t visibleCount = dropdown.items.size();
+    if (fieldHeight > 0.0f) {
+      size_t fit = static_cast<size_t>(
+          (dropdownSize.y + 0.5f) / fieldHeight);
+      visibleCount = std::min(visibleCount, fit);
+    }
+
+    for (size_t i = 0; i < visibleCount; ++i) {
       Vec2 itemPos(dropdownPos.x,
                    dropdownPos.y + static_cast<float>(i) * fieldHeight);
       Vec2 itemSize(dropdownSize.x, fieldHeight);
 
       bool hoverItem = IsMouseOver(ctx, itemPos, itemSize);
 
-      // Highlight hovered or keyboard-selected item
+      // Highlight hovered or keyboard-selected item. The first/last row must
+      // round the corners that touch the box edge so the highlight doesn't
+      // poke past the dropdown's rounded corners. Since the renderer rounds all
+      // four corners uniformly, we round then square the interior edge back off.
       bool isHighlighted = hoverItem || (static_cast<int>(i) == dropdown.highlightIndex);
       if (isHighlighted) {
-        ctx->renderer.DrawRectFilled(itemPos, itemSize, accentState.hover, 0.0f);
+        float r = panelStyle.cornerRadius;
+        bool firstRow = (i == 0);
+        bool lastRow = (i + 1 == visibleCount);
+        if (r > 0.0f && (firstRow || lastRow)) {
+          ctx->renderer.DrawRectFilled(itemPos, itemSize, accentState.hover, r);
+          if (lastRow && !firstRow) {
+            // Square the top edge (interior, meets the row above).
+            ctx->renderer.DrawRectFilled(itemPos, Vec2(itemSize.x, r),
+                                         accentState.hover, 0.0f);
+          } else if (firstRow && !lastRow) {
+            // Square the bottom edge (interior, meets the row below).
+            ctx->renderer.DrawRectFilled(
+                Vec2(itemPos.x, itemPos.y + itemSize.y - r),
+                Vec2(itemSize.x, r), accentState.hover, 0.0f);
+          }
+          // Single visible row: keep all four corners rounded (matches box).
+        } else {
+          ctx->renderer.DrawRectFilled(itemPos, itemSize, accentState.hover, 0.0f);
+        }
       }
 
-      // Draw selection indicator for current item
-      if (static_cast<int>(i) == dropdown.selectedIndex) {
+      // Per-row icon overrides the selection dot when present.
+      uint32_t rowCp = (i < dropdown.iconCodepoints.size())
+                         ? dropdown.iconCodepoints[i] : 0u;
+      if (rowCp != 0u) {
+        float rowIconSize = itemStyle.fontSize;
+        Color rowIconColor = (static_cast<int>(i) == dropdown.selectedIndex)
+                               ? accentState.normal
+                               : itemStyle.color;
+        DrawWidgetIcon(ctx, itemPos, itemSize, rowCp, rowIconColor,
+                       rowIconSize, panelStyle.padding.x, 0.0f);
+      } else if (static_cast<int>(i) == dropdown.selectedIndex) {
         float dotR = 3.0f;
         Vec2 dotCenter(itemPos.x + 8.0f, itemPos.y + fieldHeight * 0.5f);
         ctx->renderer.DrawCircle(dotCenter, dotR, accentState.normal, true);
       }
 
-      // Draw item text centered vertically in the item row
+      // Draw item text centered vertically in the item row.
+      // Reserve the same 20px gutter regardless of icon presence so rows align.
       float textY = itemPos.y + (fieldHeight - itemStyle.fontSize) * 0.5f;
       Vec2 itemTextPos(itemPos.x + panelStyle.padding.x + 20.0f, textY);
-      ctx->renderer.DrawText(itemTextPos, (*dropdown.items)[i], itemStyle.color,
+      ctx->renderer.DrawText(itemTextPos, dropdown.items[i], itemStyle.color,
                              itemStyle.fontSize);
 
       // Handle item click
@@ -1995,6 +2659,8 @@ void RenderDeferredDropdowns() {
     }
   }
 
+  ctx->insideOverlayRender = false;
+
   // Clear the deferred ComboBox dropdowns queue
   ctx->deferredComboDropdowns.clear();
 
@@ -2005,7 +2671,7 @@ void RenderDeferredDropdowns() {
 
     ctx->renderer.DrawRectWithElevation(
         dropdown.dropdownPos, dropdown.dropdownSize,
-        dropdownBg, 4.0f, 8.0f);
+        dropdownBg, 4.0f, Elevation::Z::Flyout);
 
     // Draw menu items
     const TextStyle &textStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
@@ -2024,9 +2690,19 @@ void RenderDeferredDropdowns() {
             // Draw item background
             ctx->renderer.DrawRectFilled(item.pos, item.size, item.bgColor, 0.0f);
 
+            // Reserve a leading icon slot if requested
+            float iconSize = textStyle.fontSize;
+            float iconGap = 6.0f;
+            float iconSlot = (item.iconCodepoint != 0u) ? (iconSize + iconGap) : 0.0f;
+
+            if (item.iconCodepoint != 0u) {
+                DrawWidgetIcon(ctx, item.pos, item.size, item.iconCodepoint,
+                               item.textColor, iconSize, panelStyle.padding.x, iconGap);
+            }
+
             // Draw item text
             Vec2 textSize = MeasureTextCached(ctx, item.label, textStyle.fontSize);
-            Vec2 textPos(item.pos.x + panelStyle.padding.x,
+            Vec2 textPos(item.pos.x + panelStyle.padding.x + iconSlot,
                          item.pos.y + (item.size.y - textSize.y) * 0.5f);
 
             ctx->renderer.DrawText(textPos, item.label, item.textColor, textStyle.fontSize);
@@ -2077,8 +2753,10 @@ void RenderDeferredDropdowns() {
       Color bg = panelStyle.background;
       bg.a = alpha;
 
-      // Dibujar sombra simple
-      ctx->renderer.DrawRectFilled(tooltip.pos + Vec2(2, 2), tooltipSize, Color(0,0,0,0.3f * alpha), 4.0f);
+      // Sombra suave por elevación (un tooltip flota en z=Flyout); se atenúa
+      // con el alpha del fade-in/out del tooltip.
+      ctx->renderer.DrawElevationShadow(tooltip.pos, tooltipSize, 4.0f,
+                                        Elevation::Z::Flyout, alpha);
 
       // Contenedor
       ctx->renderer.DrawRectFilled(tooltip.pos, tooltipSize, bg, 4.0f);
@@ -2101,6 +2779,17 @@ void RenderDeferredDropdowns() {
     }
     
     ctx->deferredTooltips.clear();
+  }
+
+  // Liberar el rect de bloqueo del menú al final del frame, una vez procesados
+  // todos los widgets de fondo. Si MenuItem cerró el menú a mitad de frame, el
+  // bloqueo siguió vigente durante este frame (evitando el clickthrough) y aquí
+  // se limpia para el siguiente.
+  if (ctx->openMenuId != 0) {
+    auto it = ctx->menuStates.find(ctx->openMenuId);
+    if (it == ctx->menuStates.end() || !it->second.open) {
+      ctx->openMenuId = 0;
+    }
   }
 }
 

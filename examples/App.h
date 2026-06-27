@@ -25,6 +25,7 @@ private:
     SDL_Window* window;
     FluentUI::UIContext* ctx;
     uint64_t lastTime;
+    bool m_useVulkan = false;  // chosen from GetPreferredBackend() at construction
 
     // Main tab
     int m_mainTab = 0;

@@ -1,9 +1,11 @@
 #include "UI/Widgets.h"
 #include "UI/WidgetHelpers.h"
+#include "UI/Icons.h"
 #include "Theme/FluentTheme.h"
 #include "core/Animation.h"
 #include "core/Context.h"
 #include "core/Renderer.h"
+#include "core/Elevation.h"
 #include "core/WidgetNodes.h"
 #include <algorithm>
 #include <cmath>
@@ -13,7 +15,18 @@
 
 namespace FluentUI {
 
+bool BeginPanel(const std::string &id, uint32_t iconCodepoint, const Vec2 &desiredSize,
+                bool reserveLayoutSpace, std::optional<bool> useAcrylic,
+                std::optional<float> acrylicOpacity, std::optional<Vec2> pos, float maxHeight);
+
 bool BeginPanel(const std::string &id, const Vec2 &desiredSize,
+                bool reserveLayoutSpace, std::optional<bool> useAcrylic,
+                std::optional<float> acrylicOpacity, std::optional<Vec2> pos, float maxHeight) {
+  return BeginPanel(id, 0u, desiredSize, reserveLayoutSpace, useAcrylic,
+                    acrylicOpacity, pos, maxHeight);
+}
+
+bool BeginPanel(const std::string &id, uint32_t iconCodepoint, const Vec2 &desiredSize,
                 bool reserveLayoutSpace, std::optional<bool> useAcrylic,
                 std::optional<float> acrylicOpacity, std::optional<Vec2> pos, float maxHeight) {
   UIContext *ctx = GetContext();
@@ -40,7 +53,10 @@ bool BeginPanel(const std::string &id, const Vec2 &desiredSize,
 
   if (!state.initialized) {
     state.size = desiredSize;
-    if (state.size.x <= 0.0f) state.size.x = 300.0f;
+    if (state.size.x <= 0.0f) {
+      Vec2 avail = GetCurrentAvailableSpace(ctx);
+      state.size.x = avail.x > 0.0f ? avail.x : 300.0f;
+    }
     if (state.size.y <= 0.0f) {
         state.size.y = titleHeight + 40.0f;
     }
@@ -57,15 +73,21 @@ bool BeginPanel(const std::string &id, const Vec2 &desiredSize,
     state.acrylicOpacity = acrylicOpacity.has_value() ? acrylicOpacity.value() : panelStyle.acrylicOpacity;
     state.initialized = true;
   } else {
-    // Permitir actualización de ancho desde código si no se está redimensionando manualmente
-    if (!state.resizing && desiredSize.x > 0.0f) {
-        state.size.x = desiredSize.x;
+    // Update size from caller if not manually resized
+    if (!state.resizing && !state.hasBeenManuallyResized) {
+        if (desiredSize.x > 0.0f) state.size.x = desiredSize.x;
+        // NOTE: height is governed by EndPanel's content-based auto-grow, which
+        // already treats desiredSize.y as a *minimum* (userHeight). Overwriting
+        // size.y here every frame would pin the panel to desiredSize.y and clip
+        // any content taller than it (e.g. a compact panel that should grow).
     }
-    // No forzar altura aquí - EndPanel la ajusta automáticamente al contenido
   }
 
-  // SINCRONIZACIÓN DE POSICIÓN (Crucial para scroll)
-  if (!state.useAbsolutePos && !state.dragging && !state.resizing) {
+  // SINCRONIZACIÓN DE POSICIÓN
+  // For absolute-positioned panels: sync from caller only if NOT dragged by user
+  if (pos.has_value() && state.useAbsolutePos && !state.dragging && !state.hasBeenDragged) {
+    state.position = ResolveAbsolutePosition(ctx, pos.value(), state.size);
+  } else if (!state.useAbsolutePos && !state.dragging && !state.resizing) {
     state.position = ctx->cursorPos;
     if (state.hasBeenDragged) {
       state.position = state.position + state.dragPositionOffset;
@@ -98,8 +120,11 @@ bool BeginPanel(const std::string &id, const Vec2 &desiredSize,
   }
 
   if (state.resizing && !state.minimized) {
-    if (!leftDown) state.resizing = false;
-    else {
+    if (!leftDown) {
+      state.resizing = false;
+      state.hasBeenManuallyResized = true;
+      state.manualSize = state.size;
+    } else {
       Vec2 delta = mousePos - state.resizeStartMouse;
       state.size.x = std::max(state.resizeStartSize.x + delta.x, 120.0f);
       state.size.y = std::max(state.resizeStartSize.y + delta.y, titleHeight + 20.0f);
@@ -130,6 +155,23 @@ bool BeginPanel(const std::string &id, const Vec2 &desiredSize,
     }
   }
 
+  // PRE-GROW: ajustar la altura a lo medido el frame anterior ANTES de empujar el
+  // clip, para que el área de contenido (y por tanto el clip) ya quepa todo este
+  // mismo frame. EndPanel también ajusta, pero solo surte efecto al frame
+  // siguiente, lo que dejaba el contenido recortado un frame (o de forma
+  // persistente si quedaba justo bajo el umbral de la scrollbar). Sin maxHeight el
+  // panel crece libremente para contener su contenido; con maxHeight se limita y
+  // EndPanel dibuja la scrollbar. Se respeta el redimensionado manual del usuario.
+  if (!state.resizing && !state.hasBeenManuallyResized && state.contentSize.y > 0.0f) {
+    float fitHeight = titleHeight + state.contentSize.y + verticalPadding;
+    float target = (desiredSize.y > 0.0f) ? std::max(fitHeight, desiredSize.y) : fitHeight;
+    if (maxHeight > 0.0f) {
+      float minUsable = titleHeight + verticalPadding + state.contentSize.y * 0.5f;
+      target = std::min(target, std::max(maxHeight, minUsable));
+    }
+    if (target > state.size.y) state.size.y = target;
+  }
+
   // CULLING: Para contenedores como Panel, somos muy permisivos.
   // Solo descartamos si está completamente fuera del viewport global para ahorrar rendimiento,
   // pero dejamos que el Clipping Stack maneje el recorte fino en scroll.
@@ -141,23 +183,54 @@ bool BeginPanel(const std::string &id, const Vec2 &desiredSize,
   if (isVisible) {
     // Dibujo del panel
     if (!state.minimized && panelStyle.shadowOpacity > 0.0f) {
-      ctx->renderer.DrawRectFilled(state.position + Vec2(0, panelStyle.shadowOffsetY), state.size, Color(0,0,0, panelStyle.shadowOpacity), panelStyle.cornerRadius);
+      // Sombra por elevación: un panel/card flota en z=Card. shadowOpacity del
+      // tema actúa de interruptor (los temas "flat" lo ponen a 0).
+      ctx->renderer.DrawElevationShadow(state.position, drawSize,
+                                        panelStyle.cornerRadius, Elevation::Z::Card);
     }
     Color bg = panelStyle.background;
     if (state.useAcrylic) ctx->renderer.DrawRectAcrylic(state.position, drawSize, bg, panelStyle.cornerRadius, state.acrylicOpacity);
     else ctx->renderer.DrawRectFilled(state.position, drawSize, bg, panelStyle.cornerRadius);
     
     ctx->renderer.DrawRectFilled(state.position, titleSize, panelStyle.headerBackground, panelStyle.cornerRadius);
-    ctx->renderer.DrawText(state.position + panelStyle.padding * 0.5f, id, panelStyle.headerText.color, panelStyle.headerText.fontSize);
+    {
+      float titleIconSize = panelStyle.headerText.fontSize;
+      float titleIconGap = 6.0f;
+      float titleIconSlot = (iconCodepoint != 0u) ? (titleIconSize + titleIconGap) : 0.0f;
+      Vec2 titlePadStart = state.position + panelStyle.padding * 0.5f;
+      if (iconCodepoint != 0u) {
+        DrawWidgetIcon(ctx, state.position, titleSize, iconCodepoint,
+                       panelStyle.headerText.color, titleIconSize,
+                       panelStyle.padding.x * 0.5f, titleIconGap);
+      }
+      ctx->renderer.DrawText(Vec2(titlePadStart.x + titleIconSlot, titlePadStart.y),
+                             id, panelStyle.headerText.color,
+                             panelStyle.headerText.fontSize);
+    }
     
-    // Botón e Icono + / -
+    // Botón de minimizar/restaurar.
     bool bh = PointInRect(mousePos, minimizeButtonPos, minimizeButtonSize);
     Color bc = (bh && leftDown) ? panelStyle.titleButton.pressed : (bh ? panelStyle.titleButton.hover : panelStyle.titleButton.normal);
     ctx->renderer.DrawRectFilled(minimizeButtonPos, minimizeButtonSize, bc, panelStyle.cornerRadius * 0.4f);
-    Vec2 center = minimizeButtonPos + minimizeButtonSize * 0.5f;
-    float hl = std::round(minimizeButtonSize.x * 0.2f);
-    ctx->renderer.DrawRectFilled(Vec2(std::round(center.x - hl), std::round(center.y - 0.6f)), Vec2(hl * 2, 1.2f), Color(1,1,1,0.9f), 0);
-    if (state.minimized) ctx->renderer.DrawRectFilled(Vec2(std::round(center.x - 0.6f), std::round(center.y - hl)), Vec2(1.2f, hl * 2), Color(1,1,1,0.9f), 0);
+    {
+      // El glifo + / - se dibuja con primitivas (barras) en lugar de un glifo
+      // Lucide: el trazo de "minus" es tan fino que, reescalado al tamaño del
+      // botón, queda casi invisible. La geometría garantiza visibilidad
+      // independientemente del atlas de iconos (mismo criterio que el TreeView).
+      Color glyphColor(1.0f, 1.0f, 1.0f, 0.9f);
+      float cx = minimizeButtonPos.x + minimizeButtonSize.x * 0.5f;
+      float cy = minimizeButtonPos.y + minimizeButtonSize.y * 0.5f;
+      float halfLen = std::round(minimizeButtonSize.x * 0.22f); // medio largo de la barra
+      float thick = std::max(2.0f, std::round(minimizeButtonSize.x * 0.10f));
+      // Barra horizontal (presente en + y en -)
+      ctx->renderer.DrawRectFilled(Vec2(cx - halfLen, cy - thick * 0.5f),
+                                   Vec2(halfLen * 2.0f, thick), glyphColor, 0.0f);
+      // Barra vertical solo cuando está minimizado (icono "+" para restaurar)
+      if (state.minimized) {
+        ctx->renderer.DrawRectFilled(Vec2(cx - thick * 0.5f, cy - halfLen),
+                                     Vec2(thick, halfLen * 2.0f), glyphColor, 0.0f);
+      }
+    }
   }
 
   // Preparar contexto para hijos
@@ -171,6 +244,7 @@ bool BeginPanel(const std::string &id, const Vec2 &desiredSize,
   frameCtx.savedCursor = ctx->cursorPos;
   frameCtx.savedLastItemPos = ctx->lastItemPos;
   frameCtx.savedLastItemSize = ctx->lastItemSize;
+  frameCtx.parentAvailable = GetCurrentAvailableSpace(ctx);
 
   bool shouldRenderContent = !state.minimized && isVisible;
   if (shouldRenderContent) {
@@ -179,21 +253,37 @@ bool BeginPanel(const std::string &id, const Vec2 &desiredSize,
     float ch = std::max(0.0f, state.size.y - titleHeight - panelStyle.padding.y * 2.0f);
     
     // Manejar scroll interno si el contenido es mayor que el panel
-    if (state.contentSize.y > ch && IsMouseOver(ctx, contentOrigin, Vec2(cw, ch)) && !ctx->scrollConsumedThisFrame) {
+    // No interceptar scroll si hay un context menu activo (el menú tiene prioridad)
+    if (state.contentSize.y > ch && IsMouseOver(ctx, contentOrigin, Vec2(cw, ch)) && !ctx->scrollConsumedThisFrame && ctx->activeContextMenuId == 0) {
         float wy = ctx->input.MouseWheelY();
         if (std::abs(wy) > 0.001f) {
-            state.scrollOffset.y = std::clamp(state.scrollOffset.y - wy * S(SCROLL_SPEED), 0.0f, std::max(0.0f, state.contentSize.y - ch));
-            ctx->scrollConsumedThisFrame = true;
+            float maxScroll = std::max(0.0f, state.contentSize.y - ch);
+            float oldScroll = state.scrollOffset.y;
+            state.scrollOffset.y = std::clamp(state.scrollOffset.y - wy * S(SCROLL_SPEED), 0.0f, maxScroll);
+            // Only consume if we actually scrolled — propagate to parent when at limits
+            if (std::abs(state.scrollOffset.y - oldScroll) > 0.001f) {
+                ctx->scrollConsumedThisFrame = true;
+            }
         }
     }
 
-    ctx->renderer.PushClipRect(contentOrigin, Vec2(cw, ch));
+    // Extend the content clip slightly on left/top/bottom so widget edges aren't
+    // shaved by the clip boundary (left: focus rings/borders; bottom: the last
+    // item's rounded corner / shadow when the panel auto-grows to fit exactly).
+    // The gutter lands inside the panel's padding (12px), so it never bleeds out.
+    // The right edge is left untouched so content keeps clearing the scrollbar.
+    float gutter = S(CONTENT_LEFT_GUTTER);
+    ctx->renderer.PushClipRect(Vec2(contentOrigin.x - gutter, contentOrigin.y - gutter),
+                               Vec2(cw + gutter, ch + gutter * 2.0f));
     frameCtx.clipPushed = true;
-    
+
     // Aplicar el scroll offset al cursor del contenido
     ctx->cursorPos = contentOrigin - Vec2(0, state.scrollOffset.y);
     ctx->offsetStack.push_back(contentOrigin);
-    BeginVertical(ctx->style.spacing, Vec2(cw, 0.0f), Vec2(0,0));
+    // Reserve room on the right so trailing content clears the scrollbar (drawn
+    // 6px wide at the content's right edge in EndPanel when content overflows).
+    float sbReserve = S(6.0f) + S(SCROLLBAR_GUTTER);
+    BeginVertical(ctx->style.spacing, Vec2(std::max(0.0f, cw - sbReserve), 0.0f), Vec2(0,0));
     frameCtx.layoutPushed = true;
     ctx->panelStack.push_back(frameCtx);
   } else if (!state.useAbsolutePos && reserveLayoutSpace) {
@@ -218,8 +308,17 @@ void EndPanel() {
 
   if (!ctx->offsetStack.empty()) ctx->offsetStack.pop_back();
   if (frameCtx.layoutPushed) {
+    // Measure content height from cursor displacement (most accurate for dynamic content)
+    auto &stack = ctx->layoutStack.back();
+    float cursorContentH = stack.cursor.y - stack.contentStart.y;
+    if (stack.itemCount > 0 && stack.spacing > 0.0f)
+      cursorContentH -= stack.spacing; // remove trailing spacing
     EndVertical(false);
+    // Use cursor-based measurement — it tracks actual content each frame,
+    // properly handling dynamic content (widgets appearing/disappearing)
     state.contentSize = ctx->lastItemSize;
+    if (cursorContentH > state.contentSize.y)
+      state.contentSize.y = cursorContentH;
   }
   if (frameCtx.clipPushed) ctx->renderer.PopClipRect();
 
@@ -228,26 +327,50 @@ void EndPanel() {
   float requiredHeight = frameCtx.titleHeight + state.contentSize.y + verticalPadding;
 
   if (!state.resizing) {
-      // Auto-ajustar al contenido, usando userHeight como mínimo
-      float newHeight = requiredHeight;
-      if (frameCtx.userHeight > 0.0f) {
-          newHeight = std::max(newHeight, frameCtx.userHeight);
+      if (state.hasBeenManuallyResized) {
+          // El usuario redimensionó manualmente: respetar ese tamaño
+          state.size.y = state.manualSize.y;
+      } else {
+          // Auto-ajustar al contenido, pero respetar límites del contenedor padre
+          float newHeight = requiredHeight;
+          if (frameCtx.userHeight > 0.0f) {
+              newHeight = std::max(newHeight, frameCtx.userHeight);
+          }
+
+          // NOTE: previously clamped newHeight to parentAvailable.y here, but that
+          // clipped panel content inconsistently: an early panel (while the parent
+          // still had space, parentAvailable.y > 0) got capped and lost content,
+          // while a later panel (parent space exhausted to 0, so the >0 guard
+          // skipped the clamp) grew freely. For "auto-size to content" a panel must
+          // always fit its content; bound a panel with an explicit maxHeight (which
+          // enables internal scrolling) instead of the parent's remaining space.
+
+          if (frameCtx.maxHeight > 0.0f) {
+              // Ensure maxHeight can at least fit title + minimal content
+              float minUsable = frameCtx.titleHeight + verticalPadding + state.contentSize.y * 0.5f;
+              float effectiveMax = std::max(frameCtx.maxHeight, minUsable);
+              newHeight = std::min(newHeight, effectiveMax);
+          }
+          state.size.y = newHeight;
       }
-      if (frameCtx.maxHeight > 0.0f) {
-          newHeight = std::min(newHeight, frameCtx.maxHeight);
-      }
-      state.size.y = newHeight;
   }
 
-  // Dibujar scrollbar si el contenido es más alto que el panel actual
+  // Asegurar scroll offset válido
   float availableHeight = state.size.y - (frameCtx.titleHeight + verticalPadding);
-  if (frameCtx.isVisible && !state.minimized && state.contentSize.y > availableHeight + 1.0f) {
+  float maxScroll = std::max(0.0f, state.contentSize.y - availableHeight);
+  state.scrollOffset.y = std::clamp(state.scrollOffset.y, 0.0f, maxScroll);
+
+  // Dibujar scrollbar si el contenido excede el área visible del panel. Esto solo
+  // ocurre cuando el panel NO puede crecer para contenerlo (maxHeight fijado o
+  // redimensionado manual): el pre-grow de BeginPanel cubre el caso auto. Umbral
+  // de 1px para no dejar contenido recortado sin scrollbar.
+  if (frameCtx.isVisible && !state.minimized && maxScroll > 1.0f) {
       Vec2 contentAreaPos = state.position + Vec2(ctx->style.panel.padding.x, frameCtx.titleHeight + ctx->style.panel.padding.y);
       float cw = std::max(0.0f, state.size.x - ctx->style.panel.padding.x * 2.0f);
       Vec2 barPos(contentAreaPos.x + cw - 6.0f, contentAreaPos.y);
       Vec2 barSize(6.0f, availableHeight);
-      
-      DrawScrollbar(ctx, barPos, barSize, state.contentSize.y, availableHeight, state.scrollOffset.y, 
+
+      DrawScrollbar(ctx, barPos, barSize, state.contentSize.y, availableHeight, state.scrollOffset.y,
                     state.draggingScrollbar, state.dragStartMouse, state.dragStartScroll, state.draggingScrollbar, true);
   }
 
@@ -261,6 +384,133 @@ void EndPanel() {
     ctx->lastItemPos = state.position;
     AdvanceCursor(ctx, state.minimized ? Vec2(state.size.x, frameCtx.titleHeight) : state.size);
   }
+}
+
+bool CollapsingHeader(const std::string &label, bool *open,
+                      uint32_t iconCodepoint, std::optional<Vec2> pos) {
+  UIContext *ctx = GetContext();
+  if (!ctx) return false;
+
+  uint32_t id = GenerateId("COLLAPSE:", label.c_str());
+  ctx->focusableWidgets.push_back(id);
+
+  auto entry = ctx->boolStates.try_emplace(id, false);
+  bool &storedOpen = entry.first->second;
+  bool isOpen = open ? *open : storedOpen;
+
+  const TextStyle &labelStyle = ctx->style.GetTextStyle(TypographyStyle::BodyStrong);
+  const PanelStyle &panelStyle = ctx->style.panel;
+  const ColorState &accentState = ctx->style.button.background;
+
+  const float headerHeight = labelStyle.fontSize + 16.0f;
+  const float chevronSize = labelStyle.fontSize;
+  const float iconGap = 6.0f;
+  const float padX = panelStyle.padding.x * 0.5f;
+  const float indentAmount = 16.0f;
+
+  // Reset any indent left by a previous CollapsingHeader at this layout depth so
+  // this header itself sits flush at the parent's left edge. Restoring the
+  // available width keeps Fill widgets sized against the full parent.
+  bool inVerticalLayout = !ctx->layoutStack.empty() && ctx->layoutStack.back().isVertical;
+  if (inVerticalLayout) {
+    LayoutStack &stack = ctx->layoutStack.back();
+    if (stack.collapseIndent != 0.0f) {
+      stack.availableSpace.x += stack.collapseIndent;
+      stack.collapseIndent = 0.0f;
+      ctx->cursorPos.x = stack.contentStart.x;
+    }
+  }
+
+  Vec2 desiredSize(0.0f, headerHeight);
+  LayoutConstraints constraints = ConsumeNextConstraints(SizeConstraint::Fill);
+  Vec2 finalSize = ApplyConstraints(ctx, constraints, desiredSize);
+  if (finalSize.x <= 0.0f) {
+    Vec2 avail = GetCurrentAvailableSpace(ctx);
+    finalSize.x = avail.x > 0.0f ? avail.x : 200.0f;
+  }
+  if (finalSize.y <= 0.0f) finalSize.y = headerHeight;
+
+  Vec2 widgetPos;
+  if (pos.has_value()) {
+    widgetPos = ResolveAbsolutePosition(ctx, pos.value(), finalSize);
+  } else {
+    widgetPos = ctx->cursorPos;
+  }
+
+  Vec2 mousePos(ctx->input.MouseX(), ctx->input.MouseY());
+  bool hover = PointInRect(mousePos, widgetPos, finalSize) &&
+               IsRectInViewport(ctx, widgetPos, finalSize) &&
+               !IsMouseInputBlocked(ctx);
+  bool leftDown = ctx->input.IsMouseDown(0);
+  bool clicked = hover && ctx->input.IsMousePressed(0);
+
+  // Keyboard activation when focused.
+  if (ctx->focusedWidgetId == id &&
+      (ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE) ||
+       ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN))) {
+    clicked = true;
+  }
+
+  if (clicked) {
+    isOpen = !isOpen;
+    storedOpen = isOpen;
+    if (open) *open = isOpen;
+  }
+
+  if (hover) ctx->desiredCursor = UIContext::CursorType::Hand;
+
+  // Background — subtle row that highlights on hover/press.
+  Color bg = panelStyle.headerBackground;
+  if (hover && leftDown) {
+    bg = accentState.pressed; bg.a = 0.35f;
+  } else if (hover) {
+    bg = accentState.hover; bg.a = 0.18f;
+  }
+  ctx->renderer.DrawRectFilled(widgetPos, finalSize, bg, panelStyle.cornerRadius);
+
+  if (ctx->focusedWidgetId == id) {
+    DrawFocusRing(ctx, widgetPos, finalSize, panelStyle.cornerRadius);
+  }
+
+  // Chevron at left.
+  uint32_t chevronCp = isOpen ? Icons::ChevronDown : Icons::ChevronRight;
+  DrawWidgetIcon(ctx, widgetPos, finalSize, chevronCp,
+                 labelStyle.color, chevronSize, padX, iconGap);
+
+  float labelStartX = widgetPos.x + padX + chevronSize + iconGap;
+
+  if (iconCodepoint != 0u) {
+    DrawWidgetIcon(ctx, Vec2(labelStartX, widgetPos.y),
+                   Vec2(labelStyle.fontSize, finalSize.y), iconCodepoint,
+                   labelStyle.color, labelStyle.fontSize, 0.0f, iconGap);
+    labelStartX += labelStyle.fontSize + iconGap;
+  }
+
+  // Label, vertically centered using the same optical-center formula as ComboBox.
+  const float ascender = ctx->renderer.GetFontAscender();
+  const float capHeight = 0.7f;
+  const float visualCenterOffset = (ascender - capHeight * 0.5f) * labelStyle.fontSize;
+  Vec2 labelPos(labelStartX, widgetPos.y + finalSize.y * 0.5f - visualCenterOffset);
+  ctx->renderer.DrawText(labelPos, label, labelStyle.color, labelStyle.fontSize);
+
+  ctx->lastItemPos = widgetPos;
+  AdvanceCursor(ctx, finalSize);
+
+  // Push indent for subsequent siblings if expanded; otherwise leave at 0.
+  if (inVerticalLayout) {
+    LayoutStack &stack = ctx->layoutStack.back();
+    stack.collapseIndent = isOpen ? indentAmount : 0.0f;
+    if (stack.collapseIndent != 0.0f) {
+      stack.availableSpace.x = std::max(0.0f, stack.availableSpace.x - stack.collapseIndent);
+    }
+    // Apply the new indent to the cursor immediately so the very next widget
+    // picks it up without needing another AdvanceCursor cycle.
+    ctx->cursorPos.x = stack.contentStart.x + stack.collapseIndent;
+  }
+
+  SetLastItem(id, widgetPos, widgetPos + finalSize, hover, false,
+              ctx->focusedWidgetId == id, clicked);
+  return isOpen;
 }
 
 bool BeginScrollView(const std::string &id, const Vec2 &size,
@@ -303,6 +553,17 @@ bool BeginScrollView(const std::string &id, const Vec2 &size,
     state.viewSize = resolvedSize;
   }
 
+  // Auto-grow: if the resolved size is too small for the content,
+  // expand to at least half the content size (with scrollbar for the rest)
+  if (state.contentSize.y > 0.0f && resolvedSize.y < state.contentSize.y) {
+    float minHeight = state.contentSize.y * 0.5f;
+    if (resolvedSize.y < minHeight) {
+      Vec2 avail = GetCurrentAvailableSpace(ctx);
+      float maxGrow = avail.y > 0.0f ? avail.y : resolvedSize.y;
+      resolvedSize.y = std::min(minHeight, maxGrow);
+    }
+  }
+
   if (scrollOffset) state.scrollOffset = *scrollOffset;
 
   float scrollbarWidth = S(SCROLLBAR_WIDTH_LARGE);
@@ -328,13 +589,21 @@ bool BeginScrollView(const std::string &id, const Vec2 &size,
   if (IsMouseOver(ctx, contentAreaPos, contentAreaSize) && !ctx->scrollConsumedThisFrame) {
     float wheelY = ctx->input.MouseWheelY();
     if (std::abs(wheelY) > 0.001f) {
-      state.scrollOffset.y -= wheelY * S(SCROLL_SPEED);
-      state.scrollOffset.y = std::max(0.0f, state.scrollOffset.y);
-      ctx->scrollConsumedThisFrame = true;
+      float maxScroll = std::max(0.0f, state.contentSize.y - contentAreaSize.y);
+      float oldScroll = state.scrollOffset.y;
+      state.scrollOffset.y = std::clamp(state.scrollOffset.y - wheelY * S(SCROLL_SPEED), 0.0f, maxScroll);
+      if (std::abs(state.scrollOffset.y - oldScroll) > 0.001f) {
+        ctx->scrollConsumedThisFrame = true;
+      }
     }
   }
 
-  ctx->renderer.PushClipRect(contentAreaPos, contentAreaSize);
+  // Extend the content clip slightly to the left so left-aligned widgets aren't
+  // shaved by the clip edge (the gutter lands inside padding.x). The right edge
+  // already clears the scrollbar via padding.x + scrollbarWidth.
+  float leftGutter = S(CONTENT_LEFT_GUTTER);
+  ctx->renderer.PushClipRect(Vec2(contentAreaPos.x - leftGutter, contentAreaPos.y),
+                             Vec2(contentAreaSize.x + leftGutter, contentAreaSize.y));
   ScrollViewFrameContext frameCtx{};
   frameCtx.id = scrollViewId;
   frameCtx.position = scrollViewPos;
@@ -372,7 +641,17 @@ void EndScrollView() {
   auto &state = it->second;
 
   if (!ctx->layoutStack.empty()) {
-    state.contentSize = ctx->layoutStack.back().contentSize;
+    auto &stack = ctx->layoutStack.back();
+    float spacingTotal =
+        (stack.itemCount > 0 && stack.spacing > 0.0f)
+            ? stack.spacing * static_cast<float>(stack.itemCount - 1)
+            : 0.0f;
+    float cursorContentH = stack.cursor.y - stack.contentStart.y;
+    if (stack.itemCount > 0 && stack.spacing > 0.0f)
+      cursorContentH -= stack.spacing;
+    float formulaH = stack.contentSize.y + spacingTotal;
+    state.contentSize = Vec2(stack.contentSize.x,
+                             std::max(formulaH, cursorContentH));
     EndVertical(false);
   }
   if (!ctx->offsetStack.empty()) ctx->offsetStack.pop_back();
@@ -397,9 +676,36 @@ void EndScrollView() {
   }
 }
 
+// Internal: shared core that supports optional per-tab icon codepoints.
+static bool BeginTabViewImpl(const std::string &id, int *activeTab,
+                             const std::vector<std::string> &tabLabels,
+                             const std::vector<uint32_t> *tabIcons,
+                             const Vec2 &size, std::optional<Vec2> pos);
+
 bool BeginTabView(const std::string &id, int *activeTab,
                   const std::vector<std::string> &tabLabels, const Vec2 &size,
                   std::optional<Vec2> pos) {
+  return BeginTabViewImpl(id, activeTab, tabLabels, nullptr, size, pos);
+}
+
+bool BeginTabView(const std::string &id, int *activeTab,
+                  const std::vector<std::pair<std::string, uint32_t>> &tabLabels,
+                  const Vec2 &size, std::optional<Vec2> pos) {
+  std::vector<std::string> labels;
+  std::vector<uint32_t> icons;
+  labels.reserve(tabLabels.size());
+  icons.reserve(tabLabels.size());
+  for (const auto &p : tabLabels) {
+    labels.push_back(p.first);
+    icons.push_back(p.second);
+  }
+  return BeginTabViewImpl(id, activeTab, labels, &icons, size, pos);
+}
+
+static bool BeginTabViewImpl(const std::string &id, int *activeTab,
+                             const std::vector<std::string> &tabLabels,
+                             const std::vector<uint32_t> *tabIcons,
+                             const Vec2 &size, std::optional<Vec2> pos) {
   UIContext *ctx = GetContext();
   if (!ctx || tabLabels.empty()) return false;
 
@@ -427,13 +733,35 @@ bool BeginTabView(const std::string &id, int *activeTab,
   float tabHeight = tabTextStyle.fontSize + panelStyle.padding.y * 2.0f;
   
   Vec2 tabViewSize = size;
-  if (tabViewSize.x <= 0.0f) tabViewSize.x = 400.0f;
-  if (tabViewSize.y <= 0.0f) tabViewSize.y = 300.0f;
+  if (tabViewSize.x <= 0.0f || tabViewSize.y <= 0.0f) {
+    Vec2 avail = GetCurrentAvailableSpace(ctx);
+    if (tabViewSize.x <= 0.0f) tabViewSize.x = avail.x > 0.0f ? avail.x : 400.0f;
+    if (tabViewSize.y <= 0.0f) tabViewSize.y = avail.y > 0.0f ? avail.y : 300.0f;
+  }
 
-  Vec2 tabViewPos = pos.has_value() ? pos.value() : ctx->cursorPos;
-  if (pos.has_value()) state.useAbsolutePos = true;
-  else {
-    tabViewPos = ResolveAbsolutePosition(ctx, tabViewPos, tabViewSize);
+  // Auto-grow: if the tab content from the previous frame exceeds the view,
+  // grow to fit the full content while there is room in the parent. The
+  // requested height (size.y) is treated as a *minimum* and the parent's
+  // remaining space as the *maximum*; if the parent can't fit everything, the
+  // view stays at maxGrow and the scrollbar (EndTabView) handles the overflow.
+  // Previously this only grew on severe overflow (>2x), so a mild overflow
+  // clipped the lower content even when the parent had plenty of free space.
+  if (state.contentSize.y > 0.0f) {
+    float contentAreaHeight = tabViewSize.y - tabHeight - 16.0f; // matches contentSize calc in EndTabView
+    if (contentAreaHeight < state.contentSize.y) {
+      Vec2 avail = GetCurrentAvailableSpace(ctx);
+      float maxGrow = avail.y > 0.0f ? avail.y : tabViewSize.y;
+      float desiredTotal = state.contentSize.y + tabHeight + 16.0f;
+      tabViewSize.y = std::min(std::max(tabViewSize.y, desiredTotal), maxGrow);
+    }
+  }
+
+  Vec2 tabViewPos;
+  if (pos.has_value()) {
+    tabViewPos = ResolveAbsolutePosition(ctx, pos.value(), tabViewSize);
+    state.useAbsolutePos = true;
+  } else {
+    tabViewPos = ctx->cursorPos;
     state.useAbsolutePos = false;
   }
 
@@ -441,12 +769,76 @@ bool BeginTabView(const std::string &id, int *activeTab,
   Color tabViewBg = AdjustContainerBackground(panelStyle.background, ctx->style.isDarkTheme);
   ctx->renderer.DrawRectFilled(tabViewPos, tabViewSize, tabViewBg, panelStyle.cornerRadius);
 
-  float currentX = tabViewPos.x + panelStyle.padding.x;
+  // Calculate total width of all tabs (including optional leading icons).
+  float totalTabsWidth = 0.0f;
+  float tabIconSize = tabTextStyle.fontSize;
+  float tabIconGap = 6.0f;
+  std::vector<float> tabWidths(tabLabels.size());
   for (size_t i = 0; i < tabLabels.size(); ++i) {
     Vec2 labelSize = MeasureTextCached(ctx, tabLabels[i], tabTextStyle.fontSize);
-    Vec2 tSize(labelSize.x + panelStyle.padding.x * 2.0f, tabHeight);
+    uint32_t cp = (tabIcons && i < tabIcons->size()) ? (*tabIcons)[i] : 0u;
+    float iconSlot = (cp != 0u) ? (tabIconSize + tabIconGap) : 0.0f;
+    tabWidths[i] = labelSize.x + iconSlot + panelStyle.padding.x * 2.0f;
+    totalTabsWidth += tabWidths[i] + (i > 0 ? 4.0f : 0.0f);
+  }
+  state.totalTabsWidth = totalTabsWidth;
+
+  float availableBarWidth = tabViewSize.x - panelStyle.padding.x * 2.0f;
+  bool needsScroll = totalTabsWidth > availableBarWidth;
+  constexpr float arrowBtnWidth = 24.0f;
+
+  // Reserve space for arrow buttons when scrolling is needed
+  float tabAreaStartX = tabViewPos.x + panelStyle.padding.x;
+  float tabAreaWidth = availableBarWidth;
+  if (needsScroll) {
+    tabAreaStartX += arrowBtnWidth;
+    tabAreaWidth -= arrowBtnWidth * 2.0f;
+    float maxScroll = std::max(0.0f, totalTabsWidth - tabAreaWidth);
+    state.tabBarScrollX = std::clamp(state.tabBarScrollX, 0.0f, maxScroll);
+
+    // Left arrow button
+    Vec2 leftBtnPos(tabViewPos.x + panelStyle.padding.x, tabViewPos.y);
+    Vec2 leftBtnSize(arrowBtnWidth, tabHeight);
+    bool leftHover = IsMouseOver(ctx, leftBtnPos, leftBtnSize);
+    bool canScrollLeft = state.tabBarScrollX > 0.0f;
+    Color arrowColor = canScrollLeft ? (leftHover ? tabTextStyle.color : Color(0.7f, 0.7f, 0.7f, 1.0f)) : Color(0.4f, 0.4f, 0.4f, 1.0f);
+    if (leftHover && ctx->input.IsMousePressed(0) && canScrollLeft)
+      state.tabBarScrollX = std::max(0.0f, state.tabBarScrollX - 80.0f);
+    // Draw left chevron (<)
+    float cx = leftBtnPos.x + arrowBtnWidth * 0.5f;
+    float cy = leftBtnPos.y + tabHeight * 0.5f;
+    float hs = tabHeight * 0.2f;
+    ctx->renderer.DrawLine(Vec2(cx + hs * 0.3f, cy - hs), Vec2(cx - hs * 0.3f, cy), arrowColor, 2.0f);
+    ctx->renderer.DrawLine(Vec2(cx - hs * 0.3f, cy), Vec2(cx + hs * 0.3f, cy + hs), arrowColor, 2.0f);
+
+    // Right arrow button
+    Vec2 rightBtnPos(tabViewPos.x + panelStyle.padding.x + arrowBtnWidth + tabAreaWidth, tabViewPos.y);
+    Vec2 rightBtnSize(arrowBtnWidth, tabHeight);
+    bool rightHover = IsMouseOver(ctx, rightBtnPos, rightBtnSize);
+    bool canScrollRight = state.tabBarScrollX < maxScroll;
+    arrowColor = canScrollRight ? (rightHover ? tabTextStyle.color : Color(0.7f, 0.7f, 0.7f, 1.0f)) : Color(0.4f, 0.4f, 0.4f, 1.0f);
+    if (rightHover && ctx->input.IsMousePressed(0) && canScrollRight)
+      state.tabBarScrollX = std::min(maxScroll, state.tabBarScrollX + 80.0f);
+    // Draw right chevron (>)
+    cx = rightBtnPos.x + arrowBtnWidth * 0.5f;
+    cy = rightBtnPos.y + tabHeight * 0.5f;
+    ctx->renderer.DrawLine(Vec2(cx - hs * 0.3f, cy - hs), Vec2(cx + hs * 0.3f, cy), arrowColor, 2.0f);
+    ctx->renderer.DrawLine(Vec2(cx + hs * 0.3f, cy), Vec2(cx - hs * 0.3f, cy + hs), arrowColor, 2.0f);
+  } else {
+    state.tabBarScrollX = 0.0f;
+  }
+
+  // Clip the tab bar area so tabs don't overflow
+  if (needsScroll)
+    ctx->renderer.PushClipRect(Vec2(tabAreaStartX, tabViewPos.y), Vec2(tabAreaWidth, tabHeight));
+
+  float currentX = tabAreaStartX - state.tabBarScrollX;
+  for (size_t i = 0; i < tabLabels.size(); ++i) {
+    Vec2 labelSize = MeasureTextCached(ctx, tabLabels[i], tabTextStyle.fontSize);
+    Vec2 tSize(tabWidths[i], tabHeight);
     Vec2 tPos(currentX, tabViewPos.y);
-    bool hover = IsMouseOver(ctx, tPos, tSize);
+    bool visible = (tPos.x + tSize.x > tabAreaStartX) && (tPos.x < tabAreaStartX + tabAreaWidth);
+    bool hover = visible && IsMouseOver(ctx, tPos, tSize);
     bool active = (int)i == state.activeTab;
     if (active) {
         ctx->renderer.DrawRectFilled(tPos, tSize, tabViewBg, 0);
@@ -456,18 +848,38 @@ bool BeginTabView(const std::string &id, int *activeTab,
         state.activeTab = (int)i;
         if (activeTab) *activeTab = (int)i;
     }
-    ctx->renderer.DrawText(tPos + Vec2(panelStyle.padding.x, (tabHeight - labelSize.y) * 0.5f), tabLabels[i], active ? tabTextStyle.color : Color(0.7f, 0.7f, 0.7f, 1.0f), tabTextStyle.fontSize);
+    Color tabColor = active ? tabTextStyle.color : Color(0.7f, 0.7f, 0.7f, 1.0f);
+    uint32_t tabCp = (tabIcons && i < tabIcons->size()) ? (*tabIcons)[i] : 0u;
+    float tabIconSlot = (tabCp != 0u) ? (tabIconSize + tabIconGap) : 0.0f;
+    if (tabCp != 0u) {
+      DrawWidgetIcon(ctx, tPos, tSize, tabCp, tabColor, tabIconSize,
+                     panelStyle.padding.x, tabIconGap);
+    }
+    ctx->renderer.DrawText(tPos + Vec2(panelStyle.padding.x + tabIconSlot, (tabHeight - labelSize.y) * 0.5f),
+                           tabLabels[i], tabColor, tabTextStyle.fontSize);
     currentX += tSize.x + 4.0f;
   }
 
+  if (needsScroll)
+    ctx->renderer.PopClipRect();
+
   Vec2 contentPos = tabViewPos + Vec2(8, tabHeight + 8);
   Vec2 contentSize = tabViewSize - Vec2(16, tabHeight + 16);
-  ctx->renderer.PushClipRect(contentPos, contentSize);
-  
+  // Extend the content clip slightly to the left so left-aligned widgets aren't
+  // shaved by the clip edge (the gutter lands inside the 8px content inset).
+  float leftGutter = S(CONTENT_LEFT_GUTTER);
+  ctx->renderer.PushClipRect(Vec2(contentPos.x - leftGutter, contentPos.y),
+                             Vec2(contentSize.x + leftGutter, contentSize.y));
+
+  // Reserve room on the right so trailing content (slider values, etc.) clears
+  // the scrollbar (drawn 6px wide at the content's right edge in EndTabView).
+  float sbReserve = S(6.0f) + S(SCROLLBAR_GUTTER);
+  Vec2 layoutSize(std::max(0.0f, contentSize.x - sbReserve), contentSize.y);
+
   Vec2& scroll = state.tabScrollOffsets[state.activeTab];
   ctx->cursorPos = contentPos - Vec2(0, scroll.y);
   ctx->offsetStack.push_back(contentPos);
-  BeginVertical(ctx->style.spacing, contentSize, Vec2(0,0));
+  BeginVertical(ctx->style.spacing, layoutSize, Vec2(0,0));
   
   ctx->tabFrameStack.push_back({tabViewId, contentPos, contentSize, ctx->cursorPos});
   return true;
@@ -485,23 +897,45 @@ void EndTabView() {
   Vec2 endCursor = ctx->cursorPos;
   EndVertical(false);
   if (!ctx->offsetStack.empty()) ctx->offsetStack.pop_back();
-  ctx->renderer.PopClipRect();
 
+  // Measure content BEFORE popping clip rect
   auto it = ctx->tabViewStates.find(frame.tabViewId);
   if (it != ctx->tabViewStates.end()) {
     auto &st = it->second;
-    st.contentSize = Vec2(frame.contentAreaSize.x, std::max(frame.contentAreaSize.y, endCursor.y - frame.contentStartCursor.y));
-    
+    float measuredH = endCursor.y - frame.contentStartCursor.y;
+    st.contentSize = Vec2(frame.contentAreaSize.x, std::max(frame.contentAreaSize.y, measuredH));
+  }
+
+  ctx->renderer.PopClipRect();
+
+  // Draw scrollbar AFTER popping the content clip rect.
+  // Position at the right edge of the parent's visible area (clip rect),
+  // not the TabView's content area — this ensures the scrollbar is always
+  // visible even when the TabView is wider than its parent container.
+  if (it != ctx->tabViewStates.end()) {
+    auto &st = it->second;
+    if (st.contentSize.y > frame.contentAreaSize.y) {
+      float sbWidth = S(6.0f);
+      // Use parent clip's right edge if available, otherwise fall back to content area
+      float barX = frame.contentAreaPos.x + frame.contentAreaSize.x - sbWidth;
+      const auto& clips = ctx->renderer.GetClipStack();
+      if (!clips.empty()) {
+        float clipRight = static_cast<float>(clips.back().x + clips.back().width);
+        barX = clipRight - sbWidth;
+      }
+      Vec2 barPos(barX, frame.contentAreaPos.y);
+      Vec2 barSize(sbWidth, frame.contentAreaSize.y);
+      DrawScrollbar(ctx, barPos, barSize, st.contentSize.y, frame.contentAreaSize.y,
+                    st.tabScrollOffsets[st.activeTab].y, st.draggingScrollbar,
+                    st.dragStartMouse, st.dragStartScroll, st.draggingScrollbar, true);
+    }
+
     if (IsMouseOver(ctx, frame.contentAreaPos, frame.contentAreaSize) && !ctx->scrollConsumedThisFrame) {
       float wy = ctx->input.MouseWheelY();
       if (std::abs(wy) > 0.001f) {
         st.tabScrollOffsets[st.activeTab].y = std::clamp(st.tabScrollOffsets[st.activeTab].y - wy * S(SCROLL_SPEED), 0.0f, std::max(0.0f, st.contentSize.y - frame.contentAreaSize.y));
         ctx->scrollConsumedThisFrame = true;
       }
-    }
-
-    if (st.contentSize.y > frame.contentAreaSize.y) {
-      DrawScrollbar(ctx, frame.contentAreaPos + Vec2(frame.contentAreaSize.x - 8, 0), Vec2(8, frame.contentAreaSize.y), st.contentSize.y, frame.contentAreaSize.y, st.tabScrollOffsets[st.activeTab].y, st.draggingScrollbar, st.dragStartMouse, st.dragStartScroll, st.draggingScrollbar, true);
     }
 
     if (!st.useAbsolutePos) {
@@ -527,9 +961,10 @@ bool BeginSplitter(const std::string& id, bool vertical, float* ratio, const Vec
   uint32_t splitId = GenerateId("SPLITTER:", id.c_str());
   auto& state = ctx->splitterStates[splitId];
 
-  // Initialize ratio from caller pointer
+  // Initialize ratio from caller pointer, clamp and write back if out of range
   if (ratio) {
     state.ratio = std::clamp(*ratio, SPLITTER_MIN_RATIO, SPLITTER_MAX_RATIO);
+    *ratio = state.ratio;
   }
 
   // Resolve total size — prefer parent splitter region size for nested splitters

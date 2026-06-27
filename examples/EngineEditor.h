@@ -15,6 +15,7 @@ struct SceneObject {
     float rotation[3] = {0, 0, 0};
     float scale[3] = {1, 1, 1};
     Color color = Color(1, 1, 1, 1);
+    float opacity = 1.0f;
     bool visible = true;
     bool isStatic = false;
     int meshType = 0; // 0=Cube, 1=Sphere, 2=Plane, 3=Cylinder

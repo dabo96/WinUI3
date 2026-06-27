@@ -1,0 +1,1668 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FluentUI · Documentación</title>
+<link rel="preconnect" href="https://cdnjs.cloudflare.com">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<style>
+:root{
+  --bg:#1f1f1f; --bg2:#262626; --bg3:#2d2d2d; --bg-side:#181818;
+  --text:#e6e6e6; --text-dim:#a8a8a8; --text-muted:#7a7a7a;
+  --accent:#60cdff; --accent-2:#0078d4; --accent-3:#a3d3ff;
+  --border:#3a3a3a; --code-bg:#141414;
+  --green:#4ec9b0; --orange:#ce9178; --purple:#c586c0;
+  --radius:6px; --side:280px;
+  --font:Segoe UI Variable,Segoe UI,system-ui,-apple-system,sans-serif;
+  --mono:Cascadia Code,Consolas,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+  font-family:var(--font);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.9em;background:var(--bg3);
+  padding:1px 6px;border-radius:4px;color:var(--accent-3)}
+pre{background:var(--code-bg)!important;border:1px solid var(--border);
+  border-radius:var(--radius);padding:14px 16px;overflow:auto;
+  margin:14px 0;position:relative;font-size:13.5px;line-height:1.5}
+pre code{background:transparent;padding:0;color:#dcdcdc}
+table{border-collapse:collapse;margin:12px 0;width:100%}
+th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;font-size:14px}
+th{background:var(--bg3);font-weight:600}
+hr{border:none;border-top:1px solid var(--border);margin:32px 0}
+kbd{background:var(--bg3);border:1px solid var(--border);
+  border-radius:4px;padding:1px 7px;font-family:var(--mono);font-size:.85em}
+
+/* sidebar */
+.layout{display:grid;grid-template-columns:var(--side) 1fr;min-height:100vh}
+aside{background:var(--bg-side);border-right:1px solid var(--border);
+  padding:20px 0;position:sticky;top:0;height:100vh;overflow-y:auto}
+.brand{padding:6px 22px 18px;border-bottom:1px solid var(--border);
+  margin-bottom:14px}
+.brand h1{margin:0;font-size:22px;font-weight:600}
+.brand h1 span{color:var(--accent)}
+.brand p{margin:4px 0 0;color:var(--text-muted);font-size:12px}
+nav ul{list-style:none;margin:0;padding:0}
+nav>ul>li>a.section{display:block;padding:8px 22px;color:var(--text-dim);
+  font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;
+  margin-top:8px;cursor:default}
+nav a:not(.section){display:block;padding:5px 22px 5px 30px;
+  color:var(--text);font-size:14px;border-left:3px solid transparent}
+nav a:not(.section):hover{background:var(--bg2);text-decoration:none;
+  border-left-color:var(--border)}
+nav a.active{color:var(--accent);background:var(--bg2);
+  border-left-color:var(--accent)}
+
+/* main */
+main{padding:50px 60px 80px;max-width:1080px}
+h1.page{font-size:38px;font-weight:600;margin:0 0 8px;letter-spacing:-.5px}
+h1.page+p.lead{font-size:17px;color:var(--text-dim);margin:0 0 36px}
+h2{font-size:26px;font-weight:600;margin:42px 0 12px;
+  padding-bottom:6px;border-bottom:1px solid var(--border);scroll-margin-top:20px}
+h3{font-size:19px;font-weight:600;margin:28px 0 10px;color:var(--accent-3);scroll-margin-top:20px}
+h4{font-size:15px;font-weight:600;margin:18px 0 6px;color:var(--text)}
+.note{background:rgba(96,205,255,.08);border-left:3px solid var(--accent);
+  padding:12px 16px;border-radius:0 var(--radius) var(--radius) 0;
+  margin:14px 0;font-size:14px}
+.warn{background:rgba(255,180,0,.08);border-left:3px solid #ffb400;
+  padding:12px 16px;border-radius:0 var(--radius) var(--radius) 0;margin:14px 0;font-size:14px}
+.api{background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--radius);padding:14px 18px;margin:16px 0;font-family:var(--mono);
+  font-size:13.5px;color:var(--accent-3)}
+.copy{position:absolute;top:8px;right:8px;background:var(--bg3);
+  border:1px solid var(--border);color:var(--text-dim);font-size:11px;
+  padding:3px 9px;border-radius:4px;cursor:pointer;font-family:var(--font)}
+.copy:hover{color:var(--text);background:var(--accent-2);border-color:var(--accent-2)}
+.tag{display:inline-block;background:var(--bg3);color:var(--accent);
+  border:1px solid var(--border);padding:2px 8px;border-radius:10px;
+  font-size:11px;margin-left:8px;vertical-align:middle;font-weight:500}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+ul.compact li{margin:3px 0}
+@media(max-width:980px){
+  .layout{grid-template-columns:1fr}
+  aside{position:relative;height:auto;width:100%}
+  main{padding:24px 18px 60px}
+}
+</style>
+</head>
+<body>
+<div class="layout">
+<aside>
+<div class="brand">
+<h1>Fluent<span>UI</span></h1>
+<p>C++ · Immediate Mode · OpenGL/SDL3</p>
+</div>
+<nav>
+<ul>
+<li><a class="section">Empezar</a></li>
+<li><a href="#intro">Introducción</a></li>
+<li><a href="#install">Instalación</a></li>
+<li><a href="#first-window">Tu primera ventana</a></li>
+<li><a href="#concepts">Conceptos clave</a></li>
+
+<li><a class="section">Layouts</a></li>
+<li><a href="#layout-vertical">Vertical / Horizontal</a></li>
+<li><a href="#layout-spacing">Spacing &amp; SameLine</a></li>
+<li><a href="#layout-grid">Grid</a></li>
+<li><a href="#layout-splitter">Splitter</a></li>
+<li><a href="#layout-constraints">Constraints (Fill/Auto/Fixed)</a></li>
+
+<li><a class="section">Widgets básicos</a></li>
+<li><a href="#w-button">Button</a></li>
+<li><a href="#w-segmented">SegmentedControl</a></li>
+<li><a href="#w-label">Label / Wrapped / Rich</a></li>
+<li><a href="#w-checkbox">Checkbox</a></li>
+<li><a href="#w-radio">RadioButton</a></li>
+<li><a href="#w-slider">Slider</a></li>
+<li><a href="#w-progress">ProgressBar</a></li>
+<li><a href="#w-separator">Separator</a></li>
+
+<li><a class="section">Inputs</a></li>
+<li><a href="#w-textinput">TextInput</a></li>
+<li><a href="#w-callbacks">TextInput callbacks</a></li>
+<li><a href="#w-combo">ComboBox / ComboBoxNoLabel</a></li>
+<li><a href="#w-combo-search">ComboBoxSearchable</a></li>
+<li><a href="#w-drag">DragFloat / DragInt / DragFloat3</a></li>
+<li><a href="#w-color">ColorPicker</a></li>
+
+<li><a class="section">Plots &amp; Time</a></li>
+<li><a href="#w-plot">PlotLines / Histogram / Sparkline</a></li>
+<li><a href="#w-datetime">DatePicker / TimePicker</a></li>
+
+<li><a class="section">Contenedores</a></li>
+<li><a href="#c-panel">Panel</a></li>
+<li><a href="#c-collapsing">CollapsingHeader</a></li>
+<li><a href="#c-scroll">ScrollView</a></li>
+<li><a href="#c-tabs">TabView</a></li>
+<li><a href="#c-listview">ListView</a></li>
+<li><a href="#c-tree">TreeView / TreeNodeMulti</a></li>
+<li><a href="#c-table">Table / DataGrid</a></li>
+<li><a href="#c-image">Image</a></li>
+
+<li><a class="section">Menús &amp; Overlays</a></li>
+<li><a href="#m-menubar">MenuBar / Menus</a></li>
+<li><a href="#m-toolbar">Toolbar / StatusBar</a></li>
+<li><a href="#m-tooltip">Tooltip</a></li>
+<li><a href="#m-context">ContextMenu</a></li>
+<li><a href="#m-modal">Modal</a></li>
+
+<li><a class="section">Iconos</a></li>
+<li><a href="#icons-intro">Iconos zero-setup</a></li>
+<li><a href="#icons-api">API de iconos por widget</a></li>
+<li><a href="#icons-lucide">Catálogo Icons::*</a></li>
+
+<li><a class="section">Sistema</a></li>
+<li><a href="#sys-app">FluentApp &amp; Lifecycle</a></li>
+<li><a href="#sys-shortcuts">Atajos de teclado</a></li>
+<li><a href="#sys-undo">Undo / Redo</a></li>
+<li><a href="#sys-filedialog">File Dialogs nativos</a></li>
+<li><a href="#sys-filedrop">File Drop</a></li>
+<li><a href="#sys-input">InputState</a></li>
+<li><a href="#sys-multiwin">Multi-window</a></li>
+
+<li><a class="section">Avanzado</a></li>
+<li><a href="#docking">Docking</a></li>
+<li><a href="#layout-save">Layout Serialization</a></li>
+<li><a href="#dragdrop">Drag &amp; Drop tipado</a></li>
+<li><a href="#theming">Theming / Style</a></li>
+<li><a href="#typography">Tipografía &amp; FontManager</a></li>
+<li><a href="#animation">Animaciones &amp; Ripple</a></li>
+<li><a href="#renderer">Renderer (primitivas)</a></li>
+<li><a href="#dpi">DPI &amp; Responsive</a></li>
+<li><a href="#a11y">Accesibilidad</a></li>
+<li><a href="#demo">Ventanas Demo &amp; Inspector</a></li>
+<li><a href="#api">Referencia rápida</a></li>
+</ul>
+</nav>
+</aside>
+
+<main>
+
+<h1 class="page">FluentUI</h1>
+<p class="lead">Librería C++ de UI inmediata con estética Fluent Design 2,
+backend OpenGL + SDL3, docking, multi-viewport y layouts responsivos.</p>
+
+<!-- ─────────────────────────────  EMPEZAR  ────────────────────────── -->
+<h2 id="intro">Introducción</h2>
+<p>FluentUI es una librería de interfaz gráfica al estilo
+<em>immediate-mode</em> (similar a Dear ImGui) pero con la apariencia de
+Microsoft Fluent Design 2. Cada frame se reconstruye desde cero: las funciones
+de widget devuelven el estado de interacción y el llamador es responsable de
+mantener los datos.</p>
+
+<h3>Características principales</h3>
+<ul class="compact">
+<li>Más de 40 widgets: botones, sliders, drag editors, combos, listas, árboles, tablas, plots, pickers de fecha/hora.</li>
+<li>Sistema de docking completo con split + tab + paneles flotantes.</li>
+<li>Multi-viewport: paneles que se desprenden a ventanas OS independientes.</li>
+<li>Layouts responsivos tipo CSS: <code>Fill</code>, <code>Fixed</code>, <code>Auto</code>.</li>
+<li>Theming por defecto claro/oscuro + pila de overrides.</li>
+<li>Soporte DPI por monitor, IME, drag &amp; drop tipado, atajos de teclado.</li>
+<li>Renderer batched OpenGL con MSDF para texto.</li>
+</ul>
+
+<h3>Dos APIs equivalentes</h3>
+<p>Cada widget está disponible en dos formas:</p>
+<ul class="compact">
+<li><strong>Funciones libres</strong> al estilo ImGui (<code>FluentUI::Button(...)</code>): control fino y mínima sobrecarga.</li>
+<li><strong>UIBuilder</strong> con lambdas (<code>ui.button(...)</code>): API fluida ideal para layouts anidados.</li>
+</ul>
+<p>Puedes mezclar ambas en el mismo frame.</p>
+
+<!-- ─────────────────────────────  INSTALL  ────────────────────────── -->
+<h2 id="install">Instalación</h2>
+<p>FluentUI se distribuye como código fuente. Requisitos:</p>
+<ul class="compact">
+<li>Compilador C++20 (MSVC 2022, GCC 11+, Clang 14+).</li>
+<li>CMake 3.20+.</li>
+<li>SDL3 (vendored o por <code>vcpkg</code>).</li>
+<li>OpenGL 3.3+ (glad incluido en <code>external/</code>).</li>
+</ul>
+
+<h3>Build con CMake</h3>
+<pre><code class="language-bash">git clone https://github.com/dabo96/WinUI3.git fluentui
+cd fluentui
+cmake -S . -B build
+cmake --build build --config Release</code></pre>
+
+<h3>Integrar en tu proyecto</h3>
+<pre><code class="language-cmake">add_subdirectory(third_party/fluentui)
+target_link_libraries(MyApp PRIVATE FluentUI)</code></pre>
+
+<h3>Header umbrella</h3>
+<p>Para incluir todo de una sola vez:</p>
+<pre><code class="language-cpp">#include &lt;FluentUI/API.h&gt;</code></pre>
+
+<!-- ─────────────────────────────  PRIMERA VENTANA  ─────────────────── -->
+<h2 id="first-window">Tu primera ventana</h2>
+<p>El esqueleto mínimo de una app FluentUI:</p>
+
+<pre><code class="language-cpp">#include &lt;FluentUI/API.h&gt;
+using namespace FluentUI;
+
+int main() {
+    AppConfig cfg;
+    cfg.width = 1280;
+    cfg.height = 720;
+    cfg.darkMode = true;
+
+    FluentApp app("Hola FluentUI", cfg);
+
+    app.root([](UIBuilder&amp; ui) {
+        ui.label("Hola, mundo!", TypographyStyle::Title);
+        ui.button("Cerrar", {120, 32});
+    });
+
+    return app.run();
+}</code></pre>
+
+<p><code>FluentApp</code> crea la ventana SDL, el contexto OpenGL, el contexto de
+UI y el bucle principal. <code>app.root(...)</code> registra la lambda que se
+ejecuta cada frame para construir la UI.</p>
+
+<div class="note"><strong>Modos de ejecución:</strong>
+<code>app.run()</code> entra en un loop bloqueante. Si tu motor ya tiene su
+propio loop (por ejemplo un editor 3D), usa la API
+<code>processEvent / beginFrame / endFrame</code> con un <code>SDL_Window</code>
+y contexto GL externos.</div>
+
+<h3>Integración con motor existente</h3>
+<pre><code class="language-cpp">SDL_Window* win = /* tu ventana */;
+SDL_GLContext gl = /* tu contexto */;
+
+// Constructor para ventana externa: NO recibe título —
+// la ventana ya existe y FluentApp no la gestiona.
+FluentApp app(win, gl, /*darkMode*/true, /*enableDPI*/true);
+
+while (running) {
+    SDL_Event e;
+    while (SDL_PollEvent(&amp;e)) {
+        // tu motor procesa primero...
+        app.processEvent(e);
+    }
+    float dt = computeDt();
+
+    // 1) renderiza tu escena 3D
+    renderScene();
+
+    // 2) UI encima
+    app.beginFrame(dt);
+    // (root builder se ejecuta automáticamente)
+    app.endFrame();
+
+    SDL_GL_SwapWindow(win);
+}</code></pre>
+
+<!-- ─────────────────────────────  CONCEPTOS  ─────────────────────── -->
+<h2 id="concepts">Conceptos clave</h2>
+
+<h3>Inmediato vs retenido</h3>
+<p>La UI no se "construye una vez" — se redibuja completa cada frame.
+Cada widget recibe punteros a tu propio estado y devuelve <code>true</code>
+cuando ha cambiado.</p>
+<pre><code class="language-cpp">static bool checked = false;
+if (Checkbox("Activar opción", &amp;checked)) {
+    // se ejecuta solo en el frame que cambió
+    log("Toggled to %d", checked);
+}</code></pre>
+
+<h3>IDs y colisiones</h3>
+<p>FluentUI usa el <em>label</em> como identidad. Si tienes dos botones con el
+mismo texto, dales un sufijo único:</p>
+<pre><code class="language-cpp">Button("Eliminar##fila1");
+Button("Eliminar##fila2");</code></pre>
+<p>El texto tras <code>##</code> se ignora visualmente pero entra en el ID.</p>
+
+<h3>Posicionamiento absoluto</h3>
+<p>Cada widget puede recibir un <code>std::optional&lt;Vec2&gt;</code> para
+fijar su posición; si lo omites se coloca según el cursor del layout actual.</p>
+
+<!-- ─────────────────────────────  LAYOUT  ────────────────────────── -->
+<h2 id="layout-vertical">Layouts vertical y horizontal</h2>
+<p>Los layouts gestionan posición y tamaño de los hijos. El cursor avanza
+verticalmente por defecto.</p>
+
+<div class="api">void BeginVertical(spacing=-1, size=auto, padding=auto)<br>
+void BeginHorizontal(spacing=-1, size=auto, padding=auto)</div>
+
+<pre><code class="language-cpp">// Estilo función libre
+BeginHorizontal(8.0f);
+  Button("Guardar");
+  Button("Cancelar");
+EndHorizontal();
+
+// Estilo builder con lambdas
+ui.horizontal([&amp;](UIBuilder&amp; r) {
+    r.button("Guardar");
+    r.button("Cancelar");
+});</code></pre>
+
+<h3 id="layout-spacing">Spacing y SameLine</h3>
+<pre><code class="language-cpp">Spacing(12.0f);            // 12 px verticales
+Button("A");
+SameLine(10.0f);           // misma línea, 10 px de separación
+Button("B");</code></pre>
+
+<h3 id="layout-grid">Grid</h3>
+<p>Distribuye <em>n</em> celdas en columnas regulares.</p>
+<pre><code class="language-cpp">ui.grid("colors", /*columns*/3, /*itemCount*/9,
+    [&amp;](UIBuilder&amp; r, int i) {
+        r.button("Color " + std::to_string(i));
+    });</code></pre>
+
+<h3 id="layout-splitter">Splitter</h3>
+<p>Divisor redimensionable horizontal o vertical.</p>
+<pre><code class="language-cpp">static float ratio = 0.3f;
+ui.splitter("hsplit", /*vertical*/true, &amp;ratio,
+    [&amp;](UIBuilder&amp; left)  { left.label("Sidebar"); },
+    [&amp;](UIBuilder&amp; right) { right.label("Contenido"); });</code></pre>
+
+<h3 id="layout-constraints">Constraints</h3>
+<p>El sistema responsive tiene 3 modos por eje:</p>
+<table>
+<tr><th>Constraint</th><th>Significado</th></tr>
+<tr><td><code>Fill</code></td><td>Ocupa todo el espacio disponible del padre</td></tr>
+<tr><td><code>Fixed(n)</code></td><td>Tamaño exacto en píxeles</td></tr>
+<tr><td><code>Auto</code></td><td>Mínimo natural del widget</td></tr>
+</table>
+<pre><code class="language-cpp">// Botón que ocupa todo el ancho disponible y tiene 32 px de alto fijo.
+SetNextConstraints({
+    .width  = SizeConstraint::Fill,
+    .height = SizeConstraint::Fixed,
+    .fixedHeight = 32.0f,
+});
+Button("Botón Fill × 32");</code></pre>
+
+<!-- ─────────────────────────────  WIDGETS BÁSICOS  ─────────────────── -->
+<h2 id="w-button">Button</h2>
+<div class="api">bool Button(label, size=auto, pos=auto, enabled=true)<br>
+bool Button(label, ButtonSize::{Small,Medium,Large}, pos=auto, enabled=true)<br>
+bool Button(label, iconCodepoint, size=auto, pos=auto, enabled=true)<br>
+bool Button(label, iconCodepoint, ButtonSize, pos=auto, enabled=true)<br>
+bool IconButton(iconCodepoint, size=0, pos=auto, enabled=true)</div>
+<pre><code class="language-cpp">if (Button("Guardar")) save();
+if (Button("Eliminar", ButtonSize::Small)) remove();
+Button("Bloqueado", {120, 32}, std::nullopt, /*enabled*/false);
+
+\ Botón con icono y texto
+if (Button("Guardar", Icons::Save)) save();
+
+\ Botón solo-icono (toolbar)
+if (IconButton(Icons::Trash)) erase();</code></pre>
+
+<p>El enum <code>ButtonSize</code> aplica presets Fluent 2 que sobrescriben
+padding/fontSize del estilo actual:</p>
+<table>
+<tr><th>Variante</th><th>Alto</th><th>Padding (X×Y)</th><th>Tamaño de fuente</th></tr>
+<tr><td><code>Small</code></td><td>~24 px</td><td>8 × 3</td><td>12 (Caption)</td></tr>
+<tr><td><code>Medium</code> (default)</td><td>~32 px</td><td>12 × 5</td><td>14 (Body)</td></tr>
+<tr><td><code>Large</code></td><td>~40 px</td><td>16 × 8</td><td>16</td></tr>
+</table>
+<p>Pasa <code>label=""</code> a <code>Button(label, iconCp)</code> para obtener un botón
+cuadrado solo-icono. <code>IconButton</code> es el atajo idiomático equivalente. El
+<code>iconCodepoint</code> resuelve a un glyph de la fuente secundaria
+(ver <a href="#icons-intro">sección Iconos</a>); 0 = sin icono.</p>
+
+<h2 id="w-segmented">SegmentedControl</h2>
+<p>Selector de una opción al estilo Fluent 2.</p>
+<div class="api">bool SegmentedControl(id, options, *activeIndex, pos=auto)<br>
+bool SegmentedControl(id, vector&lt;pair&lt;string,uint32_t&gt;&gt; options, *activeIndex, pos=auto)</div>
+<pre><code class="language-cpp">static int tool = 0;
+SegmentedControl("tool", {"Mover","Rotar","Escalar"}, &amp;tool);
+
+\ Versión con icono por segmento (label="" → segmento cuadrado).
+\ El tipo del initializer list debe nombrarse explícitamente para
+\ desambiguar entre el overload string-only y el de vector&lt;pair&gt;:
+SegmentedControl("gizmo",
+    std::vector&lt;std::pair&lt;std::string, uint32_t&gt;&gt;{
+        {"", Icons::Move},
+        {"", Icons::Rotate},
+        {"", Icons::Scale},
+    }, &amp;tool);</code></pre>
+
+<h2 id="w-label">Label, LabelWrapped y LabelRich</h2>
+<div class="api">void Label(text, pos=auto, variant=Body, disabled=false)<br>
+void Label(text, iconCodepoint, pos=auto, variant=Body, disabled=false)<br>
+void IconLabel(iconCodepoint, size=0, color=auto, pos=auto)<br>
+void LabelWrapped(text, maxWidth=0, pos=auto, variant=Body)<br>
+void LabelRich(markup, maxWidth=0, pos=auto, variant=Body, onLinkClicked=nullptr)</div>
+<pre><code class="language-cpp">Label("Título principal", std::nullopt, TypographyStyle::Title);
+LabelWrapped("Texto largo que se ajusta automáticamente al ancho disponible.", 320);
+
+LabelRich("Soporta &lt;b&gt;negritas&lt;/b&gt;, &lt;i&gt;cursivas&lt;/i&gt;, "
+          "&lt;color=#ff4040&gt;color&lt;/color&gt; y &lt;a href=\"docs\"&gt;links&lt;/a&gt;.",
+          400, std::nullopt, TypographyStyle::Body,
+          [](const std::string&amp; url) { openLink(url); });</code></pre>
+
+<p>Variantes tipográficas: <code>Caption</code>, <code>Body</code>,
+<code>BodyStrong</code>, <code>Subtitle</code>, <code>SubtitleStrong</code>,
+<code>Title</code>, <code>TitleLarge</code>, <code>Display</code>.</p>
+
+<h2 id="w-checkbox">Checkbox</h2>
+<div class="api">bool Checkbox(label, *value, pos=auto)<br>
+bool Checkbox(label, iconCodepoint, *value, pos=auto)</div>
+<pre><code class="language-cpp">static bool wireframe = false;
+if (Checkbox("Modo wireframe", &amp;wireframe)) updateRenderer();
+
+\ Icono trailing (badge tras el label)
+Checkbox("Solo lectura", Icons::Lock, &amp;readOnly);</code></pre>
+
+<h2 id="w-radio">RadioButton</h2>
+<div class="api">bool RadioButton(label, *value, optionValue, group="", pos=auto)<br>
+bool RadioButton(label, iconCodepoint, *value, optionValue, group="", pos=auto)</div>
+<pre><code class="language-cpp">static int quality = 1;
+RadioButton("Bajo",  &amp;quality, 0);
+RadioButton("Medio", &amp;quality, 1);
+RadioButton("Alto",  &amp;quality, 2);</code></pre>
+
+<h2 id="w-slider">Slider (float / int)</h2>
+<div class="api">bool SliderFloat(label, *value, min, max, width=200, format="%.2f", pos=auto)<br>
+bool SliderInt(label, *value, min, max, width=200, pos=auto)</div>
+<pre><code class="language-cpp">static float volume = 0.7f;
+SliderFloat("Volumen", &amp;volume, 0.0f, 1.0f);
+
+static int samples = 4;
+SliderInt("MSAA", &amp;samples, 1, 16);</code></pre>
+
+<h2 id="w-progress">ProgressBar</h2>
+<div class="api">void ProgressBar(fraction, size=auto, overlay="", pos=auto)</div>
+<pre><code class="language-cpp">ProgressBar(loaded / (float)total, {280, 8}, std::to_string(loaded) + " / " + std::to_string(total));</code></pre>
+
+<h2 id="w-separator">Separator &amp; Spacing</h2>
+<pre><code class="language-cpp">Label("Sección 1");
+Separator();
+Spacing(8.0f);
+Label("Sección 2");</code></pre>
+
+<!-- ─────────────────────────────  INPUTS  ────────────────────────── -->
+<h2 id="w-textinput">TextInput</h2>
+<div class="api">bool TextInput(label, *value, width=200, multiline=false,
+pos=auto, placeholder=nullptr, maxLength=0)</div>
+<pre><code class="language-cpp">static std::string name = "";
+TextInput("Nombre", &amp;name, 240, false, std::nullopt, "Tu nombre completo");
+
+static std::string description;
+TextInput("Descripción", &amp;description, 320, /*multiline*/true,
+          std::nullopt, "Detalles…", /*maxLength*/500);</code></pre>
+
+<p>Soporta:</p>
+<ul class="compact">
+<li>IME para CJK / acentos.</li>
+<li>Selección por arrastre, doble-click (palabra), triple-click (línea).</li>
+<li>Atajos <kbd>Ctrl+A</kbd>, <kbd>Ctrl+C/V/X</kbd>, <kbd>Ctrl+Z/Y</kbd>.</li>
+<li>Movimiento de cursor con <kbd>Home/End/PgUp/PgDn</kbd>.</li>
+</ul>
+
+<h3 id="w-callbacks">TextInput con callbacks</h3>
+<p>Para autocompletado, validación o historial:</p>
+<pre><code class="language-cpp">static std::string cmd;
+uint32_t mask = TextInputCallbackType::Completion |
+                TextInputCallbackType::CharFilter;
+
+TextInput("Comando", &amp;cmd, 320, false, std::nullopt, "&gt; …", 0,
+    [](TextInputCallbackData&amp; d) {
+        if (d.type == TextInputCallbackType::CharFilter) {
+            if (!isalnum((int)d.charInput) &amp;&amp; d.charInput != ' ')
+                d.charInput = 0;          // rechaza
+        } else if (d.type == TextInputCallbackType::Completion) {
+            *d.buffer += "_completed";    // expande con Tab
+            d.cursorPos = d.buffer-&gt;size();
+        }
+    }, mask);</code></pre>
+
+<h2 id="w-combo">ComboBox / ComboBoxNoLabel</h2>
+<div class="api">bool ComboBox(label, *currentItem, items, width=200, pos=auto)<br>
+bool ComboBox(label, *currentItem, vector&lt;pair&lt;string,uint32_t&gt;&gt; items, width=200, pos=auto)<br>
+bool ComboBoxNoLabel(id, *currentItem, items, width=200, pos=auto)<br>
+bool ComboBoxNoLabel(id, *currentItem, vector&lt;pair&lt;string,uint32_t&gt;&gt; items, width=200, pos=auto)</div>
+<pre><code class="language-cpp">std::vector&lt;std::string&gt; engines = {"OpenGL","Vulkan","DX11","Metal"};
+static int sel = 0;
+ComboBox("Backend", &amp;sel, engines);</code></pre>
+<p>El overload con <code>vector&lt;pair&lt;string,uint32_t&gt;&gt;</code> dibuja un icono (de la fuente
+secundaria — ver sección <a href="#icons-intro">Iconos</a>) a la izquierda del texto
+seleccionado y de cada fila del dropdown. Cuando un item tiene icono se sustituye
+el "selection dot" por el icono coloreado con el accent.</p>
+<pre><code class="language-cpp">static int meshIdx = 0;
+ComboBox("Mesh", &amp;meshIdx,
+    std::vector&lt;std::pair&lt;std::string, uint32_t&gt;&gt;{
+        {"PlayerBody.fbx", Icons::Box},
+        {"Enemy.fbx",      Icons::Box},
+        {"Crate.fbx",      Icons::Package},
+    }, 200.0f);</code></pre>
+<p><strong>ComboBoxNoLabel</strong> tiene exactamente el mismo comportamiento pero
+<em>no dibuja el header/label encima del campo</em>, ideal para toolbars o
+property grids donde el contexto ya está claro. El primer parámetro string se
+usa únicamente como id único del widget (no se muestra), por lo que debe ser
+distinto entre combos en el mismo scope.</p>
+<pre><code class="language-cpp">static int coord = 0;
+SetNextConstraints(FixedSize(90.0f, 26.0f));
+ComboBoxNoLabel("coord", &amp;coord, std::vector&lt;std::string&gt;{"Local","World"});</code></pre>
+
+<h2 id="w-combo-search">ComboBoxSearchable</h2>
+<p>Idéntica firma; cuando se abre muestra una caja de filtro
+case-insensitive. También dispone del overload con <code>vector&lt;pair&gt;</code> para
+mostrar iconos por item.</p>
+<pre><code class="language-cpp">ComboBoxSearchable("País", &amp;countryIdx, allCountries, 280);</code></pre>
+
+<h2 id="w-drag">DragFloat / DragInt / DragFloat3</h2>
+<p>Editores numéricos clic-arrastrar (al estilo Blender). Doble-click activa
+edición por teclado. Mantén <kbd>Shift</kbd> para movimiento fino.</p>
+<div class="api">bool DragFloat(label, *value, speed=1, min=0, max=0, format="%.2f", pos=auto)<br>
+bool DragInt(label, *value, speed=1, min=0, max=0, pos=auto)<br>
+bool DragFloat3(label, values[3], speed=1, min=0, max=0, format="%.2f", pos=auto)</div>
+<pre><code class="language-cpp">static float fov = 60.0f;
+DragFloat("FOV", &amp;fov, 0.5f, 10.0f, 170.0f, "%.1f°");
+
+static float pos[3] = {0,0,0};
+DragFloat3("Posición", pos, 0.05f);  // X rojo, Y verde, Z azul</code></pre>
+<p><strong>Tamaño personalizado:</strong> por defecto <code>DragFloat</code> mide
+250 px (100 px si el label está vacío) y reserva un 40&nbsp;% del ancho para
+dibujar el label. <code>DragFloat3</code> mide 400 px (300 px sin label).
+Para fijar exactamente ancho y alto usa <code>SetNextConstraints</code> con
+<code>FixedSize(w, h)</code> justo antes de la llamada — el campo respetará
+ambas dimensiones (incluyendo la altura, útil para toolbars compactos):</p>
+<pre><code class="language-cpp">static float gridSize = 1.0f;
+SetNextConstraints(FixedSize(80.0f, 26.0f));
+DragFloat("", &amp;gridSize, 0.1f, 0.0f, 100.0f);
+
+static float pos[3] = {0,0,0};
+SetNextConstraints(FixedSize(220.0f, 26.0f));
+DragFloat3("", pos, 0.05f);</code></pre>
+<p>Cuando el label está vacío el slot del header se colapsa a 0, así el campo
+ocupa todo el ancho indicado. También funcionan <code>FillWidth()</code> /
+<code>FillSize()</code> si quieres que el widget se estire al contenedor.</p>
+
+<h2 id="w-color">ColorPicker</h2>
+<div class="api">bool ColorPicker(label, *value, pos=auto)</div>
+<pre><code class="language-cpp">static Color tint(1.0f, 0.5f, 0.2f, 1.0f);
+ColorPicker("Tinte", &amp;tint);</code></pre>
+<p>Combina rueda HSV, sliders RGB y entrada hexadecimal.</p>
+
+<!-- ─────────────────────────────  PLOTS  ────────────────────────── -->
+<h2 id="w-plot">PlotLines / Histogram / Sparkline</h2>
+<div class="api">void PlotLines(label, values, count, offset=0, overlay="", minScale=auto, maxScale=auto, size={0,60})<br>
+void PlotHistogram(label, values, count, ...)<br>
+void Sparkline(values, count, size={80,16})</div>
+<pre><code class="language-cpp">static float fpsHistory[120] = {};
+static int idx = 0;
+fpsHistory[idx] = 1.0f / dt;
+idx = (idx + 1) % 120;
+
+PlotLines("FPS", fpsHistory, 120, idx, "60 fps target",
+          0.0f, 144.0f, {0, 80});
+
+// Inline: indicador rápido sin label
+Sparkline(fpsHistory, 120);</code></pre>
+
+<!-- ─────────────────────────────  DATE/TIME  ─────────────────────── -->
+<h2 id="w-datetime">DatePicker / TimePicker / DateTimePicker</h2>
+<pre><code class="language-cpp">static DateTimeValue when{2026, 4, 28, 12, 30, 0};
+DatePicker("Fecha", &amp;when);
+TimePicker("Hora",  &amp;when);
+DateTimePicker("Cita", &amp;when);   // ambas en la misma fila</code></pre>
+
+<!-- ─────────────────────────────  CONTAINERS  ─────────────────────── -->
+<h2 id="c-panel">Panel</h2>
+<p>Panel arrastrable con cabecera y contenido contraíble. La sobrecarga con
+<code>iconCodepoint</code> dibuja un icono a la izquierda del título.</p>
+<pre><code class="language-cpp">ui.panel("Inspector", [&amp;](UIBuilder&amp; p) {
+    p.label("Transform", TypographyStyle::BodyStrong);
+    p.dragFloat3("Position", entity.pos);
+    p.dragFloat3("Rotation", entity.rot);
+    p.dragFloat3("Scale",    entity.scale);
+}, /*size*/{320, 0});
+
+\ Variante con icono en el header
+ui.panel("Inspector", Icons::Settings, [&amp;](UIBuilder&amp; p) {
+    /* ... */
+}, {320, 0});</code></pre>
+
+<p>El overload extenso permite además: <code>reserveLayoutSpace=false</code> para
+paneles flotantes que no consumen espacio del layout padre, <code>useAcrylic</code>
+para forzar el efecto Mica/Acrylic, <code>acrylicOpacity</code> (0-1) y
+<code>maxHeight</code> para activar scroll interno automáticamente cuando el
+contenido excede esa altura.</p>
+
+<h2 id="c-collapsing">CollapsingHeader</h2>
+<p>Cabecera plegable estilo Inspector (Unity / Unreal). No requiere
+<code>EndCollapsingHeader</code>: los widgets que siguen se auto-indentan
+mientras el header esté expandido. El indent se reinicia con el siguiente
+<code>CollapsingHeader</code> del mismo nivel o al cerrar el layout padre.</p>
+<div class="api">bool CollapsingHeader(label, *open=nullptr, iconCodepoint=0, pos=auto)</div>
+<pre><code class="language-cpp">// Inspector típico con varias secciones
+if (CollapsingHeader("Transform", nullptr, Icons::Move)) {
+    DragFloat3("Position", entity.pos);
+    DragFloat3("Rotation", entity.rot);
+    DragFloat3("Scale",    entity.scale);
+}
+
+if (CollapsingHeader("Material", nullptr, Icons::Paintbrush)) {
+    ColorPicker("Albedo", &amp;mat.albedo);
+    SliderFloat("Metallic",  &amp;mat.metallic,  0.0f, 1.0f);
+    SliderFloat("Roughness", &amp;mat.roughness, 0.0f, 1.0f);
+}
+
+// Estado externo (recuerda si está abierto/cerrado entre frames)
+static bool advancedOpen = false;
+if (CollapsingHeader("Advanced", &amp;advancedOpen)) {
+    Checkbox("Wireframe", &amp;wireframe);
+}</code></pre>
+
+<h2 id="c-scroll">ScrollView</h2>
+<pre><code class="language-cpp">ui.scrollView("logArea", {0, 200}, [&amp;](UIBuilder&amp; r) {
+    for (auto&amp; line : log) r.label(line);
+});</code></pre>
+
+<h2 id="c-tabs">TabView</h2>
+<p>El overload con <code>vector&lt;pair&lt;string,uint32_t&gt;&gt;</code> permite icono por tab.</p>
+<pre><code class="language-cpp">static int activeTab = 0;
+ui.tabView("editor", &amp;activeTab,
+    {"Escena","Game","Inspector"}, {0,0},
+    [&amp;](UIBuilder&amp; r, int tab) {
+        if (tab == 0) drawScenePanel(r);
+        else if (tab == 1) drawGamePanel(r);
+        else drawInspector(r);
+    });
+
+\ API libre con icono por tab
+BeginTabView("editor", &amp;activeTab,
+    std::vector&lt;std::pair&lt;std::string, uint32_t&gt;&gt;{
+        {"Escena",    Icons::Box},
+        {"Game",      Icons::Play},
+        {"Inspector", Icons::Settings},
+    }, {0, 0});
+EndTabView();</code></pre>
+
+<h2 id="c-listview">ListView</h2>
+<p>Tanto la versión single como la multi-selección aceptan un overload con
+<code>vector&lt;pair&lt;string,uint32_t&gt;&gt;</code> para mostrar un icono a la izquierda
+de cada fila.</p>
+<pre><code class="language-cpp">\ Selección única
+static int sel = -1;
+ui.listView("entities", {220, 0}, &amp;sel, names);
+
+\ Multi-selección
+static std::vector&lt;int&gt; multi;
+ui.listView("entities", {220, 0}, &amp;multi, names);
+
+\ Single con icono por item
+BeginListView("assets", {220, 0}, &amp;sel,
+    std::vector&lt;std::pair&lt;std::string, uint32_t&gt;&gt;{
+        {"PlayerBody.fbx", Icons::Box},
+        {"main.cpp",       Icons::File},
+        {"icon.png",       Icons::Image},
+    });
+EndListView();</code></pre>
+
+<h2 id="c-tree">TreeView / TreeNodeMulti</h2>
+<p>Tanto <code>TreeNode</code> como <code>TreeNodeMulti</code> tienen overload con
+<code>iconCodepoint</code>. El icono se dibuja después del chevron.</p>
+<pre><code class="language-cpp">static std::vector&lt;int&gt; selectedNodes;
+ui.treeView("hierarchy", {0,0}, [&amp;](UIBuilder&amp; t) {
+    static bool sceneOpen = true;
+    if (TreeNodeMulti("scene", "Scene", /*nodeId*/1, &amp;sceneOpen, &amp;selectedNodes)) {
+        TreeNodePush();
+        static bool camOpen = false;
+        TreeNodeMulti("cam", "Main Camera", 2, &amp;camOpen, &amp;selectedNodes);
+        TreeNodeMulti("light", "Directional Light", 3, &amp;camOpen, &amp;selectedNodes);
+        TreeNodePop();
+    }
+});
+
+\ Con icono (carpetas estilo asset browser)
+static bool aOpen = true;
+if (TreeNode("assets", "Assets", Icons::Folder, &amp;aOpen)) {
+    TreeNodePush();
+    TreeNode("audio", "Audio",      Icons::Folder);
+    TreeNode("anim",  "Animations", Icons::Folder);
+    TreeNodePop();
+}</code></pre>
+
+<h2 id="c-table">Table / DataGrid</h2>
+<p>Tabla con sort, redimensionado, scroll vertical y horizontal,
+columnas congeladas y multi-selección. Cada <code>TableColumn</code> tiene un
+campo opcional <code>iconCodepoint</code> que dibuja un icono a la izquierda del
+header.</p>
+<pre><code class="language-cpp">static std::vector&lt;TableColumn&gt; cols = {
+    {"Nombre", 160, 40.0f, true, Icons::Folder},
+    {"Tipo",   100}, {"Tamaño", 90}, {"Modificado", 140}
+};
+static TableState state;
+state.frozenColumns = 1;   // congela "Nombre"
+
+if (BeginTable("files", cols, (int)files.size(), {0, 240}, &amp;state)) {
+    for (int row = 0; row &lt; (int)files.size(); ++row) {
+        TableNextRow();
+        TableRowSelectable(row);     // soporta Ctrl/Shift
+
+        TableSetCell(0); Label(files[row].name);
+        TableSetCell(1); Label(files[row].type);
+        TableSetCell(2); Label(formatBytes(files[row].size));
+        TableSetCell(3); Label(files[row].mtime);
+    }
+    EndTable();
+}</code></pre>
+
+<div class="note">Si <code>state.sortColumn != -1</code> ordena tu vector
+externamente antes de pasar <code>files</code> a la tabla. La tabla solo
+indica la columna y dirección — no toca tus datos.</div>
+
+<h2 id="c-image">Image</h2>
+<pre><code class="language-cpp">// Renderizar el resultado del motor (textura GL)
+GLuint sceneTex = engine.colorBuffer();
+ui.image("viewport", reinterpret_cast&lt;void*&gt;((uintptr_t)sceneTex),
+         {viewportW, viewportH}, /*uv0*/{0,1}, /*uv1*/{1,0});</code></pre>
+
+<!-- ─────────────────────────────  MENUS  ────────────────────────── -->
+<h2 id="m-menubar">MenuBar y submenús</h2>
+<pre><code class="language-cpp">ui.menuBar([&amp;](UIBuilder&amp; m) {
+    m.menu("Archivo", [&amp;](UIBuilder&amp; r) {
+        if (r.menuItem("Nuevo"))    newScene();
+        if (r.menuItem("Abrir…"))   openScene();
+        if (r.menuItem("Guardar"))  saveScene();
+        r.menuSeparator();
+        if (r.menuItem("Salir"))    app.quit();
+    });
+    m.menu("Editar", [&amp;](UIBuilder&amp; r) {
+        r.menuItem("Deshacer");
+        r.menuItem("Rehacer");
+    });
+});
+
+\ Versión con iconos (BeginMenu y MenuItem aceptan iconCodepoint)
+ui.menuBar([&amp;](UIBuilder&amp; m) {
+    m.menu("Archivo", Icons::File, [&amp;](UIBuilder&amp; r) {
+        r.menuItem("Nuevo",   Icons::New);
+        r.menuItem("Abrir…",  Icons::Open);
+        r.menuItem("Guardar", Icons::Save);
+    });
+});</code></pre>
+
+<h2 id="m-toolbar">Toolbar y StatusBar</h2>
+<pre><code class="language-cpp">ui.toolbar([&amp;](UIBuilder&amp; t) {
+    t.iconButton(Icons::Play);
+    t.iconButton(Icons::Pause);
+    t.iconButton(Icons::Stop);   \ alias de Square
+});
+
+\ …contenido…
+
+ui.statusBar("Listo", [&amp;](UIBuilder&amp; s) {
+    s.iconLabel(Icons::Activity, 14.0f);
+    s.label("FPS: " + std::to_string((int)(1.0f/dt)));
+});</code></pre>
+
+<h2 id="m-tooltip">Tooltip</h2>
+<pre><code class="language-cpp">Button("Guardar");
+Tooltip("Guarda el documento (Ctrl+S)");</code></pre>
+
+<h2 id="m-context">ContextMenu</h2>
+<pre><code class="language-cpp">ui.contextMenu("entityCtx", [&amp;](UIBuilder&amp; m) {
+    if (m.menuItem("Renombrar")) startRename();
+    if (m.menuItem("Duplicar"))  duplicate();
+    m.menuSeparator();
+    if (m.menuItem("Eliminar"))  deleteEntity();
+});
+
+\ ContextMenuItem también acepta iconCodepoint
+if (ContextMenuItem("Eliminar", Icons::Trash)) deleteEntity();</code></pre>
+<p>El menú aparece al hacer clic derecho sobre el último widget renderizado
+antes de su declaración.</p>
+
+<h2 id="m-modal">Modal</h2>
+<p><code>BeginModal</code> tiene un overload con <code>iconCodepoint</code> para mostrar
+un icono en el header (útil para diálogos de tipo info / warning / error).</p>
+<pre><code class="language-cpp">static bool showSettings = false;
+if (ui.button("Ajustes")) showSettings = true;
+
+ui.modal("settings", "Ajustes", &amp;showSettings, {480, 320},
+    [&amp;](UIBuilder&amp; m) {
+        m.checkbox("Guardar al salir", &amp;cfg.saveOnExit);
+        m.slider("Volumen", &amp;cfg.volume, 0.0f, 1.0f);
+        if (m.button("Cerrar")) showSettings = false;
+    });</code></pre>
+
+<!-- ─────────────────────────────  ICONOS  ────────────────────────── -->
+<h2 id="icons-intro">Iconos zero-setup</h2>
+<p>FluentUI viene con la fuente
+<a href="https://lucide.dev" target="_blank">Lucide</a> preempaquetada y
+<strong>la carga automáticamente al construir <code>FluentApp</code></strong>.
+No necesitas tocar <code>LoadIconFont</code>: simplemente pasa cualquier valor
+de <code>Icons::*</code> a un widget icon-aware.</p>
+
+<pre><code class="language-cpp">#include &lt;FluentUI/API.h&gt;
+using namespace FluentUI;
+
+if (Button("Guardar", Icons::Save)) save();
+
+SegmentedControl("tool", {
+    {"", Icons::Pointer}, {"", Icons::Move},
+    {"", Icons::Rotate},  {"", Icons::Scale},
+}, &amp;tool);</code></pre>
+
+<p><code>Icons::Save</code>, <code>Icons::Pointer</code>, etc. son entradas de
+un <code>enum Lucide : uint32_t</code> generado a partir del <code>.ttf</code>
+real, así que se convierten implícitamente al codepoint que esperan los
+overloads de los widgets. El catálogo completo (~1500 iconos) vive en
+<code>include/UI/Icons.h</code>.</p>
+
+<h3>Cómo encuentra la fuente</h3>
+<p>Al construir un <code>FluentApp</code>, la librería busca
+<code>lucide.ttf</code> en este orden:</p>
+<ol class="compact">
+<li><code>AppConfig::iconFontPath</code> si lo proporcionas explícitamente.</li>
+<li><code>&lt;directorio del ejecutable&gt;/assets/fonts/lucide.ttf</code> (ruta canónica vendorizada).</li>
+<li><code>&lt;cwd&gt;/assets/fonts/lucide.ttf</code>.</li>
+<li><code>$FLUENTUI_ASSETS_DIR/fonts/lucide.ttf</code>.</li>
+</ol>
+<p>Si nada existe, la app sigue corriendo (los iconos quedan invisibles, no
+crashea) y se loguea un warning. CMake copia la fuente al directorio del
+binario automáticamente, así que en builds estándar nunca tienes que
+preocuparte.</p>
+
+<h3>Override avanzado (sustituir la fuente)</h3>
+<p>Si quieres usar otra fuente (Font Awesome, Fluent UI System Icons, IcoMoon
+custom, etc.):</p>
+<pre><code class="language-cpp">AppConfig cfg;
+cfg.iconFontPath = "C:/assets/fa-solid.ttf";
+cfg.iconFontSize = 18;
+FluentApp app("MyApp", cfg);
+
+\ Tus codepoints van directos como uint32_t (sin Icons::):
+if (Button("Save", 0xF0C7 /* fa-save */)) save();</code></pre>
+<p>El catálogo <code>Icons::*</code> solo es válido para el <code>.ttf</code>
+de Lucide vendorizado — si lo reemplazas, define tus propios constantes o
+regenera el header con <code>tools/gen_icons.py</code> apuntando a tu nueva
+fuente.</p>
+
+<h2 id="icons-api">API de iconos por widget</h2>
+<p>Cada widget icon-aware tiene un overload con <code>uint32_t iconCodepoint</code>
+(0 = sin icono). El icono no afecta los IDs ni la lógica del widget — solo se
+dibuja. Convención de posición:</p>
+
+<table class="ref">
+<tr><th>Widget</th><th>Posición del icono</th><th>Notas</th></tr>
+<tr><td><code>Button(label, iconCp, …)</code></td><td>Izquierda del texto</td><td><code>label=""</code> → botón cuadrado solo-icono</td></tr>
+<tr><td><code>IconButton(iconCp, size?, …)</code></td><td>Centrado</td><td>Atajo idiomático para toolbars</td></tr>
+<tr><td><code>Label(text, iconCp, …)</code></td><td>Izquierda del texto</td><td></td></tr>
+<tr><td><code>IconLabel(iconCp, …)</code></td><td>—</td><td>Icono suelto sin texto</td></tr>
+<tr><td><code>Checkbox(label, iconCp, …)</code></td><td>Después del label (badge)</td><td></td></tr>
+<tr><td><code>RadioButton(label, iconCp, …)</code></td><td>Después del label</td><td></td></tr>
+<tr><td><code>ComboBox(…, vector&lt;pair&gt;, …)</code></td><td>Izquierda en campo y dropdown</td><td>Reemplaza el "selection dot"</td></tr>
+<tr><td><code>ComboBoxSearchable(…, vector&lt;pair&gt;, …)</code></td><td>Igual</td><td>Filtro preserva iconos</td></tr>
+<tr><td><code>SegmentedControl(id, vector&lt;pair&gt;, …)</code></td><td>Por segmento</td><td><code>label=""</code> → segmento cuadrado</td></tr>
+<tr><td><code>MenuItem(label, iconCp, …)</code></td><td>Izquierda</td><td></td></tr>
+<tr><td><code>BeginMenu(label, iconCp, …)</code></td><td>Izquierda</td><td></td></tr>
+<tr><td><code>ContextMenuItem(label, iconCp, …)</code></td><td>Izquierda</td><td></td></tr>
+<tr><td><code>BeginPanel(id, iconCp, …)</code></td><td>En el header</td><td></td></tr>
+<tr><td><code>BeginModal(id, title, iconCp, …)</code></td><td>En el header</td><td>Útil para warning/info/error</td></tr>
+<tr><td><code>BeginTabView(…, vector&lt;pair&gt;, …)</code></td><td>Por tab</td><td></td></tr>
+<tr><td><code>BeginListView(…, vector&lt;pair&gt;, …)</code></td><td>Por fila</td><td>Single y multi-selección</td></tr>
+<tr><td><code>TableColumn{header, …, iconCodepoint}</code></td><td>En el header de la columna</td><td>Campo de la struct</td></tr>
+<tr><td><code>TreeNode(id, label, iconCp, …)</code></td><td>Después del chevron</td><td></td></tr>
+<tr><td><code>TreeNodeMulti(id, label, iconCp, …)</code></td><td>Después del chevron</td><td></td></tr>
+</table>
+
+<p>Widgets <strong>sin overload</strong> (por diseño): <code>SliderFloat/Int</code>,
+<code>DragFloat/Int/3</code>, <code>ProgressBar</code>, <code>ColorPicker</code>,
+<code>TextInput</code>, <code>DatePicker</code>/<code>TimePicker</code>,
+<code>Plot*</code>, <code>Image</code>, <code>Separator</code>, primitivos de
+layout. El icono no aporta valor lógico ahí.</p>
+
+<h3>Ejemplos prácticos</h3>
+
+<div class="note"><strong>Importante</strong>: cuando pasas un literal
+<code>{ {"...", Icons::X}, ... }</code> a un widget que tiene tanto el overload
+<code>vector&lt;string&gt;</code> como <code>vector&lt;pair&lt;string,uint32_t&gt;&gt;</code>
+(<code>SegmentedControl</code>, <code>ComboBox</code>, <code>BeginTabView</code>,
+<code>BeginListView</code>), C++ no puede deducir cuál escoger porque ambos son
+viables. <strong>Nombra el tipo del initializer list</strong> con
+<code>std::vector&lt;std::pair&lt;std::string, uint32_t&gt;&gt;{ ... }</code> para
+desambiguar.</div>
+
+<p><strong>ComboBox de assets (campo + dropdown con icono por item):</strong></p>
+<pre><code class="language-cpp">static int meshIdx = 0;
+ComboBox("Mesh", &amp;meshIdx,
+    std::vector&lt;std::pair&lt;std::string, uint32_t&gt;&gt;{
+        {"PlayerBody.fbx", Icons::Box},
+        {"Enemy.fbx",      Icons::Box},
+        {"Crate.fbx",      Icons::Package},
+    }, 200.0f);</code></pre>
+
+<p><strong>Toolbar de transformaciones (Move/Rotate/Scale):</strong></p>
+<pre><code class="language-cpp">BeginToolbar();
+    static int tool = 0;
+    SegmentedControl("tool",
+        std::vector&lt;std::pair&lt;std::string, uint32_t&gt;&gt;{
+            {"", Icons::Pointer},
+            {"", Icons::Move},
+            {"", Icons::Rotate},
+            {"", Icons::Scale},
+        }, &amp;tool);
+EndToolbar();</code></pre>
+
+<p><strong>Hierarchy con carpetas:</strong></p>
+<pre><code class="language-cpp">if (BeginTreeView("hier", {220, 0})) {
+    static bool aOpen = true;
+    if (TreeNode("assets", "Assets", Icons::Folder, &amp;aOpen)) {
+        TreeNodePush();
+        TreeNode("audio", "Audio",      Icons::Folder);
+        TreeNode("anim",  "Animations", Icons::Folder);
+        TreeNodePop();
+    }
+    EndTreeView();
+}</code></pre>
+
+<p><strong>Status bar inline con icono:</strong></p>
+<pre><code class="language-cpp">BeginStatusBar();
+    BeginHorizontal();
+        IconLabel(Icons::Activity, 14.0f, Color(0.4f, 1.0f, 0.4f, 1.0f));
+        Label("OpenGL 4.6 - RTX 4070");
+    EndHorizontal();
+EndStatusBar();</code></pre>
+
+<h2 id="icons-lucide">Catálogo <code>Icons::*</code></h2>
+<p>El header <code>include/UI/Icons.h</code> se genera automáticamente desde
+el <code>.ttf</code> vendorizado y contiene un
+<code>enum Lucide : uint32_t</code> con TODOS los iconos (~1500). Como es un
+<code>enum</code> no-scoped, <strong>se convierte implícitamente a
+<code>uint32_t</code></strong> y entra en cualquier overload sin
+<code>static_cast</code>:</p>
+
+<pre><code class="language-cpp">Button("Save", Icons::Save);
+TreeNode("a", "Assets", Icons::Folder, &amp;open);
+TableColumn{"Name", 160, 40, true, Icons::FileText};</code></pre>
+
+<p><strong>Nombres canónicos</strong> — equivalentes a los que ves en
+<a href="https://lucide.dev" target="_blank">lucide.dev</a>, convertidos de
+kebab-case a PascalCase: <code>mouse-pointer</code> → <code>MousePointer</code>,
+<code>arrow-up-right</code> → <code>ArrowUpRight</code>,
+<code>rotate-cw</code> → <code>RotateCw</code>.</p>
+
+<p><strong>Aliases semánticos</strong> — algunos nombres más cortos para el
+día a día en un editor:</p>
+<table class="ref">
+<tr><th>Alias</th><th>Equivale a</th><th>Uso típico</th></tr>
+<tr><td><code>Icons::Pointer</code></td><td><code>MousePointer</code></td><td>Selección</td></tr>
+<tr><td><code>Icons::Stop</code></td><td><code>Square</code></td><td>Detener reproducción</td></tr>
+<tr><td><code>Icons::Cut</code></td><td><code>Scissors</code></td><td>Edit menu</td></tr>
+<tr><td><code>Icons::Paste</code></td><td><code>Clipboard</code></td><td>Edit menu</td></tr>
+<tr><td><code>Icons::Open</code></td><td><code>FolderOpen</code></td><td>File menu</td></tr>
+<tr><td><code>Icons::New</code></td><td><code>FilePlus</code></td><td>File menu</td></tr>
+<tr><td><code>Icons::Close</code></td><td><code>X</code></td><td>Botón de cerrar</td></tr>
+<tr><td><code>Icons::Help</code></td><td><code>CircleHelp</code></td><td>Tooltips, F1</td></tr>
+<tr><td><code>Icons::Cube</code></td><td><code>Box</code></td><td>Mesh, geometría</td></tr>
+<tr><td><code>Icons::Record</code></td><td><code>Circle</code></td><td>Captura</td></tr>
+<tr><td><code>Icons::Rotate</code></td><td><code>RotateCw</code></td><td>Tool gizmo</td></tr>
+<tr><td><code>Icons::Unlock</code></td><td><code>LockOpen</code></td><td>Toggle de bloqueo</td></tr>
+</table>
+
+<p>Si necesitas algún icono que no encuentras: abre
+<code>include/UI/Icons.h</code> y busca en el enum (autocompletado del IDE en
+<code>Icons::</code> también funciona). Categorías típicas:
+archivos (<code>Folder*</code>, <code>File*</code>, <code>Save</code>,
+<code>Download</code>), edición (<code>Copy</code>, <code>Pencil</code>,
+<code>Trash</code>, <code>Scissors</code>), transform (<code>Move</code>,
+<code>RotateCw</code>, <code>Scale</code>, <code>Box</code>), reproducción
+(<code>Play</code>, <code>Pause</code>, <code>Square</code>), estado
+(<code>Check</code>, <code>X</code>, <code>Info</code>,
+<code>TriangleAlert</code>, <code>CircleHelp</code>), navegación
+(<code>Chevron*</code>, <code>Arrow*</code>, <code>House</code>), sistema
+(<code>Settings</code>, <code>Terminal</code>, <code>Monitor</code>,
+<code>Cpu</code>, <code>Database</code>).</p>
+
+<h3>Regenerar el catálogo</h3>
+<p>Para actualizar la versión de Lucide:</p>
+<pre><code class="language-bash"># 1) Reemplaza assets/fonts/lucide.ttf con la versión nueva
+# 2) Regenera el header
+pip install fonttools
+python tools/gen_icons.py</code></pre>
+<p>El script lee el <code>.ttf</code> directamente con <code>fontTools</code>
+y reescribe <code>include/UI/Icons.h</code> con los codepoints correctos.
+Commitea ambos archivos.</p>
+
+<!-- ─────────────────────────────  SISTEMA  ────────────────────────── -->
+<h2 id="sys-app">FluentApp &amp; Lifecycle</h2>
+<p><code>FluentApp</code> es el contenedor de alto nivel. Acepta tres formas de
+construcción y expone una API de ciclo de vida basada en callbacks.</p>
+
+<div class="api">FluentApp(title, AppConfig)<br>
+FluentApp(title, width, height)<br>
+FluentApp(SDL_Window*, SDL_GLContext, darkMode=true, enableDPI=true)</div>
+
+<pre><code class="language-cpp">AppConfig cfg;
+cfg.width = 1600;
+cfg.height = 900;
+cfg.resizable    = true;
+cfg.darkMode     = true;
+cfg.targetFPS    = 60;     // 0 = vsync only
+cfg.enableDPI    = true;
+cfg.iconFontPath = "";     // empty = autodiscover lucide.ttf
+cfg.iconFontSize = 16;
+
+FluentApp app("Mi App", cfg);
+
+app.onInit([&amp;]      { loadAssets(); });
+app.onUpdate([&amp;](float dt) { simulate(dt); });
+app.onShutdown([&amp;]  { saveCache(); });
+
+app.root([&amp;](UIBuilder&amp; ui) { /* construir UI */ });
+app.run();    // loop bloqueante</code></pre>
+
+<h3>Modo embebido (motor externo)</h3>
+<p>Cuando tu motor ya posee la ventana y el contexto GL, usa el constructor
+externo + <code>beginFrame</code>/<code>endFrame</code>:</p>
+<pre><code class="language-cpp">FluentApp ui(myWindow, myGLContext, /*dark*/true);
+ui.root([&amp;](UIBuilder&amp; b) { editor.draw(b); });
+
+while (running) {
+    SDL_Event e;
+    while (SDL_PollEvent(&amp;e)) ui.processEvent(e);
+    ui.beginFrame(dt);
+    ui.endFrame();          // NO llama a SwapWindow
+    SDL_GL_SwapWindow(myWindow);
+}</code></pre>
+
+<h3>Cambiar tema y FPS objetivo en vivo</h3>
+<pre><code class="language-cpp">app.enableDarkMode(false);
+app.setTheme(GetEditorDarkStyle());
+app.setTargetFPS(120);
+app.showDebugOverlay(true);   // overlay FPS / draw calls</code></pre>
+
+<h2 id="sys-shortcuts">Atajos de teclado</h2>
+<p>Cada <code>FluentApp</code> contiene un <code>ShortcutRegistry</code>. Los atajos
+se procesan automáticamente cada frame justo después del input.</p>
+
+<div class="api">app.shortcuts.Register(actionId, KeyCombo{ key, modifiers }, callback);<br>
+app.shortcuts.Unregister(actionId);<br>
+app.shortcuts.GetShortcutText(actionId) -&gt; "Ctrl+Shift+S"</div>
+
+<pre><code class="language-cpp">using namespace FluentUI;
+
+app.shortcuts.Register("file.save",
+    { SDL_SCANCODE_S, MOD_CTRL }, [&amp;]{ saveScene(); });
+
+app.shortcuts.Register("edit.undo",
+    { SDL_SCANCODE_Z, MOD_CTRL }, [&amp;]{ app.undoStack.Undo(); });
+
+app.shortcuts.Register("edit.redo",
+    { SDL_SCANCODE_Y, MOD_CTRL }, [&amp;]{ app.undoStack.Redo(); });
+
+app.shortcuts.Register("view.fullscreen",
+    { SDL_SCANCODE_F11, MOD_NONE }, [&amp;]{ toggleFullscreen(); });
+
+// Mostrar el atajo en un menú
+m.menuItem("Guardar  " + app.shortcuts.GetShortcutText("file.save"));</code></pre>
+
+<p>Modifiers disponibles: <code>MOD_NONE</code>, <code>MOD_CTRL</code>,
+<code>MOD_SHIFT</code>, <code>MOD_ALT</code> (combinables con <code>|</code>).</p>
+
+<h2 id="sys-undo">Undo / Redo</h2>
+<p><code>app.undoStack</code> implementa el patrón Command con histórico,
+agrupación y un helper para valores triviales.</p>
+
+<div class="api">undoStack.Execute(Command{ description, execute, undo });<br>
+undoStack.Undo() / Redo() / CanUndo() / CanRedo()<br>
+undoStack.BeginGroup(desc) / EndGroup()<br>
+MakeValueCommand&lt;T&gt;(desc, *target, newValue) -&gt; Command</div>
+
+<pre><code class="language-cpp">// Mutación atómica con undo automático
+float oldFov = camera.fov;
+if (DragFloat("FOV", &amp;camera.fov, 0.5f, 10.0f, 170.0f)) {
+    app.undoStack.Execute({
+        "Cambiar FOV",
+        [&amp;, newF = camera.fov]{ camera.fov = newF; },
+        [&amp;, oldF = oldFov]    { camera.fov = oldF; }
+    });
+}
+
+// Helper para POD: misma idea pero en una línea
+app.undoStack.Execute(MakeValueCommand("Activar wireframe", &amp;wireframe, true));
+
+// Agrupar varias mutaciones bajo un único paso de undo
+app.undoStack.BeginGroup("Mover selección");
+    for (auto&amp; e : selected) {
+        Vec3 oldPos = e.pos;
+        e.pos += offset;
+        app.undoStack.AddToGroup({
+            "", [&amp;, p=e.pos]{ e.pos=p; }, [&amp;, p=oldPos]{ e.pos=p; }
+        });
+    }
+app.undoStack.EndGroup();</code></pre>
+
+<h2 id="sys-filedialog">File Dialogs nativos</h2>
+<p>Diálogos OS nativos (no son ventanas FluentUI). Son <strong>asíncronos</strong>:
+no bloquean el frame. El callback puede dispararse en otro hilo.</p>
+
+<div class="api">void ShowOpenFileDialog(window, filters, defaultPath, allowMany, callback);<br>
+void ShowSaveFileDialog(window, filters, defaultPath, callback);<br>
+void ShowOpenFolderDialog(window, defaultPath, allowMany, callback);</div>
+
+<pre><code class="language-cpp">if (ui.button("Abrir escena…")) {
+    std::vector&lt;FileFilter&gt; filters = {
+        {"Escenas", "scene;json"},
+        {"Todos",   "*"}
+    };
+    ShowOpenFileDialog(app.window(), filters, /*defaultPath*/"",
+        /*allowMany*/false,
+        [&amp;](const std::vector&lt;std::string&gt;&amp; paths, int filterIdx) {
+            if (paths.empty()) return;     // cancelado
+            loadScene(paths.front());
+        });
+}
+
+if (ui.button("Exportar…")) {
+    ShowSaveFileDialog(app.window(),
+        { {"PNG", "png"}, {"JPEG", "jpg;jpeg"} }, "render.png",
+        [&amp;](const std::vector&lt;std::string&gt;&amp; paths, int filterIdx) {
+            if (!paths.empty()) saveRender(paths.front(), filterIdx);
+        });
+}
+
+if (ui.button("Carpeta de assets…")) {
+    ShowOpenFolderDialog(app.window(), "", /*allowMany*/false,
+        [&amp;](const std::vector&lt;std::string&gt;&amp; paths, int) {
+            if (!paths.empty()) setAssetsRoot(paths.front());
+        });
+}</code></pre>
+
+<div class="warn"><strong>Hilos:</strong> el callback puede ejecutarse en un
+thread del OS. Si tu lógica de carga no es thread-safe, encola la ruta y
+procésala en el siguiente frame.</div>
+
+<h2 id="sys-filedrop">File Drop</h2>
+<p>Cuando el usuario suelta archivos sobre la ventana, recibes la lista en un
+único callback (también disponible vía <code>ctx-&gt;input.DroppedFiles()</code>).</p>
+
+<pre><code class="language-cpp">app.onFileDrop([&amp;](const std::vector&lt;std::string&gt;&amp; paths) {
+    for (auto&amp; p : paths) {
+        if (p.ends_with(".fbx") || p.ends_with(".glb")) importMesh(p);
+        else if (p.ends_with(".png") || p.ends_with(".jpg")) importTex(p);
+    }
+});</code></pre>
+
+<h2 id="sys-input">InputState</h2>
+<p>Cada <code>UIContext</code> expone un <code>InputState</code> de bajo nivel
+útil para herramientas que necesitan más que los callbacks de widget
+(viewport 3D, gizmos, herramientas de pintura…).</p>
+
+<pre><code class="language-cpp">auto* ctx = app.context();
+auto&amp;  in = ctx-&gt;input;
+
+// Teclas
+if (in.IsKeyPressed(SDL_SCANCODE_DELETE)) deleteSelection();
+if (in.IsKeyDown(SDL_SCANCODE_LSHIFT))    snapToGrid = true;
+
+// Ratón
+float mx = in.MouseX(), my = in.MouseY();
+float dx = in.MouseDeltaX(), dy = in.MouseDeltaY();
+float wheel = in.MouseWheelY();
+if (in.IsMousePressed(0)) startDrag(mx, my);
+if (in.IsMouseReleased(0)) endDrag();
+
+// IME composition (mientras CJK / acentos)
+if (in.HasComposition()) {
+    std::cout &lt;&lt; "Componiendo: " &lt;&lt; in.CompositionText() &lt;&lt; "\n";
+}
+
+// Archivos arrastrados
+if (in.HasDroppedFiles()) {
+    for (auto&amp; p : in.DroppedFiles()) std::cout &lt;&lt; p &lt;&lt; "\n";
+}</code></pre>
+
+<h2 id="sys-multiwin">Multi-window</h2>
+<p>Aparte del docking, puedes crear ventanas SDL secundarias con su propio
+contexto OpenGL y <code>UIBuilder</code>. Útil para previsualizaciones, paletas
+flotantes, ventanas auxiliares…</p>
+
+<div class="api">AppWindow* app.createWindow(title, width, height);<br>
+void app.closeWindow(AppWindow*);</div>
+
+<pre><code class="language-cpp">AppWindow* picker = app.createWindow("Color Picker", 320, 480);
+picker-&gt;root([&amp;](UIBuilder&amp; ui) {
+    ui.colorPicker("Tinte", &amp;mat.tint);
+    if (ui.button("Aceptar")) picker-&gt;close();
+});
+
+// Cierra la ventana programáticamente:
+if (shouldClose) app.closeWindow(picker);</code></pre>
+
+<p>El loop principal procesa todas las ventanas automáticamente. Cada
+<code>AppWindow</code> tiene su propio <code>UIContext</code> y se destruye
+sola cuando se cierra (botón [X] o <code>close()</code>).</p>
+
+<!-- ─────────────────────────────  DOCKING  ────────────────────────── -->
+<h2 id="docking">Docking</h2>
+<p>Define un <em>dock space</em> que ocupa el área disponible y luego declara
+paneles dockables dentro:</p>
+
+<pre><code class="language-cpp">app.root([&amp;](UIBuilder&amp; ui) {
+    // Menú principal
+    ui.menuBar([](auto&amp; m){ /* … */ });
+
+    // Configurar layout solo la primera vez
+    static bool initialized = false;
+    if (!initialized) {
+        auto&amp; ds = app.dockSpace();
+        ds.DockPanel("Hierarchy", DockPosition::Left);
+        ds.DockPanel("Inspector", DockPosition::Right);
+        ds.DockPanel("Console",   DockPosition::Bottom);
+        ds.DockPanel("Viewport",  DockPosition::Center);
+        initialized = true;
+    }
+
+    ui.dockSpace([&amp;](UIBuilder&amp; ds) {
+        ds.dockPanel("Hierarchy", [&amp;](UIBuilder&amp; r){ drawHierarchy(r); });
+        ds.dockPanel("Inspector", [&amp;](UIBuilder&amp; r){ drawInspector(r); });
+        ds.dockPanel("Console",   [&amp;](UIBuilder&amp; r){ drawConsole(r);   });
+        ds.dockPanel("Viewport",  [&amp;](UIBuilder&amp; r){ drawViewport(r);  });
+    });
+});</code></pre>
+
+<h3>Drag-out a ventana independiente</h3>
+<p>Cuando el usuario arrastra el header de un panel fuera de la ventana
+principal, recibes un callback con la posición de pantalla:</p>
+<pre><code class="language-cpp">app.setOnPanelDragOut([&amp;](const std::string&amp; panelId, int x, int y) {
+    app.detachPanelToWindow(panelId, builderForPanel(panelId), x, y, 480, 360);
+});</code></pre>
+
+<!-- ─────────────────────────────  LAYOUT SAVE  ─────────────────── -->
+<h2 id="layout-save">Layout Serialization</h2>
+<p>Guarda y restaura todo el dock layout más los viewports desprendidos:</p>
+<pre><code class="language-cpp">// Al cerrar
+app.saveLayout("layout.fui");
+
+// Al iniciar
+app.loadLayout("layout.fui");
+app.restoreViewports([&amp;](const std::string&amp; panelId)
+        -&gt; std::function&lt;void(UIBuilder&amp;)&gt; {
+    if (panelId == "Inspector") return [&amp;](auto&amp; r){ drawInspector(r); };
+    if (panelId == "Console")   return [&amp;](auto&amp; r){ drawConsole(r);   };
+    return nullptr;
+});</code></pre>
+
+<!-- ─────────────────────────────  DRAG&DROP  ─────────────────── -->
+<h2 id="dragdrop">Drag &amp; Drop tipado</h2>
+<p>El payload se entrega por copia. Para tipos POD usa el template
+<code>SetPayload&lt;T&gt;</code> (requiere <code>std::is_trivially_copyable</code>);
+para rutas u otras cadenas usa el overload de <code>std::string</code>.</p>
+
+<h3>Payload de string (rutas, ids textuales…)</h3>
+<pre><code class="language-cpp">// Source — declarar tras dibujar el widget arrastrable
+Label("📦 cube.glb");
+DragDropSource src("ASSET_PATH");
+if (src.IsActive()) {
+    src.SetPayload(std::string("models/cube.glb"));
+    src.DragPreview([]{ Label("📦 cube.glb"); });
+}
+
+// Target — declarar tras dibujar la zona receptora
+Panel("Drop here");
+DragDropTarget tgt;
+if (tgt.IsHovering()) {
+    std::string path;
+    if (tgt.AcceptPayload("ASSET_PATH", &amp;path)) {
+        spawnAsset(path);
+    }
+}</code></pre>
+
+<h3>Payload POD (struct trivially-copyable)</h3>
+<pre><code class="language-cpp">struct AssetRef { uint32_t id; uint32_t kind; };  // sin std::string
+
+DragDropSource src("ASSET");
+if (src.IsActive()) {
+    src.SetPayload&lt;AssetRef&gt;({42, 0});
+    src.DragPreview([]{ Label("📦 asset #42"); });
+}
+
+DragDropTarget tgt;
+if (tgt.IsHovering()) {
+    AssetRef ref;
+    if (tgt.AcceptPayload&lt;AssetRef&gt;("ASSET", &amp;ref)) {
+        spawnAsset(ref);
+    }
+}</code></pre>
+
+<!-- ─────────────────────────────  THEMING  ─────────────────────── -->
+<h2 id="theming">Theming / Style</h2>
+<p>Cinco temas listos para usar:</p>
+<div class="api">Style GetDefaultFluentStyle();   // light<br>
+Style GetDarkFluentStyle();<br>
+Style GetEditorDarkStyle();      // PokeMotor / Vortex Engine<br>
+Style GetHighContrastStyle();    // accesibilidad<br>
+Style CreateCustomFluentStyle(Color accent, bool darkTheme = true);</div>
+
+<pre><code class="language-cpp">// Cambiar tema completo
+app.enableDarkMode(true);                 // toggle dark/light Fluent
+app.setTheme(GetEditorDarkStyle());       // tema preset
+app.setTheme(CreateCustomFluentStyle(FluentColors::AccentPurple, true));
+
+// Push/pop por sub-árbol — se apila, así puedes anidar
+ButtonStyle danger = app.context()-&gt;style.button;
+danger.background.normal = Color(0.85f, 0.25f, 0.2f, 1.0f);
+danger.background.hover  = Color(0.95f, 0.30f, 0.25f, 1.0f);
+
+PushButtonStyle(danger);
+Button("Eliminar todo");
+PopButtonStyle();
+
+// Override de paneles (color de cabecera, acrylic, radius…)
+PanelStyle softPanel = app.context()-&gt;style.panel;
+softPanel.cornerRadius = 12.0f;
+softPanel.useAcrylic = true;
+softPanel.acrylicOpacity = 0.7f;
+PushPanelStyle(softPanel);
+ui.panel("Notes", [&amp;](UIBuilder&amp; r){ r.label("..."); });
+PopPanelStyle();
+
+// Solo color de texto
+PushTextColor(Color(1, 0.7f, 0.2f, 1));
+Label("Atención: cambios sin guardar");
+PopTextColor();
+
+// Style completo (override total para un sub-árbol)
+Style alt = app.context()-&gt;style;
+alt.accentColor = FluentColors::AccentGreen;
+PushStyle(alt);
+ui.panel("Panel verde", [](auto&amp; r){ /* … */ });
+PopStyle();</code></pre>
+
+<h3>Paleta oficial</h3>
+<p>El namespace <code>FluentColors</code> expone toda la paleta Fluent 2:</p>
+<table>
+<tr><th>Grupo</th><th>Constantes</th></tr>
+<tr><td>Acentos</td><td><code>Accent</code>, <code>AccentBlue/Green/Purple/Orange/Pink/Teal</code>, <code>AccentHover</code>, <code>AccentPressed</code></td></tr>
+<tr><td>Superficie (light)</td><td><code>Background</code>, <code>Surface</code>, <code>SurfaceAlt</code>, <code>SurfaceElevated</code></td></tr>
+<tr><td>Superficie (dark)</td><td><code>BackgroundDark</code>, <code>SurfaceDark</code>, <code>SurfaceAltDark</code>, <code>SurfaceElevatedDark</code></td></tr>
+<tr><td>Texto</td><td><code>TextPrimary/Secondary/Tertiary</code> + variantes <code>*Dark</code></td></tr>
+<tr><td>Estados</td><td><code>Error</code>, <code>Success</code>, <code>Warning</code>, <code>Info</code>, <code>Disabled</code></td></tr>
+<tr><td>Bordes</td><td><code>Border</code>, <code>BorderDark/Light</code>, <code>ContainerBorderDark/Light</code></td></tr>
+</table>
+
+<pre><code class="language-cpp">PushTextColor(FluentColors::Error);
+Label("Falló la compilación");
+PopTextColor();</code></pre>
+
+<!-- ─────────────────────────────  TYPOGRAPHY  ─────────────────────── -->
+<h2 id="typography">Tipografía &amp; FontManager</h2>
+<p>FluentUI tiene 8 estilos tipográficos predefinidos (Fluent 2 scale):</p>
+<table>
+<tr><th>TypographyStyle</th><th>Tamaño</th><th>Peso</th><th>Uso</th></tr>
+<tr><td><code>Caption</code></td><td>12 px</td><td>Regular</td><td>Pies, badges</td></tr>
+<tr><td><code>Body</code></td><td>14 px</td><td>Regular</td><td>Por defecto</td></tr>
+<tr><td><code>BodyStrong</code></td><td>14 px</td><td>SemiBold</td><td>Etiqueta de campo</td></tr>
+<tr><td><code>Subtitle</code></td><td>18 px</td><td>SemiBold</td><td>Subtítulos sección</td></tr>
+<tr><td><code>SubtitleStrong</code></td><td>18 px</td><td>Bold</td><td>Énfasis</td></tr>
+<tr><td><code>Title</code></td><td>20 px</td><td>SemiBold</td><td>Headers</td></tr>
+<tr><td><code>TitleLarge</code></td><td>28 px</td><td>SemiBold</td><td>Pantallas vacías</td></tr>
+<tr><td><code>Display</code></td><td>42 px</td><td>Bold</td><td>Hero, splash</td></tr>
+</table>
+
+<pre><code class="language-cpp">Label("Bienvenido", std::nullopt, TypographyStyle::Display);
+Label("Empezar un nuevo proyecto", std::nullopt, TypographyStyle::Subtitle);</code></pre>
+
+<h3>Cargar fuentes custom</h3>
+<p>El <code>FontManager</code> permite registrar fuentes por nombre y construir
+una <em>cadena de fallback</em> para glyphs que falten en la fuente principal
+(útil para emojis o CJK):</p>
+
+<pre><code class="language-cpp">auto* fm = app.context()-&gt;fontManager;
+
+// Fuente regular custom
+fm-&gt;LoadFont("InterTight",  "assets/fonts/InterTight.ttf", 14);
+fm-&gt;LoadFont("JetBrainsMono", "assets/fonts/JBMono.ttf",   13);
+fm-&gt;SetDefaultFont("InterTight");
+
+// Fuente CJK como fallback (resuelve hiragana/kanji automáticamente)
+fm-&gt;LoadFont("NotoCJK", "assets/fonts/NotoSansCJKjp.ttf", 14);
+fm-&gt;AddFallbackFont("NotoCJK");
+
+// O setear toda la cadena de una vez
+fm-&gt;SetFallbackChain({ "NotoCJK", "lucide" });
+
+// Usar fuente específica en un widget
+TextStyle code = app.context()-&gt;style.typography.body;
+code.fontName = "JetBrainsMono";
+Style s = app.context()-&gt;style;
+s.typography.body = code;
+PushStyle(s);
+Label("inline code");
+PopStyle();</code></pre>
+
+<h3>Icon fonts adicionales</h3>
+<p>Además del Lucide vendorizado puedes registrar otras (Font Awesome,
+Material Icons…) en su propio rango Unicode:</p>
+<pre><code class="language-cpp">fm-&gt;LoadIconFont("fa6", "assets/fa-solid-900.ttf",
+                 /*rangeStart*/0xE000, /*rangeEnd*/0xF8FF, /*size*/16);
+
+if (Button("Save", 0xF0C7 /* fa-save */)) save();</code></pre>
+
+<!-- ─────────────────────────────  ANIMATION  ─────────────────────── -->
+<h2 id="animation">Animaciones &amp; Ripple</h2>
+<p>FluentUI anima internamente colores y geometría (hover/press) usando easings
+Fluent. Puedes reutilizar el mismo sistema para tus propios valores con
+<code>AnimatedValue&lt;T&gt;</code>.</p>
+
+<div class="api">AnimatedValue&lt;float|Color|Vec2&gt; v(initial);<br>
+v.SetTarget(target, duration=0.3s, EasingType::EaseOutCubic);<br>
+v.Update(dt); v.Get(); v.IsAnimating(); v.SetImmediate(value);</div>
+
+<pre><code class="language-cpp">static AnimatedValue&lt;float&gt; sidebarW(220.0f);
+
+if (collapsed) sidebarW.SetTarget(40.0f,  0.25f, EasingType::EaseOutCubic);
+else           sidebarW.SetTarget(220.0f, 0.25f, EasingType::EaseOutCubic);
+
+sidebarW.Update(dt);
+SetNextConstraints(FixedSize(sidebarW.Get(), 0.0f));
+BeginVertical();
+    /* contenido */
+EndVertical();</code></pre>
+
+<p>Easings disponibles: <code>Linear</code>, <code>EaseIn</code>,
+<code>EaseOut</code>, <code>EaseInOut</code>, <code>EaseOutCubic</code> (default),
+<code>EaseOutExpo</code>. También accesibles como funciones en
+<code>Easing::EaseOutCubic(t)</code>.</p>
+
+<h3>Ripple effect manual</h3>
+<p>Algunos widgets (botones touch-friendly) lanzan ripples automáticamente.
+Para uno custom:</p>
+<pre><code class="language-cpp">static RippleEffect ripple;
+
+if (PointInRect(mouse, pos, size) &amp;&amp; ctx-&gt;input.IsMousePressed(0))
+    ripple.AddRipple(mouse, /*maxRadius*/120.0f, /*duration*/0.5f);
+
+ripple.Update(dt);
+for (auto&amp; r : ripple.GetRipples())
+    ctx-&gt;renderer.DrawRipple(r.center, r.radius, r.opacity);</code></pre>
+
+<!-- ─────────────────────────────  RENDERER  ─────────────────────── -->
+<h2 id="renderer">Renderer (primitivas)</h2>
+<p>Para dibujar formas personalizadas (gizmos 2D, overlays, decoradores)
+accede al <code>Renderer</code> del contexto. Todas las llamadas se baten
+internamente, así que es seguro hacer cientos por frame.</p>
+
+<pre><code class="language-cpp">auto&amp; r = app.context()-&gt;renderer;
+
+r.DrawRectFilled({100, 100}, {200, 80}, Color(0.2f, 0.3f, 0.8f, 1.0f), /*radius*/8.0f);
+r.DrawRect({100, 100}, {200, 80}, FluentColors::Accent, 8.0f);     // outline
+r.DrawLine({0, 200}, {500, 200}, FluentColors::Border, 2.0f);
+r.DrawCircle({400, 300}, /*radius*/40.0f, FluentColors::AccentGreen);
+r.DrawTriangleFilled({0,0},{32,0},{16,28}, FluentColors::Warning);
+
+// Bezier (Phase 5) — útil para conexiones tipo node graph
+r.DrawBezier({100,100},{200,50},{300,150},{400,100},
+             FluentColors::Accent, /*thickness*/2.0f, /*segments*/40);
+
+// Gradient
+r.DrawRectGradient(
+    {50, 400}, {300, 60},
+    Color(1,0,0,1), Color(1,1,0,1),
+    Color(0,0,1,1), Color(0,1,0,1));
+
+// Efecto acrylic / mica
+r.DrawRectAcrylic({0,0}, {320, 720}, Color(0.1f,0.1f,0.1f,1),
+                  /*radius*/0, /*opacity*/0.85f, /*blur*/12.0f);
+
+// Texturas externas
+r.DrawImage({500, 100}, {128, 128}, myTextureHandle,
+            /*uv0*/{0,0}, /*uv1*/{1,1});</code></pre>
+
+<p>Combinado con un layer overlay para que el dibujo aparezca encima de los
+widgets:</p>
+<pre><code class="language-cpp">r.SetLayer(RenderLayer::Overlay);
+r.DrawCircle(mouse, 8.0f, Color(1,1,1,0.6f));
+r.SetLayer(RenderLayer::Default);</code></pre>
+
+<!-- ─────────────────────────────  DPI  ─────────────────────── -->
+<h2 id="dpi">DPI &amp; Responsive</h2>
+<p>FluentUI detecta la escala del monitor automáticamente. Para escalar tus
+propios valores en píxeles:</p>
+<pre><code class="language-cpp">float padding = Scaled(8.0f);   // 8 px @ 100%, 16 @ 200%
+Vec2 size = { Scaled(120.0f), Scaled(32.0f) };</code></pre>
+<p>Por defecto todos los widgets son responsivos: si el padre encoge, ellos
+encogen. Para forzar tamaño fijo usa <code>SetNextConstraints</code> con
+<code>SizeConstraint::Fixed</code>.</p>
+
+<!-- ─────────────────────────────  A11Y  ─────────────────────── -->
+<h2 id="a11y">Accesibilidad</h2>
+<ul class="compact">
+<li><kbd>Tab</kbd> / <kbd>Shift+Tab</kbd>: navega entre widgets focusables.</li>
+<li><kbd>Space</kbd> / <kbd>Enter</kbd>: activa el widget enfocado.</li>
+<li>Soporte de gamepad SDL3: D-pad y A/B mapeados a navegación + activar/cancelar.</li>
+<li>Anillo de foco visible automático; usa <code>DrawAccessibilityFocusRing</code> para widgets custom.</li>
+<li>Provider UI Automation en Windows: <code>InitUIAutomation(hwnd, ctx)</code> expone el árbol a Narrator/NVDA.</li>
+</ul>
+
+<h3>Hook de eventos de accesibilidad</h3>
+<pre><code class="language-cpp">SetAccessibilityCallback([](AccessibilityEvent ev, const WidgetNode* node) {
+    if (ev == AccessibilityEvent::FocusChanged)
+        std::cout &lt;&lt; "Foco -&gt; " &lt;&lt; GetAccessibleName(node) &lt;&lt; "\n";
+});
+
+// Inicializa el bridge UIA (solo Windows)
+#ifdef _WIN32
+HWND hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(app.window()),
+            SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+InitUIAutomation(hwnd, app.context());
+#endif</code></pre>
+
+<!-- ─────────────────────────────  DEMO  ─────────────────────── -->
+<h2 id="demo">Ventanas Demo &amp; Inspector</h2>
+<p>El namespace <code>FluentUI::Demo</code> provee herramientas de desarrollo
+listas para enchufar. Llámalas una vez por frame desde tu root:</p>
+
+<div class="api">void Demo::ShowDemoWindow(bool* open = nullptr);<br>
+void Demo::ShowAboutWindow(bool* open = nullptr);<br>
+void Demo::ShowMetricsWindow(bool* open = nullptr);<br>
+void Demo::ShowStyleEditor(bool* open = nullptr);<br>
+void Demo::ShowItemPicker(bool* open = nullptr);</div>
+
+<pre><code class="language-cpp">static bool showDemo    = true;
+static bool showMetrics = false;
+static bool showStyle   = false;
+static bool showAbout   = false;
+
+app.root([&amp;](UIBuilder&amp; ui) {
+    ui.menuBar([&amp;](UIBuilder&amp; m) {
+        m.menu("Ayuda", [&amp;](UIBuilder&amp; r) {
+            r.menuItem("Demo widgets")  &amp;&amp; (showDemo    = true);
+            r.menuItem("Métricas")      &amp;&amp; (showMetrics = true);
+            r.menuItem("Style editor")  &amp;&amp; (showStyle   = true);
+            r.menuItem("Acerca de…")    &amp;&amp; (showAbout   = true);
+        });
+    });
+
+    // tu UI normal...
+
+    if (showDemo)    Demo::ShowDemoWindow(&amp;showDemo);
+    if (showMetrics) Demo::ShowMetricsWindow(&amp;showMetrics);
+    if (showStyle)   Demo::ShowStyleEditor(&amp;showStyle);
+    if (showAbout)   Demo::ShowAboutWindow(&amp;showAbout);
+
+    Demo::ShowItemPicker();   // Ctrl+Shift+P activa overlay
+});</code></pre>
+
+<ul class="compact">
+<li><strong>ShowDemoWindow</strong> – cada widget en uso real con ejemplos editables.</li>
+<li><strong>ShowMetricsWindow</strong> – gráficos FPS, draw calls, batches, vertex count.</li>
+<li><strong>ShowStyleEditor</strong> – edita <code>Style</code> en vivo (colores, paddings, radius, tipografía).</li>
+<li><strong>ShowItemPicker</strong> – <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>: resalta el widget bajo el cursor y muestra su id-stack.</li>
+<li><strong>ShowAboutWindow</strong> – versión, build info, créditos.</li>
+</ul>
+
+<!-- ─────────────────────────────  API REF  ─────────────────────── -->
+<h2 id="api">Referencia rápida</h2>
+<table>
+<tr><th>Categoría</th><th>Funciones</th></tr>
+<tr><td>Layout</td><td><code>BeginVertical</code>, <code>BeginHorizontal</code>, <code>BeginGrid</code>, <code>BeginSplitter</code>, <code>SetNextConstraints</code></td></tr>
+<tr><td>Botones</td><td><code>Button</code>, <code>SegmentedControl</code>, <code>Checkbox</code>, <code>RadioButton</code></td></tr>
+<tr><td>Texto</td><td><code>Label</code>, <code>LabelWrapped</code>, <code>LabelRich</code>, <code>TextInput</code></td></tr>
+<tr><td>Numéricos</td><td><code>SliderFloat/Int</code>, <code>DragFloat/Int/Float3</code>, <code>ProgressBar</code></td></tr>
+<tr><td>Selección</td><td><code>ComboBox</code>, <code>ComboBoxSearchable</code>, <code>ColorPicker</code></td></tr>
+<tr><td>Plots</td><td><code>PlotLines</code>, <code>PlotHistogram</code>, <code>Sparkline</code></td></tr>
+<tr><td>Tiempo</td><td><code>DatePicker</code>, <code>TimePicker</code>, <code>DateTimePicker</code></td></tr>
+<tr><td>Contenedores</td><td><code>BeginPanel</code>, <code>CollapsingHeader</code>, <code>BeginScrollView</code>, <code>BeginTabView</code>, <code>BeginListView</code>, <code>BeginTreeView</code>, <code>BeginTable</code></td></tr>
+<tr><td>Menús</td><td><code>BeginMenuBar</code>, <code>BeginMenu</code>, <code>MenuItem</code>, <code>BeginToolbar</code>, <code>BeginStatusBar</code></td></tr>
+<tr><td>Overlays</td><td><code>Tooltip</code>, <code>BeginContextMenu</code>, <code>BeginModal</code></td></tr>
+<tr><td>Docking</td><td><code>UIBuilder::dockSpace</code>, <code>dockPanel</code>, <code>FluentApp::detachPanelToWindow</code>, <code>setOnPanelDragOut</code>, <code>saveLayout</code>, <code>loadLayout</code>, <code>restoreViewports</code></td></tr>
+<tr><td>Drag-Drop</td><td><code>DragDropSource</code>, <code>DragDropTarget</code></td></tr>
+<tr><td>Iconos</td><td><code>Renderer::LoadIconFont</code>, <code>IconButton</code>, <code>IconLabel</code>, overloads con <code>iconCodepoint</code> en Button/Label/Checkbox/RadioButton/ComboBox/SegmentedControl/MenuItem/ContextMenuItem/BeginPanel/BeginModal/BeginTabView/BeginListView/TreeNode/<code>TableColumn::iconCodepoint</code></td></tr>
+<tr><td>Theming</td><td><code>PushStyle</code>, <code>PushButtonStyle</code>, <code>PushPanelStyle</code>, <code>PushTextColor</code>, <code>GetDefaultFluentStyle</code>, <code>GetDarkFluentStyle</code>, <code>GetEditorDarkStyle</code>, <code>GetHighContrastStyle</code>, <code>CreateCustomFluentStyle</code>, <code>FluentColors::*</code></td></tr>
+<tr><td>DPI</td><td><code>GetDPIScale</code>, <code>Scaled</code></td></tr>
+<tr><td>App / lifecycle</td><td><code>FluentApp::run</code>, <code>onInit</code>, <code>onUpdate</code>, <code>onShutdown</code>, <code>onFileDrop</code>, <code>setTheme</code>, <code>setTargetFPS</code>, <code>showDebugOverlay</code></td></tr>
+<tr><td>Embed mode</td><td><code>FluentApp(SDL_Window*, SDL_GLContext, ...)</code>, <code>processEvent</code>, <code>beginFrame</code>, <code>endFrame</code></td></tr>
+<tr><td>Multi-window</td><td><code>FluentApp::createWindow</code>, <code>closeWindow</code>, <code>AppWindow::root</code>, <code>AppWindow::close</code></td></tr>
+<tr><td>Shortcuts</td><td><code>app.shortcuts.Register</code>, <code>Unregister</code>, <code>GetShortcutText</code>, <code>MOD_CTRL/SHIFT/ALT</code></td></tr>
+<tr><td>Undo/Redo</td><td><code>app.undoStack.Execute</code>, <code>Undo</code>, <code>Redo</code>, <code>BeginGroup</code>/<code>EndGroup</code>, <code>MakeValueCommand</code></td></tr>
+<tr><td>File dialogs</td><td><code>ShowOpenFileDialog</code>, <code>ShowSaveFileDialog</code>, <code>ShowOpenFolderDialog</code>, <code>FileFilter</code></td></tr>
+<tr><td>Input</td><td><code>InputState::IsKeyDown/Pressed/Released</code>, <code>IsMouseDown/Pressed/Released</code>, <code>MouseX/Y/Delta/Wheel</code>, <code>DroppedFiles</code>, <code>CompositionText</code></td></tr>
+<tr><td>Fonts</td><td><code>FontManager::LoadFont</code>, <code>LoadIconFont</code>, <code>SetDefaultFont</code>, <code>AddFallbackFont</code>, <code>SetFallbackChain</code></td></tr>
+<tr><td>Animación</td><td><code>AnimatedValue&lt;T&gt;</code>, <code>EasingType</code>, <code>Easing::*</code>, <code>RippleEffect</code></td></tr>
+<tr><td>Renderer</td><td><code>DrawRect</code>, <code>DrawRectFilled</code>, <code>DrawRectGradient</code>, <code>DrawRectAcrylic</code>, <code>DrawLine</code>, <code>DrawCircle</code>, <code>DrawTriangleFilled</code>, <code>DrawBezier</code>, <code>DrawImage</code>, <code>SetLayer</code></td></tr>
+<tr><td>Accesibilidad</td><td><code>SetAccessibilityCallback</code>, <code>FireAccessibilityEvent</code>, <code>GetAccessibleWidgets</code>, <code>InitUIAutomation</code> (Win32)</td></tr>
+<tr><td>Demo</td><td><code>Demo::ShowDemoWindow</code>, <code>ShowMetricsWindow</code>, <code>ShowStyleEditor</code>, <code>ShowItemPicker</code>, <code>ShowAboutWindow</code></td></tr>
+</table>
+
+<hr>
+<p style="color:var(--text-muted);font-size:13px;text-align:center;margin-top:40px">
+FluentUI · Documentación generada · MIT License<br>
+<a href="https://github.com/dabo96/WinUI3">github.com/dabo96/WinUI3</a>
+</p>
+
+</main>
+</div>
+
+<!-- Prism.js syntax highlighting -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cmake.min.js"></script>
+<script>
+// Copy buttons
+document.querySelectorAll('pre').forEach(pre => {
+  const btn = document.createElement('button');
+  btn.className = 'copy';
+  btn.textContent = 'Copiar';
+  btn.onclick = () => {
+    navigator.clipboard.writeText(pre.querySelector('code').innerText);
+    btn.textContent = '✓ Copiado';
+    setTimeout(() => btn.textContent = 'Copiar', 1500);
+  };
+  pre.appendChild(btn);
+});
+// Active TOC link
+const links = [...document.querySelectorAll('nav a[href^="#"]')];
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      links.forEach(l => l.classList.toggle('active',
+        l.getAttribute('href') === '#' + e.target.id));
+    }
+  });
+}, { rootMargin: '-30% 0px -60% 0px' });
+document.querySelectorAll('h2[id], h3[id]').forEach(h => obs.observe(h));
+</script>
+</body>
+</html>

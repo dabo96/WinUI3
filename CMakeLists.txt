@@ -106,6 +106,7 @@ endif()
 
 # --- Dependencies -----------------------------------------------------------
 find_package(OpenGL REQUIRED)
+find_package(Vulkan REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
 find_package(Freetype CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
@@ -129,6 +130,7 @@ target_include_directories(FluentUI PUBLIC
 
 target_link_libraries(FluentUI PUBLIC
     OpenGL::GL
+    Vulkan::Vulkan
     glad
     SDL3::SDL3
     SDL3_image::SDL3_image

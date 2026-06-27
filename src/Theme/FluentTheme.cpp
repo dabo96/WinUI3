@@ -84,8 +84,12 @@ namespace FluentUI {
 
             panel.borderWidth = 0.0f;  // Sin borde visible - solo contraste de fondo
             panel.cornerRadius = 10.0f;
-            panel.shadowOpacity = 0.4f;
-            panel.shadowOffsetY = 8.0f;
+            // Sombra ambiental difusa: opacidad baja + offset pequeño + blur
+            // amplio. Un pico alto concentraba el negro en el borde inferior y se
+            // leía como una banda dura; bajarlo lo convierte en un halo sutil.
+            panel.shadowOpacity = 0.22f;
+            panel.shadowOffsetY = 2.0f;
+            panel.shadowBlur = 10.0f;
             panel.padding = Vec2(16.0f, 14.0f);
             panel.useAcrylic = false; // Deshabilitar acrylic por defecto para evitar transparencias no deseadas
             panel.acrylicOpacity = 0.85f;
@@ -175,10 +179,19 @@ namespace FluentUI {
             accentPressed,
             Color(textColor.r, textColor.g, textColor.b, 0.45f),
             textColor);
-        buttonStyle.shadowOpacity = 0.25f;
-        buttonStyle.shadowOffsetY = 2.0f;
+        // Botones casi planos (estilo Fluent): apenas un velo de sombra para dar
+        // un mínimo de elevación, sin la banda oscura inferior que se veía pesada.
+        buttonStyle.shadowOpacity = 0.10f;
+        buttonStyle.shadowOffsetY = 1.0f;
+        buttonStyle.shadowBlur = 6.0f;
         buttonStyle.cornerRadius = 6.0f;
         style.button = buttonStyle;
+
+        // Brand accent usado por sliders, checkboxes, progress bars, radios,
+        // plots, date pickers, etc. (ctx->style.accentColor). Sin esto se queda
+        // en el azul por defecto y el acento personalizado no se reflejaría en
+        // todos esos widgets aunque el botón sí cambie (usa button.background).
+        style.accentColor = accentColor;
 
         // Aplicar acento a otros elementos si es necesario
         style.panel.titleButton.normal = accentColor;
@@ -247,6 +260,97 @@ namespace FluentUI {
         // Separator
         style.separator.color = white;
         style.separator.thickness = 2.0f;
+        style.separator.padding = 8.0f;
+
+        return style;
+    }
+
+    Style GetEditorDarkStyle() {
+        Style style;
+        style.isDarkTheme = true;
+
+        // Increased contrast dark theme — clear visual hierarchy:
+        // menubar (darkest) → toolbar → viewport bg → panels (lightest dark)
+        Color bg0 = Color::FromHex("#141414");   // viewport/menubar — nearly black
+        Color bg1 = Color::FromHex("#1e1e1e");   // toolbar
+        Color bg2 = Color::FromHex("#252525");   // panels
+        Color bg3 = Color::FromHex("#2e2e2e");   // panel headers, button bg
+        Color borderColor = Color::FromHex("#3a3a3a");  // more visible borders
+        Color borderSoft = Color::FromHex("#333333");
+        Color textMain = Color::FromHex("#e8e8e8");  // slightly brighter
+        Color textDim = Color::FromHex("#9a9a9a");
+        Color textMuted = Color::FromHex("#6b6b6b");
+        Color accent = Color::FromHex("#3b82f6");
+        Color accentHover = Color::FromHex("#2563eb");
+        Color accentPressed = Color::FromHex("#1d4ed8");
+
+        style.backgroundColor = bg0;
+        style.spacing = 10.0f;
+        style.padding = 14.0f;
+        style.accentColor = accent;
+        // Alpha=0 → slider falls back to accentColor (Fluent 2 brand fill)
+        style.sliderFillColor = Color(0.0f, 0.0f, 0.0f, 0.0f);
+
+        // Typography aligned to Fluent 2 fontSizeBase tokens:
+        //   100=10, 200=12 (caption), 300=14 (body), 400=16, 500=20, 600=24
+        style.typography.caption    = MakeTextStyle(12.0f, FontWeight::Regular, textDim, 18.0f);
+        style.typography.body       = MakeTextStyle(14.0f, FontWeight::Regular, textMain, 20.0f);
+        style.typography.bodyStrong = MakeTextStyle(14.0f, FontWeight::SemiBold, textMain, 20.0f);
+        style.typography.subtitle   = MakeTextStyle(16.0f, FontWeight::Regular, textMain, 22.0f);
+        style.typography.subtitleStrong = MakeTextStyle(16.0f, FontWeight::SemiBold, textMain, 22.0f);
+        style.typography.title      = MakeTextStyle(20.0f, FontWeight::SemiBold, textMain, 28.0f);
+        style.typography.titleLarge = MakeTextStyle(24.0f, FontWeight::SemiBold, textMain, 32.0f);
+        style.typography.display    = MakeTextStyle(36.0f, FontWeight::Bold, textMain, 46.0f);
+
+        // Buttons — subtle, blending with panels; accent for active/CTA
+        ButtonStyle btn;
+        btn.background.normal  = bg3;
+        btn.background.hover   = borderColor;
+        btn.background.pressed = bg2;
+        btn.background.disabled = Color(bg3.r, bg3.g, bg3.b, 0.4f);
+        btn.foreground.normal  = textMain;
+        btn.foreground.hover   = textMain;
+        btn.foreground.pressed = textMain;
+        btn.foreground.disabled = textMuted;
+        btn.border.normal  = borderSoft;
+        btn.border.hover   = borderColor;
+        btn.border.pressed = borderColor;
+        btn.border.disabled = Color(0, 0, 0, 0);
+        btn.cornerRadius = 4.0f;                    // borderRadiusMedium
+        btn.padding = Vec2(12.0f, 5.0f);            // spacingHorizontalM × Fluent Medium V padding
+        btn.borderWidth = 1.0f;                     // strokeThin
+        btn.shadowOpacity = 0.0f;
+        btn.shadowOffsetY = 0.0f;
+        btn.text = MakeTextStyle(14.0f, FontWeight::Regular, textMain);  // fontSizeBase300
+        style.button = btn;
+
+        // Labels
+        style.label.text = MakeTextStyle(14.0f, FontWeight::Regular, textMain);
+        style.label.disabledColor = Color(textMain.r, textMain.g, textMain.b, 0.45f);
+
+        // Panels — flat, subtle borders, no heavy shadows
+        // Panels are the LIGHTEST dark element to contrast with the dark viewport
+        PanelStyle panel;
+        panel.background = bg2;
+        panel.headerBackground = bg3;
+        panel.borderColor = borderSoft;
+        panel.borderWidth = 1.0f;
+        panel.cornerRadius = 0.0f;   // Flat, docked panels (no rounded corners)
+        panel.shadowOpacity = 0.0f;
+        panel.shadowOffsetY = 0.0f;
+        panel.padding = Vec2(14.0f, 12.0f);
+        panel.headerText = MakeTextStyle(12.0f, FontWeight::SemiBold, textMain);
+        panel.titleButton.normal = accent;
+        panel.titleButton.hover = accentHover;
+        panel.titleButton.pressed = accentPressed;
+        panel.titleButton.disabled = Color(accent.r, accent.g, accent.b, 0.4f);
+        panel.useAcrylic = false;
+        panel.acrylicOpacity = 1.0f;
+        style.panel = panel;
+
+        // Separator
+        style.separator.color = borderSoft;
+        style.separator.thickness = 1.0f;
         style.separator.padding = 8.0f;
 
         return style;

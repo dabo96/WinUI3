@@ -25,11 +25,26 @@ public:
 
     // --- Basic widgets ---
     bool button(const std::string& label, const Vec2& size = {0, 0}, bool enabled = true);
+    bool button(const std::string& label, uint32_t iconCodepoint,
+                const Vec2& size = {0, 0}, bool enabled = true);
+    bool iconButton(uint32_t iconCodepoint, float size = 0.0f, bool enabled = true);
     void label(const std::string& text, TypographyStyle variant = TypographyStyle::Body);
+    void label(const std::string& text, uint32_t iconCodepoint,
+               TypographyStyle variant = TypographyStyle::Body);
+    void iconLabel(uint32_t iconCodepoint, float size = 0.0f);
     void separator();
+    bool segmentedControl(const std::string& id,
+                          const std::vector<std::string>& options,
+                          int* activeIndex);
+    bool segmentedControl(const std::string& id,
+                          const std::vector<std::pair<std::string, uint32_t>>& options,
+                          int* activeIndex);
     bool checkbox(const std::string& label, bool* value);
+    bool checkbox(const std::string& label, uint32_t iconCodepoint, bool* value);
     bool radioButton(const std::string& label, int* value, int option,
                      const std::string& group = "");
+    bool radioButton(const std::string& label, uint32_t iconCodepoint,
+                     int* value, int option, const std::string& group = "");
     bool slider(const std::string& label, float* value, float min, float max,
                 float width = 200.0f, const char* format = "%.2f");
     bool slider(const std::string& label, int* value, int min, int max,
@@ -39,6 +54,8 @@ public:
     bool textInput(const std::string& label, std::string* value, float width = 200.0f, size_t maxLength = 0);
     bool comboBox(const std::string& label, int* current,
                   const std::vector<std::string>& items, float width = 200.0f);
+    bool comboBox(const std::string& label, int* current,
+                  const std::vector<std::pair<std::string, uint32_t>>& items, float width = 200.0f);
     bool dragFloat(const std::string& label, float* value, float speed = 1.0f,
                    float min = 0.0f, float max = 0.0f, const char* format = "%.2f");
     bool dragInt(const std::string& label, int* value, float speed = 1.0f,
@@ -49,6 +66,9 @@ public:
 
     // --- Containers (lambda-based) ---
     void panel(const std::string& id, std::function<void(UIBuilder&)> content,
+               const Vec2& size = {0, 0});
+    void panel(const std::string& id, uint32_t iconCodepoint,
+               std::function<void(UIBuilder&)> content,
                const Vec2& size = {0, 0});
     void scrollView(const std::string& id, const Vec2& size,
                     std::function<void(UIBuilder&)> content);
@@ -71,11 +91,17 @@ public:
                   std::function<void(UIBuilder&)> content);
     bool treeNode(const std::string& label, bool* isOpen = nullptr,
                   std::function<void(UIBuilder&)> children = nullptr);
+    bool treeNode(const std::string& label, uint32_t iconCodepoint,
+                  bool* isOpen = nullptr,
+                  std::function<void(UIBuilder&)> children = nullptr);
 
     // --- Menu system ---
     void menuBar(std::function<void(UIBuilder&)> content);
     void menu(const std::string& label, std::function<void(UIBuilder&)> content);
+    void menu(const std::string& label, uint32_t iconCodepoint,
+              std::function<void(UIBuilder&)> content);
     bool menuItem(const std::string& label, bool enabled = true);
+    bool menuItem(const std::string& label, uint32_t iconCodepoint, bool enabled = true);
     void menuSeparator();
 
     // --- Toolbar & StatusBar ---

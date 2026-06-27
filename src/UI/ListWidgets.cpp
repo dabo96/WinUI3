@@ -1,5 +1,6 @@
 #include "UI/Widgets.h"
 #include "UI/WidgetHelpers.h"
+#include "UI/Icons.h"
 #include "Theme/FluentTheme.h"
 #include "core/Animation.h"
 #include "core/Context.h"
@@ -14,8 +15,33 @@
 
 namespace FluentUI {
 
+static bool BeginListViewSingleImpl(const std::string &id, const Vec2 &size,
+                                    int *selectedItem,
+                                    const std::vector<std::string> &items,
+                                    const std::vector<uint32_t> *icons,
+                                    std::optional<Vec2> pos);
+
 bool BeginListView(const std::string &id, const Vec2 &size, int *selectedItem,
                    const std::vector<std::string> &items, std::optional<Vec2> pos) {
+  return BeginListViewSingleImpl(id, size, selectedItem, items, nullptr, pos);
+}
+
+bool BeginListView(const std::string &id, const Vec2 &size, int *selectedItem,
+                   const std::vector<std::pair<std::string, uint32_t>> &items,
+                   std::optional<Vec2> pos) {
+  std::vector<std::string> labels;
+  std::vector<uint32_t> icons;
+  labels.reserve(items.size());
+  icons.reserve(items.size());
+  for (const auto &p : items) { labels.push_back(p.first); icons.push_back(p.second); }
+  return BeginListViewSingleImpl(id, size, selectedItem, labels, &icons, pos);
+}
+
+static bool BeginListViewSingleImpl(const std::string &id, const Vec2 &size,
+                                    int *selectedItem,
+                                    const std::vector<std::string> &items,
+                                    const std::vector<uint32_t> *icons,
+                                    std::optional<Vec2> pos) {
   UIContext *ctx = GetContext();
   if (!ctx || items.empty())
     return false;
@@ -33,7 +59,8 @@ bool BeginListView(const std::string &id, const Vec2 &size, int *selectedItem,
 
   if (!state.initialized) {
     state.selectedItem = selectedItem ? *selectedItem : -1;
-    state.itemSize = Vec2(size.x > 0.0f ? size.x : 200.0f, 32.0f);
+    Vec2 avail = GetCurrentAvailableSpace(ctx);
+    state.itemSize = Vec2(size.x > 0.0f ? size.x : (avail.x > 0.0f ? avail.x : 200.0f), 32.0f);
     state.scrollOffset = 0.0f;  // Inicializar scroll offset
     state.initialized = true;
   } else {
@@ -42,12 +69,16 @@ bool BeginListView(const std::string &id, const Vec2 &size, int *selectedItem,
     }
     if (size.x > 0.0f) {
       state.itemSize.x = size.x;
+    } else {
+      Vec2 avail = GetCurrentAvailableSpace(ctx);
+      if (avail.x > 0.0f) state.itemSize.x = avail.x;
     }
   }
 
   Vec2 listViewSize = size;
   if (listViewSize.x <= 0.0f) {
-    listViewSize.x = 200.0f;
+    Vec2 avail = GetCurrentAvailableSpace(ctx);
+    listViewSize.x = avail.x > 0.0f ? avail.x : 200.0f;
   }
   if (listViewSize.y <= 0.0f) {
     listViewSize.y = items.size() * state.itemSize.y;
@@ -56,19 +87,18 @@ bool BeginListView(const std::string &id, const Vec2 &size, int *selectedItem,
   // Resolver posición: usar pos si se proporciona, sino usar cursor
   Vec2 listViewPos;
   if (pos.has_value()) {
-    listViewPos = pos.value();
+    listViewPos = ResolveAbsolutePosition(ctx, pos.value(), listViewSize);
     state.useAbsolutePos = true;
-    state.absolutePos = pos.value();
+    state.absolutePos = listViewPos;
   } else {
     listViewPos = ctx->cursorPos;
-    listViewPos = ResolveAbsolutePosition(ctx, listViewPos, listViewSize);
     state.useAbsolutePos = false;
   }
   const PanelStyle &panelStyle = ctx->style.panel;
   const TextStyle &textStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
 
   // Dibujar fondo del ListView con contraste más pronunciado - sin borde
-  Color listBg = AdjustContainerBackground(panelStyle.background, ctx->style.isDarkTheme);
+  Color listBg = AdjustListSurfaceBackground(panelStyle.background, ctx->style.isDarkTheme);
   ctx->renderer.DrawRectFilled(listViewPos, listViewSize, listBg,
                                panelStyle.cornerRadius);
 
@@ -129,8 +159,16 @@ bool BeginListView(const std::string &id, const Vec2 &size, int *selectedItem,
                                    ctx->style.button.background.hover, 0.0f);
     }
 
-    // Dibujar texto del item
-    Vec2 textPos(itemPos.x + panelStyle.padding.x,
+    // Dibujar icono opcional + texto del item
+    float listIconSize = textStyle.fontSize;
+    float listIconGap = 6.0f;
+    uint32_t cp = (icons && static_cast<size_t>(i) < icons->size()) ? (*icons)[i] : 0u;
+    float listIconSlot = (cp != 0u) ? (listIconSize + listIconGap) : 0.0f;
+    if (cp != 0u) {
+      DrawWidgetIcon(ctx, itemPos, itemSize, cp, textStyle.color, listIconSize,
+                     panelStyle.padding.x, listIconGap);
+    }
+    Vec2 textPos(itemPos.x + panelStyle.padding.x + listIconSlot,
                  itemPos.y + (state.itemSize.y - textStyle.fontSize) * 0.5f);
     ctx->renderer.DrawText(textPos, items[i], textStyle.color,
                            textStyle.fontSize);
@@ -173,8 +211,33 @@ bool BeginListView(const std::string &id, const Vec2 &size, int *selectedItem,
   return true;
 }
 
+static bool BeginListViewMultiImpl(const std::string &id, const Vec2 &size,
+                                   std::vector<int> *selectedItems,
+                                   const std::vector<std::string> &items,
+                                   const std::vector<uint32_t> *icons,
+                                   std::optional<Vec2> pos);
+
 bool BeginListView(const std::string &id, const Vec2 &size, std::vector<int> *selectedItems,
                    const std::vector<std::string> &items, std::optional<Vec2> pos) {
+  return BeginListViewMultiImpl(id, size, selectedItems, items, nullptr, pos);
+}
+
+bool BeginListView(const std::string &id, const Vec2 &size, std::vector<int> *selectedItems,
+                   const std::vector<std::pair<std::string, uint32_t>> &items,
+                   std::optional<Vec2> pos) {
+  std::vector<std::string> labels;
+  std::vector<uint32_t> icons;
+  labels.reserve(items.size());
+  icons.reserve(items.size());
+  for (const auto &p : items) { labels.push_back(p.first); icons.push_back(p.second); }
+  return BeginListViewMultiImpl(id, size, selectedItems, labels, &icons, pos);
+}
+
+static bool BeginListViewMultiImpl(const std::string &id, const Vec2 &size,
+                                   std::vector<int> *selectedItems,
+                                   const std::vector<std::string> &items,
+                                   const std::vector<uint32_t> *icons,
+                                   std::optional<Vec2> pos) {
   UIContext *ctx = GetContext();
   if (!ctx || items.empty())
     return false;
@@ -193,7 +256,8 @@ bool BeginListView(const std::string &id, const Vec2 &size, std::vector<int> *se
   if (!state.initialized) {
     state.selectedItem = -1;
     state.lastClickedItem = -1;
-    state.itemSize = Vec2(size.x > 0.0f ? size.x : 200.0f, 32.0f);
+    Vec2 avail = GetCurrentAvailableSpace(ctx);
+    state.itemSize = Vec2(size.x > 0.0f ? size.x : (avail.x > 0.0f ? avail.x : 200.0f), 32.0f);
     state.scrollOffset = 0.0f;
     state.initialized = true;
     // Sync from external selection
@@ -206,12 +270,16 @@ bool BeginListView(const std::string &id, const Vec2 &size, std::vector<int> *se
     }
     if (size.x > 0.0f) {
       state.itemSize.x = size.x;
+    } else {
+      Vec2 avail = GetCurrentAvailableSpace(ctx);
+      if (avail.x > 0.0f) state.itemSize.x = avail.x;
     }
   }
 
   Vec2 listViewSize = size;
   if (listViewSize.x <= 0.0f) {
-    listViewSize.x = 200.0f;
+    Vec2 avail = GetCurrentAvailableSpace(ctx);
+    listViewSize.x = avail.x > 0.0f ? avail.x : 200.0f;
   }
   if (listViewSize.y <= 0.0f) {
     listViewSize.y = items.size() * state.itemSize.y;
@@ -220,12 +288,11 @@ bool BeginListView(const std::string &id, const Vec2 &size, std::vector<int> *se
   // Resolver posición
   Vec2 listViewPos;
   if (pos.has_value()) {
-    listViewPos = pos.value();
+    listViewPos = ResolveAbsolutePosition(ctx, pos.value(), listViewSize);
     state.useAbsolutePos = true;
-    state.absolutePos = pos.value();
+    state.absolutePos = listViewPos;
   } else {
     listViewPos = ctx->cursorPos;
-    listViewPos = ResolveAbsolutePosition(ctx, listViewPos, listViewSize);
     state.useAbsolutePos = false;
   }
 
@@ -233,7 +300,7 @@ bool BeginListView(const std::string &id, const Vec2 &size, std::vector<int> *se
   const TextStyle &textStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
 
   // Dibujar fondo del ListView
-  Color listBg = AdjustContainerBackground(panelStyle.background, ctx->style.isDarkTheme);
+  Color listBg = AdjustListSurfaceBackground(panelStyle.background, ctx->style.isDarkTheme);
   ctx->renderer.DrawRectFilled(listViewPos, listViewSize, listBg,
                                panelStyle.cornerRadius);
 
@@ -305,8 +372,16 @@ bool BeginListView(const std::string &id, const Vec2 &size, std::vector<int> *se
                                    ctx->style.button.background.hover, 0.0f);
     }
 
-    // Dibujar texto del item
-    Vec2 textPos(itemPos.x + panelStyle.padding.x,
+    // Dibujar icono opcional + texto del item
+    float listIconSize = textStyle.fontSize;
+    float listIconGap = 6.0f;
+    uint32_t cp = (icons && static_cast<size_t>(i) < icons->size()) ? (*icons)[i] : 0u;
+    float listIconSlot = (cp != 0u) ? (listIconSize + listIconGap) : 0.0f;
+    if (cp != 0u) {
+      DrawWidgetIcon(ctx, itemPos, itemSize, cp, textStyle.color, listIconSize,
+                     panelStyle.padding.x, listIconGap);
+    }
+    Vec2 textPos(itemPos.x + panelStyle.padding.x + listIconSlot,
                  itemPos.y + (state.itemSize.y - textStyle.fontSize) * 0.5f);
     ctx->renderer.DrawText(textPos, items[i], textStyle.color,
                            textStyle.fontSize);
@@ -398,33 +473,41 @@ bool BeginTreeView(const std::string &id, const Vec2 &size, std::optional<Vec2> 
   ctx->currentTreeViewId = treeViewId;
 
   if (!state.initialized) {
-    state.itemSize = Vec2(size.x > 0.0f ? size.x : 200.0f, 24.0f);
+    Vec2 avail = GetCurrentAvailableSpace(ctx);
+    state.itemSize = Vec2(size.x > 0.0f ? size.x : (avail.x > 0.0f ? avail.x : 200.0f), 28.0f);
     state.indentSize = 20.0f;
     state.expandButtonSize = 14.0f;
     state.initialized = true;
   } else {
     if (size.x > 0.0f) {
       state.itemSize.x = size.x;
+    } else {
+      Vec2 avail = GetCurrentAvailableSpace(ctx);
+      if (avail.x > 0.0f) state.itemSize.x = avail.x;
     }
   }
 
-  Vec2 treeViewSize = size;
-  if (treeViewSize.x <= 0.0f) {
-    treeViewSize.x = 200.0f;
+  // Reserve space for scrollbar when content overflows
+  bool needsScroll = state.contentHeight > (size.y > 0.0f ? size.y : state.viewSize.y);
+  if (needsScroll) {
+    state.itemSize.x -= (SCROLLBAR_WIDTH + 4.0f);
   }
-  if (treeViewSize.y <= 0.0f) {
-    treeViewSize.y = 300.0f;
+
+  Vec2 treeViewSize = size;
+  if (treeViewSize.x <= 0.0f || treeViewSize.y <= 0.0f) {
+    Vec2 avail = GetCurrentAvailableSpace(ctx);
+    if (treeViewSize.x <= 0.0f) treeViewSize.x = avail.x > 0.0f ? avail.x : 200.0f;
+    if (treeViewSize.y <= 0.0f) treeViewSize.y = avail.y > 0.0f ? avail.y : 300.0f;
   }
 
   // Resolver posición: usar pos si se proporciona, sino usar cursor
   Vec2 treeViewPos;
   if (pos.has_value()) {
-    treeViewPos = pos.value();
+    treeViewPos = ResolveAbsolutePosition(ctx, pos.value(), treeViewSize);
     state.useAbsolutePos = true;
-    state.absolutePos = pos.value();
+    state.absolutePos = treeViewPos;
   } else {
     treeViewPos = ctx->cursorPos;
-    treeViewPos = ResolveAbsolutePosition(ctx, treeViewPos, treeViewSize);
     state.useAbsolutePos = false;
   }
   const PanelStyle &panelStyle = ctx->style.panel;
@@ -438,8 +521,30 @@ bool BeginTreeView(const std::string &id, const Vec2 &size, std::optional<Vec2> 
       // Por ahora, usemos el tamaño guardado del frame anterior.
   }
 
-  // Dibujar fondo del TreeView
-  Color treeBg = AdjustContainerBackground(panelStyle.background, ctx->style.isDarkTheme);
+  // Guardar posición y tamaño visual para scroll
+  state.viewPos = treeViewPos;
+  state.viewSize = treeViewSize;
+
+  // Manejar scroll con rueda del mouse
+  float viewH = treeViewSize.y;
+  if (state.contentHeight > viewH) {
+    float maxScroll = state.contentHeight - viewH;
+    bool mouseOver = IsMouseOver(ctx, treeViewPos, treeViewSize);
+    if (mouseOver && !ctx->scrollConsumedThisFrame) {
+      float wy = ctx->input.MouseWheelY();
+      if (std::abs(wy) > 0.001f) {
+        state.scrollOffset = std::clamp(state.scrollOffset - wy * SCROLL_SPEED, 0.0f, maxScroll);
+        ctx->scrollConsumedThisFrame = true;
+      }
+    }
+    state.scrollOffset = std::clamp(state.scrollOffset, 0.0f, maxScroll);
+  } else {
+    state.scrollOffset = 0.0f;
+  }
+
+  // Dibujar fondo del TreeView con contraste más pronunciado - sin borde
+  // (igual que el ListView, acorde al tema Fluent de Microsoft).
+  Color treeBg = AdjustListSurfaceBackground(panelStyle.background, ctx->style.isDarkTheme);
   ctx->renderer.DrawRectFilled(treeViewPos, treeViewSize, treeBg,
                                panelStyle.cornerRadius);
 
@@ -449,9 +554,12 @@ bool BeginTreeView(const std::string &id, const Vec2 &size, std::optional<Vec2> 
   // Configurar cursor para el contenido del TreeView
   // Añadir un pequeño padding interno para que no toque los bordes del fondo
   Vec2 innerPadding = panelStyle.padding * 0.5f;
-  ctx->cursorPos = treeViewPos + innerPadding;
+  ctx->cursorPos = Vec2(treeViewPos.x + innerPadding.x, treeViewPos.y + innerPadding.y - state.scrollOffset);
   ctx->lastItemPos = ctx->cursorPos;
   ctx->treeViewDepth = 0;
+
+  // Phase C5: reset DFS visit order for this frame
+  ctx->treeVisitOrder[treeViewId].clear();
 
   // Iniciar layout vertical para apilar los nodos correctamente
   Vec2 contentSize(treeViewSize.x - innerPadding.x * 2.0f,
@@ -477,25 +585,43 @@ void EndTreeView() {
     EndVertical(false); // No avanzar el cursor del padre aquí
   }
 
-  // Remover clipping
-  ctx->renderer.PopClipRect();
-
-  // Obtener el tamaño final del contenido
+  // Medir y guardar la altura real del contenido (para scroll del próximo frame)
   if (ctx->currentTreeViewId != 0) {
     auto it = ctx->treeViewStates.find(ctx->currentTreeViewId);
     if (it != ctx->treeViewStates.end()) {
-      const auto &state = it->second;
+      auto &state = it->second;
+      Vec2 innerPadding = ctx->style.panel.padding * 0.5f;
+      // contentEndCursor.y está offset por -scrollOffset, sumar de vuelta para obtener la altura real
+      float realContentHeight = (contentEndCursor.y + state.scrollOffset) - (state.viewPos.y) + innerPadding.y;
+      state.contentHeight = realContentHeight;
+
+      float viewH = state.viewSize.y;
+      bool needsScroll = state.contentHeight > viewH;
+
+      // Dibujar scrollbar si necesario (dentro del clip rect del TreeView)
+      if (needsScroll && viewH > 20.0f) {
+        float scrollbarW = SCROLLBAR_WIDTH;
+        Vec2 barPos(state.viewPos.x + state.viewSize.x - scrollbarW - 2.0f, state.viewPos.y);
+        Vec2 barSize(scrollbarW, viewH);
+        DrawScrollbar(ctx, barPos, barSize, state.contentHeight, viewH,
+                      state.scrollOffset, state.draggingScrollbar,
+                      state.dragStartMouse, state.dragStartScroll,
+                      state.draggingScrollbar, true);
+      }
+
+      // Remover clipping
+      ctx->renderer.PopClipRect();
 
       // Avanzar cursor solo si NO se usa posición absoluta
       if (!state.useAbsolutePos) {
-        Vec2 treeViewPos = ctx->lastItemPos - ctx->style.panel.padding;
-        // Calculate real content height from cursor delta
-        float contentHeight = contentEndCursor.y - (treeViewPos.y + ctx->style.panel.padding.y);
-        float treeViewHeight = std::max(contentHeight + ctx->style.panel.padding.y * 2.0f, state.itemSize.y);
-        ctx->lastItemPos = treeViewPos;
-        AdvanceCursor(ctx, Vec2(state.itemSize.x, treeViewHeight));
+        ctx->lastItemPos = state.viewPos;
+        AdvanceCursor(ctx, state.viewSize);
       }
+    } else {
+      ctx->renderer.PopClipRect();
     }
+  } else {
+    ctx->renderer.PopClipRect();
   }
 
   ctx->currentTreeViewId = 0;
@@ -504,6 +630,11 @@ void EndTreeView() {
 
 bool TreeNode(const std::string &id, const std::string &label, bool *isOpen,
               bool *isSelected) {
+  return TreeNode(id, label, 0u, isOpen, isSelected);
+}
+
+bool TreeNode(const std::string &id, const std::string &label, uint32_t iconCodepoint,
+              bool *isOpen, bool *isSelected) {
   UIContext *ctx = GetContext();
   if (!ctx || ctx->currentTreeViewId == 0)
     return false;
@@ -572,36 +703,25 @@ bool TreeNode(const std::string &id, const std::string &label, bool *isOpen,
   if (hasChildren) {
     bool hoverButton = IsMouseOver(ctx, buttonPos, buttonSize);
 
-    // Dibujar botón de expand/collapse
-    Color buttonBg =
-        hoverButton ? panelStyle.headerBackground : Color(0,0,0,0);
-    if (buttonBg.a > 0.0f) {
-      ctx->renderer.DrawRectFilled(buttonPos, buttonSize, buttonBg, 2.0f);
-    }
-    ctx->renderer.DrawRect(buttonPos, buttonSize, panelStyle.borderColor, 2.0f);
-
-    // Dibujar símbolo + o - usando rectángulos rellenos para máxima nitidez y alineación
-    Vec2 center(buttonPos.x + buttonSize.x * 0.5f,
-                buttonPos.y + buttonSize.y * 0.5f);
-    float lineLength = buttonSize.x * 0.4f;
-    
-    float thickness = 1.2f;
-    float halfLen = std::round(lineLength * 0.5f);
-    Color symbolColor = textStyle.color;
-    symbolColor.a *= 0.8f; // Un poco más suave que el texto principal
-
-    // Línea horizontal (siempre presente)
-    ctx->renderer.DrawRectFilled(
-        Vec2(std::round(center.x - halfLen), std::round(center.y - thickness * 0.5f)),
-        Vec2(halfLen * 2.0f, thickness),
-        symbolColor, 0.0f);
-
-    // Línea vertical (solo si está cerrado para formar el '+')
-    if (!nodeIsOpen) {
-        ctx->renderer.DrawRectFilled(
-            Vec2(std::round(center.x - thickness * 0.5f), std::round(center.y - halfLen)),
-            Vec2(thickness, halfLen * 2.0f),
-            symbolColor, 0.0f);
+    // Disclosure triangle drawn with primitives (NOT an icon-font glyph): points
+    // right (▶) when collapsed and down (▼) when expanded. Using geometry instead
+    // of a Lucide glyph guarantees it always renders regardless of the icon atlas
+    // state, and it changes unambiguously between states. Hover raises its opacity.
+    Color triColor = textStyle.color;
+    triColor.a *= hoverButton ? 1.0f : 0.7f;
+    float cx = buttonPos.x + buttonSize.x * 0.5f;
+    float cy = buttonPos.y + buttonSize.y * 0.5f;
+    float r = std::round(buttonSize.x * 0.30f); // half-extent of the triangle
+    if (nodeIsOpen) {
+      // ▼ pointing down
+      ctx->renderer.DrawTriangleFilled(Vec2(cx - r, cy - r * 0.5f),
+                                       Vec2(cx + r, cy - r * 0.5f),
+                                       Vec2(cx, cy + r * 0.6f), triColor);
+    } else {
+      // ▶ pointing right
+      ctx->renderer.DrawTriangleFilled(Vec2(cx - r * 0.5f, cy - r),
+                                       Vec2(cx - r * 0.5f, cy + r),
+                                       Vec2(cx + r * 0.6f, cy), triColor);
     }
 
     // Manejar click en el botón
@@ -614,9 +734,16 @@ bool TreeNode(const std::string &id, const std::string &label, bool *isOpen,
     }
   }
 
-  // Dibujar texto del nodo
-  float textX =
-      itemPos.x + (hasChildren ? state.expandButtonSize + 4.0f : 0.0f) + 4.0f;
+  // Slot for an optional leading icon glyph (after the expand button)
+  float iconSlot = 20.0f;
+  float chevronAdvance = (hasChildren ? state.expandButtonSize + 4.0f : 0.0f);
+  if (iconCodepoint != 0u) {
+    float iconSize = textStyle.fontSize;
+    DrawWidgetIcon(ctx, itemPos, itemSize, iconCodepoint, textStyle.color,
+                   iconSize, chevronAdvance + (iconSlot - iconSize) * 0.5f, 0.0f);
+  }
+
+  float textX = itemPos.x + chevronAdvance + iconSlot + 4.0f;
   Vec2 textPos(textX, itemPos.y + (itemSize.y - textStyle.fontSize) * 0.5f);
   ctx->renderer.DrawText(textPos, label, textStyle.color, textStyle.fontSize);
 
@@ -646,6 +773,68 @@ bool TreeNode(const std::string &id, const std::string &label, bool *isOpen,
 
   // Devolver true si el nodo está abierto (útil para mostrar hijos)
   return nodeIsOpen && hasChildren;
+}
+
+// Phase C5: Multi-select TreeNode with Ctrl/Shift modifiers and range selection.
+bool TreeNodeMulti(const std::string &id, const std::string &label, int nodeId,
+                   bool *isOpen, std::vector<int> *selectedIds) {
+  return TreeNodeMulti(id, label, 0u, nodeId, isOpen, selectedIds);
+}
+
+bool TreeNodeMulti(const std::string &id, const std::string &label, uint32_t iconCodepoint,
+                   int nodeId, bool *isOpen, std::vector<int> *selectedIds) {
+  UIContext *ctx = GetContext();
+  if (!ctx || ctx->currentTreeViewId == 0 || !selectedIds) {
+    return TreeNode(id, label, iconCodepoint, isOpen, nullptr);
+  }
+
+  // Record visit order for range select
+  uint32_t treeId = ctx->currentTreeViewId;
+  ctx->treeVisitOrder[treeId].push_back(nodeId);
+
+  bool isInSelection = std::find(selectedIds->begin(), selectedIds->end(), nodeId) != selectedIds->end();
+  bool tempSelected = isInSelection;
+
+  bool wasClicked = TreeNode(id, label, iconCodepoint, isOpen, &tempSelected);
+  if (!wasClicked) return false;
+
+  // Click happened — apply modifier semantics
+  SDL_Keymod km = SDL_GetModState();
+  bool ctrlHeld = (km & SDL_KMOD_CTRL) != 0;
+  bool shiftHeld = (km & SDL_KMOD_SHIFT) != 0;
+
+  if (shiftHeld) {
+    // Range select from anchor in DFS order
+    auto anchorIt = ctx->treeLastSelectedId.find(treeId);
+    int anchor = (anchorIt != ctx->treeLastSelectedId.end()) ? anchorIt->second : nodeId;
+    const auto& order = ctx->treeVisitOrder[treeId];
+    int aIdx = -1, bIdx = -1;
+    for (int i = 0; i < static_cast<int>(order.size()); ++i) {
+      if (order[i] == anchor) aIdx = i;
+      if (order[i] == nodeId) bIdx = i;
+    }
+    if (aIdx < 0 || bIdx < 0) {
+      selectedIds->assign({nodeId});
+    } else {
+      if (aIdx > bIdx) std::swap(aIdx, bIdx);
+      selectedIds->clear();
+      for (int i = aIdx; i <= bIdx; ++i) selectedIds->push_back(order[i]);
+    }
+  } else if (ctrlHeld) {
+    // Toggle membership
+    auto it2 = std::find(selectedIds->begin(), selectedIds->end(), nodeId);
+    if (it2 != selectedIds->end()) {
+      selectedIds->erase(it2);
+    } else {
+      selectedIds->push_back(nodeId);
+    }
+    ctx->treeLastSelectedId[treeId] = nodeId;
+  } else {
+    // Replace selection
+    selectedIds->assign({nodeId});
+    ctx->treeLastSelectedId[treeId] = nodeId;
+  }
+  return true;
 }
 
 void TreeNodePush() {
@@ -686,6 +875,7 @@ bool BeginTable(const std::string& id, std::vector<TableColumn>& columns,
       state.sortColumn = externalState->sortColumn;
       state.sortAscending = externalState->sortAscending;
       state.scrollOffset = externalState->scrollOffset;
+      state.scrollOffsetX = externalState->scrollOffsetX; // Phase C7
     }
   } else if (externalState) {
     // Sync sort state from external if provided
@@ -701,16 +891,14 @@ bool BeginTable(const std::string& id, std::vector<TableColumn>& columns,
 
   // Resolve table size
   Vec2 tableSize = size;
-  if (tableSize.x <= 0.0f) {
-    tableSize.x = totalColWidth + SCROLLBAR_WIDTH;
-  }
-  if (tableSize.y <= 0.0f) {
-    tableSize.y = 300.0f;
+  if (tableSize.x <= 0.0f || tableSize.y <= 0.0f) {
+    Vec2 avail = GetCurrentAvailableSpace(ctx);
+    if (tableSize.x <= 0.0f) tableSize.x = avail.x > 0.0f ? avail.x : (totalColWidth + SCROLLBAR_WIDTH);
+    if (tableSize.y <= 0.0f) tableSize.y = avail.y > 0.0f ? avail.y : 300.0f;
   }
 
   // Position
   Vec2 tablePos = ctx->cursorPos;
-  tablePos = ResolveAbsolutePosition(ctx, tablePos, tableSize);
 
   const PanelStyle &panelStyle = ctx->style.panel;
   const TextStyle &captionStyle = ctx->style.GetTextStyle(TypographyStyle::Caption);
@@ -719,10 +907,27 @@ bool BeginTable(const std::string& id, std::vector<TableColumn>& columns,
   float headerHeight = 28.0f;
   float rowHeight = 28.0f;
   float scrollbarWidth = SCROLLBAR_WIDTH;
+  // Phase C7: horizontal scroll computation. Reserve space for h-scrollbar
+  // when total columns width exceeds the available scrollable region.
+  int frozenColCount = 0;
+  if (externalState) {
+    frozenColCount = std::clamp(externalState->frozenColumns, 0,
+                                static_cast<int>(columns.size()));
+  }
+  float frozenWidth = 0.0f;
+  for (int i = 0; i < frozenColCount; ++i) frozenWidth += columns[i].width;
+  // First pass: assume no h-scrollbar
   float dataAreaHeight = tableSize.y - headerHeight;
   float totalDataHeight = static_cast<float>(rowCount) * rowHeight;
   bool needsScrollbar = totalDataHeight > dataAreaHeight;
   float availableContentWidth = needsScrollbar ? tableSize.x - scrollbarWidth : tableSize.x;
+  bool needsHScrollbar = (totalColWidth > availableContentWidth);
+  if (needsHScrollbar) {
+    dataAreaHeight = tableSize.y - headerHeight - scrollbarWidth;
+    totalDataHeight = static_cast<float>(rowCount) * rowHeight;
+    needsScrollbar = totalDataHeight > dataAreaHeight;
+    availableContentWidth = needsScrollbar ? tableSize.x - scrollbarWidth : tableSize.x;
+  }
 
   // Draw table background
   Color tableBg = AdjustContainerBackground(panelStyle.background, ctx->style.isDarkTheme);
@@ -757,20 +962,45 @@ bool BeginTable(const std::string& id, std::vector<TableColumn>& columns,
   Color headerBg = panelStyle.headerBackground;
   ctx->renderer.DrawRectFilled(headerPos, headerSize, headerBg, 0.0f);
 
+  // Phase C7: clamp horizontal scroll offset to valid range now that we know widths.
+  {
+    float scrollableContent = std::max(0.0f, totalColWidth - frozenWidth);
+    float scrollableArea = std::max(0.0f, availableContentWidth - frozenWidth);
+    float maxScrollX = std::max(0.0f, scrollableContent - scrollableArea);
+    state.scrollOffsetX = std::clamp(state.scrollOffsetX, 0.0f, maxScrollX);
+  }
+  float scrollOffsetX = state.scrollOffsetX;
+
   // Draw header cells and handle interactions
-  float colX = tablePos.x;
+  // Phase C7: frozen columns drawn at logical X; non-frozen shifted by -scrollOffsetX.
+  // Clipping splits the header into frozen and scrollable sub-regions so that
+  // non-frozen content doesn't paint over the frozen area.
+  float frozenColX = tablePos.x;
+  float scrollColX = tablePos.x + frozenWidth - scrollOffsetX;
   constexpr float resizeHitWidth = 4.0f; // +-4px from column border for resize hit area
   constexpr float sortArrowSize = 5.0f;
 
   for (int c = 0; c < static_cast<int>(columns.size()); ++c) {
+    bool frozen = (c < frozenColCount);
     float colW = columns[c].width;
+    float colX = frozen ? frozenColX : scrollColX;
+    // Push appropriate sub-region clip for this header cell
+    if (frozen) {
+      ctx->renderer.PushClipRect(Vec2(tablePos.x, tablePos.y),
+                                 Vec2(frozenWidth, headerHeight));
+    } else {
+      ctx->renderer.PushClipRect(Vec2(tablePos.x + frozenWidth, tablePos.y),
+                                 Vec2(std::max(0.0f, availableContentWidth - frozenWidth),
+                                      headerHeight));
+    }
     Vec2 cellPos(colX, tablePos.y);
     Vec2 cellSize(colW, headerHeight);
 
-    // Draw header text
+    // Draw header text (with optional leading icon)
     float textPad = 6.0f;
-    Vec2 textPos(colX + textPad,
-                 tablePos.y + (headerHeight - captionStyle.fontSize) * 0.5f);
+    float headerIconSize = captionStyle.fontSize;
+    float headerIconGap = 4.0f;
+    float headerIconSlot = (columns[c].iconCodepoint != 0u) ? (headerIconSize + headerIconGap) : 0.0f;
 
     // Determine if this column is sorted
     bool isSorted = (state.sortColumn == c);
@@ -779,12 +1009,21 @@ bool BeginTable(const std::string& id, std::vector<TableColumn>& columns,
       headerTextColor = ctx->style.button.background.hover; // accent color for sorted column
     }
 
+    if (columns[c].iconCodepoint != 0u) {
+      DrawWidgetIcon(ctx, Vec2(colX, tablePos.y), Vec2(columns[c].width, headerHeight),
+                     columns[c].iconCodepoint, headerTextColor, headerIconSize,
+                     textPad, headerIconGap);
+    }
+
+    Vec2 textPos(colX + textPad + headerIconSlot,
+                 tablePos.y + (headerHeight - captionStyle.fontSize) * 0.5f);
+
     ctx->renderer.DrawText(textPos, columns[c].header, headerTextColor, captionStyle.fontSize);
 
     // Draw sort indicator if this column is sorted
     if (isSorted) {
       Vec2 headerTextSize = MeasureTextCached(ctx, columns[c].header, captionStyle.fontSize);
-      float arrowX = colX + textPad + headerTextSize.x + 4.0f;
+      float arrowX = colX + textPad + headerIconSlot + headerTextSize.x + 4.0f;
       float arrowCenterY = tablePos.y + headerHeight * 0.5f;
 
       if (state.sortAscending) {
@@ -850,7 +1089,11 @@ bool BeginTable(const std::string& id, std::vector<TableColumn>& columns,
       }
     }
 
-    colX += colW;
+    // Pop the per-cell header clip
+    ctx->renderer.PopClipRect();
+
+    if (frozen) frozenColX += colW;
+    else        scrollColX += colW;
   }
 
   // Draw header bottom border
@@ -902,6 +1145,25 @@ bool BeginTable(const std::string& id, std::vector<TableColumn>& columns,
   frame.savedLastItemSize = ctx->lastItemSize;
   frame.contentWidth = availableContentWidth;
   frame.scrollbarWidth = needsScrollbar ? scrollbarWidth : 0.0f;
+  // Phase C7: forward freeze columns + selectedRows pointer
+  if (externalState) {
+    frame.frozenColumns = std::clamp(externalState->frozenColumns, 0,
+                                     static_cast<int>(columns.size()));
+    frame.selectedRowsPtr = &externalState->selectedRows;
+  } else {
+    frame.frozenColumns = 0;
+    frame.selectedRowsPtr = nullptr;
+  }
+  frame.lastSelectedRow = state.lastSelectedRow;
+  // Cap anchor to valid range if rowCount changed
+  if (frame.lastSelectedRow >= rowCount) frame.lastSelectedRow = -1;
+  // Phase C7: forward horizontal scroll fields
+  frame.scrollOffsetX = state.scrollOffsetX;
+  frame.frozenContentWidth = frozenWidth;
+  frame.totalColumnsWidth = totalColWidth;
+  frame.dataAreaHeight = dataAreaHeight;
+  frame.needsHScrollbar = needsHScrollbar;
+  frame.cellClipPushed = false;
 
   // Push clip rect for data area
   Vec2 dataAreaPos(tablePos.x, tablePos.y + headerHeight);
@@ -931,6 +1193,11 @@ void TableNextRow() {
     return;
 
   auto &frame = ctx->tableStack.back();
+  // Phase C7: pop any pending per-cell clip from the previous row's last cell.
+  if (frame.cellClipPushed) {
+    ctx->renderer.PopClipRect();
+    frame.cellClipPushed = false;
+  }
   frame.currentRow++;
   frame.currentCol = 0;
 
@@ -971,21 +1238,129 @@ void TableSetCell(int column) {
   if (!frame.columnsPtr || column < 0 || column >= frame.columnCount)
     return;
 
+  // Phase C7: pop any clip from the previous cell so we can push the new one.
+  if (frame.cellClipPushed) {
+    ctx->renderer.PopClipRect();
+    frame.cellClipPushed = false;
+  }
+
   frame.currentCol = column;
 
-  // Calculate X position for this column
-  float colX = frame.position.x;
-  for (int c = 0; c < column; ++c) {
-    colX += frame.columnsPtr[c].width;
+  // Phase C7: compute cell X with frozen vs scrollable handling.
+  bool frozen = (column < frame.frozenColumns);
+  float colX;
+  if (frozen) {
+    colX = frame.position.x;
+    for (int c = 0; c < column; ++c) colX += frame.columnsPtr[c].width;
+  } else {
+    colX = frame.position.x + frame.frozenContentWidth - frame.scrollOffsetX;
+    for (int c = frame.frozenColumns; c < column; ++c) colX += frame.columnsPtr[c].width;
   }
 
   float rowY = frame.position.y + frame.headerHeight +
                frame.currentRow * frame.rowHeight - frame.scrollOffset;
 
+  // Push a sub-region clip so non-frozen content cannot paint over the frozen
+  // region (and vice versa) when scrolled horizontally.
+  if (frozen) {
+    ctx->renderer.PushClipRect(
+        Vec2(frame.position.x, frame.position.y + frame.headerHeight),
+        Vec2(frame.frozenContentWidth, frame.dataAreaHeight));
+  } else {
+    float scrollableW = std::max(0.0f, frame.contentWidth - frame.frozenContentWidth);
+    ctx->renderer.PushClipRect(
+        Vec2(frame.position.x + frame.frozenContentWidth,
+             frame.position.y + frame.headerHeight),
+        Vec2(scrollableW, frame.dataAreaHeight));
+  }
+  frame.cellClipPushed = true;
+
   // Set cursor to cell position with some padding
   float cellPad = 6.0f;
   ctx->cursorPos = Vec2(colX + cellPad,
       rowY + (frame.rowHeight - ctx->style.GetTextStyle(TypographyStyle::Body).fontSize) * 0.5f);
+}
+
+// Phase C7: Row selection helper. Call inside a row to make the entire row
+// click-selectable using the table's selectedRows set with Ctrl/Shift modifiers.
+bool TableRowSelectable(int rowIndex) {
+  UIContext *ctx = GetContext();
+  if (!ctx || ctx->tableStack.empty()) return false;
+  auto &frame = ctx->tableStack.back();
+  if (rowIndex < 0 || rowIndex >= frame.rowCount) return false;
+  if (!frame.selectedRowsPtr) return false;
+
+  // Compute row rect in screen space
+  float rowY = frame.position.y + frame.headerHeight +
+               rowIndex * frame.rowHeight - frame.scrollOffset;
+  Vec2 rowPos(frame.position.x, rowY);
+  Vec2 rowSize(frame.contentWidth, frame.rowHeight);
+
+  // Skip if outside the visible area
+  float visTop = frame.position.y + frame.headerHeight;
+  float visBot = frame.position.y + frame.size.y;
+  if (rowY + frame.rowHeight < visTop || rowY > visBot)
+    return false;
+
+  auto &sel = *frame.selectedRowsPtr;
+  bool isSelected = std::find(sel.begin(), sel.end(), rowIndex) != sel.end();
+
+  bool hover = IsMouseOver(ctx, rowPos, rowSize);
+  bool clicked = false;
+
+  // Hover highlight (subtle)
+  if (hover && !isSelected) {
+    Color hoverBg = ctx->style.button.background.hover;
+    hoverBg.a *= 0.18f;
+    ctx->renderer.DrawRectFilled(rowPos, rowSize, hoverBg, 0.0f);
+  }
+
+  // Selection highlight
+  if (isSelected) {
+    Color selBg = ctx->style.button.background.hover;
+    selBg.a *= 0.32f;
+    ctx->renderer.DrawRectFilled(rowPos, rowSize, selBg, 0.0f);
+    Color selBorder = ctx->style.button.background.hover;
+    selBorder.a *= 0.6f;
+    ctx->renderer.DrawLine(Vec2(rowPos.x, rowPos.y),
+                           Vec2(rowPos.x + rowSize.x, rowPos.y),
+                           selBorder, 1.0f);
+    ctx->renderer.DrawLine(Vec2(rowPos.x, rowPos.y + rowSize.y),
+                           Vec2(rowPos.x + rowSize.x, rowPos.y + rowSize.y),
+                           selBorder, 1.0f);
+  }
+
+  if (hover && ctx->input.IsMousePressed(0)) {
+    bool ctrl = ctx->input.IsKeyDown(SDL_SCANCODE_LCTRL) ||
+                ctx->input.IsKeyDown(SDL_SCANCODE_RCTRL);
+    bool shift = ctx->input.IsKeyDown(SDL_SCANCODE_LSHIFT) ||
+                 ctx->input.IsKeyDown(SDL_SCANCODE_RSHIFT);
+
+    if (shift && frame.lastSelectedRow >= 0) {
+      // Range select: replace with [anchor..rowIndex]
+      sel.clear();
+      int lo = std::min(frame.lastSelectedRow, rowIndex);
+      int hi = std::max(frame.lastSelectedRow, rowIndex);
+      for (int r = lo; r <= hi; ++r) sel.push_back(r);
+    } else if (ctrl) {
+      // Toggle membership; update anchor only on add
+      auto it = std::find(sel.begin(), sel.end(), rowIndex);
+      if (it != sel.end()) {
+        sel.erase(it);
+      } else {
+        sel.push_back(rowIndex);
+        frame.lastSelectedRow = rowIndex;
+      }
+    } else {
+      // Replace selection with single row
+      sel.clear();
+      sel.push_back(rowIndex);
+      frame.lastSelectedRow = rowIndex;
+    }
+    clicked = true;
+  }
+
+  return clicked;
 }
 
 void EndTable() {
@@ -996,14 +1371,39 @@ void EndTable() {
   auto frame = ctx->tableStack.back();
   ctx->tableStack.pop_back();
 
+  // Phase C7: pop any pending per-cell clip from the last cell of the last row.
+  if (frame.cellClipPushed) {
+    ctx->renderer.PopClipRect();
+    frame.cellClipPushed = false;
+  }
+
   // Pop clip rect for data area
   if (frame.clipPushed) {
     ctx->renderer.PopClipRect();
   }
 
+  // Phase C7: draw visual freeze separator after the last frozen column
+  if (frame.frozenColumns > 0 && frame.frozenColumns < frame.columnCount &&
+      frame.columnsPtr) {
+    float fx = frame.position.x;
+    int fc = std::min(frame.frozenColumns, frame.columnCount);
+    for (int c = 0; c < fc; ++c) fx += frame.columnsPtr[c].width;
+    if (fx < frame.position.x + frame.contentWidth) {
+      Color sepCol = ctx->style.panel.borderColor;
+      sepCol.a *= 0.85f;
+      ctx->renderer.DrawLine(
+          Vec2(fx, frame.position.y + frame.headerHeight),
+          Vec2(fx, frame.position.y + frame.size.y),
+          sepCol, 1.5f);
+    }
+  }
+
   // Draw vertical scrollbar if needed
   auto &state = ctx->tableStates[frame.id];
-  float dataAreaHeight = frame.size.y - frame.headerHeight;
+  // Phase C7: persist anchor row id back to per-table state
+  state.lastSelectedRow = frame.lastSelectedRow;
+  // Phase C7: use the dataAreaHeight that already excludes h-scrollbar space.
+  float dataAreaHeight = frame.dataAreaHeight;
   float totalDataHeight = static_cast<float>(frame.rowCount) * frame.rowHeight;
   bool needsScrollbar = totalDataHeight > dataAreaHeight;
 
@@ -1017,10 +1417,31 @@ void EndTable() {
                   state.draggingScrollbar, true);
   }
 
+  // Phase C7: horizontal scrollbar for non-frozen columns.
+  if (frame.needsHScrollbar) {
+    float scrollableContent = std::max(0.0f, frame.totalColumnsWidth - frame.frozenContentWidth);
+    float scrollableArea = std::max(0.0f, frame.contentWidth - frame.frozenContentWidth);
+    Vec2 hbarPos(frame.position.x + frame.frozenContentWidth,
+                 frame.position.y + frame.headerHeight + dataAreaHeight);
+    Vec2 hbarSize(scrollableArea, SCROLLBAR_WIDTH);
+    DrawScrollbar(ctx, hbarPos, hbarSize, scrollableContent, scrollableArea,
+                  state.scrollOffsetX, state.draggingHScrollbar,
+                  state.hDragStartMouse, state.hDragStartScroll,
+                  state.draggingHScrollbar, false);
+  }
+
   // Draw table outer border
   const PanelStyle &panelStyle = ctx->style.panel;
   ctx->renderer.DrawRect(frame.position, frame.size, panelStyle.borderColor,
                          panelStyle.cornerRadius);
+
+  // Phase C7: sync horizontal scroll offset back to external state.
+  if (auto it = ctx->tableStates.find(frame.id); it != ctx->tableStates.end()) {
+    // (state was retrieved above; nothing extra needed here — external sync
+    //  happens implicitly the next frame because BeginTable copies from state
+    //  if not initialized; for already-initialized tables we leave external
+    //  scrollOffsetX read-only from user perspective.)
+  }
 
   // Restore cursor state and advance
   ctx->cursorPos = frame.savedCursor;

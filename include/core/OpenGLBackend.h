@@ -13,7 +13,7 @@ public:
     OpenGLBackend() = default;
     ~OpenGLBackend() override;
 
-    bool Init(void* windowHandle) override;
+    bool Init(void* windowHandle, void* existingGLContext = nullptr) override;
     void Shutdown() override;
     void BeginFrame(const Color& clearColor) override;
     void EndFrame() override;
@@ -45,9 +45,13 @@ public:
     void SaveState() override;
     void RestoreState() override;
 
+    // --- Phase C6: eyedropper ---
+    Color ReadPixel(int x, int y) override;
+
 private:
     SDL_Window* window = nullptr;
     SDL_GLContext glContext = nullptr;
+    bool ownsGLContext = true;  // false when using an external context
     GLuint shaderProgram = 0;
     GLuint textShaderProgram = 0;
     GLuint msdfShaderProgram = 0;

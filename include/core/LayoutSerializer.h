@@ -5,11 +5,22 @@
 #include <sstream>
 #include <iostream>
 #include <unordered_map>
+#include <vector>
 
 namespace FluentUI {
 
 // Forward declarations
 struct UIContext;
+
+// Phase E5: information about a detached dock panel hosted in its own OS window.
+// Captured during SaveLayout for later restoration.
+struct ViewportInfo {
+    std::string panelId;
+    int x = 0;
+    int y = 0;
+    int width = 480;
+    int height = 360;
+};
 
 // Simple key-value layout serialization format
 // Format is a custom text-based format (no JSON library dependency)
@@ -39,6 +50,15 @@ public:
     // Load dock layout and panel states from a file
     static bool LoadLayout(const std::string& filepath, DockSpace& dockSpace,
                            UIContext* ctx = nullptr);
+
+    // Phase E5: save layout including detached viewports (multi-viewport).
+    static bool SaveLayout(const std::string& filepath, const DockSpace& dockSpace,
+                           UIContext* ctx, const std::vector<ViewportInfo>& viewports);
+
+    // Phase E5: load layout and populate viewports list (caller restores them
+    // via FluentApp::restoreViewports with a builder factory).
+    static bool LoadLayout(const std::string& filepath, DockSpace& dockSpace,
+                           UIContext* ctx, std::vector<ViewportInfo>* viewports);
 
     // Serialize dock tree to string
     static std::string SerializeDockTree(const DockNode* node, const std::string& prefix = "dock");

@@ -6,6 +6,11 @@ namespace FluentUI {
 
 bool LayoutSerializer::SaveLayout(const std::string& filepath, const DockSpace& dockSpace,
                                    UIContext* ctx) {
+    return SaveLayout(filepath, dockSpace, ctx, {});
+}
+
+bool LayoutSerializer::SaveLayout(const std::string& filepath, const DockSpace& dockSpace,
+                                   UIContext* ctx, const std::vector<ViewportInfo>& viewports) {
     std::ofstream file(filepath);
     if (!file.is_open()) {
         Log(LogLevel::Error, "LayoutSerializer: Cannot open file for writing: %s", filepath.c_str());
@@ -19,6 +24,22 @@ bool LayoutSerializer::SaveLayout(const std::string& filepath, const DockSpace& 
     if (dockSpace.Root()) {
         file << "# Dock Layout\n";
         WriteDockNode(file, dockSpace.Root(), "dock");
+        file << "\n";
+    }
+
+    // Phase E5: save detached viewports
+    if (!viewports.empty()) {
+        file << "# Viewports (detached panels)\n";
+        file << "viewport.count=" << viewports.size() << "\n";
+        for (size_t i = 0; i < viewports.size(); ++i) {
+            const auto& v = viewports[i];
+            std::string prefix = "viewport." + std::to_string(i);
+            file << prefix << ".panel=" << v.panelId << "\n";
+            file << prefix << ".x=" << v.x << "\n";
+            file << prefix << ".y=" << v.y << "\n";
+            file << prefix << ".w=" << v.width << "\n";
+            file << prefix << ".h=" << v.height << "\n";
+        }
         file << "\n";
     }
 
@@ -54,6 +75,11 @@ bool LayoutSerializer::SaveLayout(const std::string& filepath, const DockSpace& 
 
 bool LayoutSerializer::LoadLayout(const std::string& filepath, DockSpace& dockSpace,
                                    UIContext* ctx) {
+    return LoadLayout(filepath, dockSpace, ctx, nullptr);
+}
+
+bool LayoutSerializer::LoadLayout(const std::string& filepath, DockSpace& dockSpace,
+                                   UIContext* ctx, std::vector<ViewportInfo>* viewports) {
     std::ifstream file(filepath);
     if (!file.is_open()) {
         return false; // File doesn't exist yet — not an error
@@ -76,6 +102,27 @@ bool LayoutSerializer::LoadLayout(const std::string& filepath, DockSpace& dockSp
         auto root = ReadDockNode(data, "dock");
         if (root) {
             dockSpace.SetRoot(std::move(root));
+        }
+    }
+
+    // Phase E5: load detached viewports
+    if (viewports) {
+        viewports->clear();
+        auto countIt = data.find("viewport.count");
+        if (countIt != data.end()) {
+            int count = std::stoi(countIt->second);
+            for (int i = 0; i < count; ++i) {
+                std::string prefix = "viewport." + std::to_string(i);
+                auto pid = data.find(prefix + ".panel");
+                if (pid == data.end()) continue;
+                ViewportInfo v;
+                v.panelId = pid->second;
+                if (auto it = data.find(prefix + ".x"); it != data.end()) v.x = std::stoi(it->second);
+                if (auto it = data.find(prefix + ".y"); it != data.end()) v.y = std::stoi(it->second);
+                if (auto it = data.find(prefix + ".w"); it != data.end()) v.width = std::stoi(it->second);
+                if (auto it = data.find(prefix + ".h"); it != data.end()) v.height = std::stoi(it->second);
+                viewports->push_back(v);
+            }
         }
     }
 

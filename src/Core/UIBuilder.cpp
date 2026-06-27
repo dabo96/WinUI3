@@ -37,21 +37,60 @@ bool UIBuilder::button(const std::string& label, const Vec2& size, bool enabled)
     return Button(label, size, std::nullopt, enabled);
 }
 
+bool UIBuilder::button(const std::string& label, uint32_t iconCodepoint,
+                       const Vec2& size, bool enabled) {
+    return Button(label, iconCodepoint, size, std::nullopt, enabled);
+}
+
+bool UIBuilder::iconButton(uint32_t iconCodepoint, float size, bool enabled) {
+    return IconButton(iconCodepoint, size, std::nullopt, enabled);
+}
+
 void UIBuilder::label(const std::string& text, TypographyStyle variant) {
     Label(text, std::nullopt, variant);
+}
+
+void UIBuilder::label(const std::string& text, uint32_t iconCodepoint,
+                      TypographyStyle variant) {
+    Label(text, iconCodepoint, std::nullopt, variant);
+}
+
+void UIBuilder::iconLabel(uint32_t iconCodepoint, float size) {
+    IconLabel(iconCodepoint, size);
 }
 
 void UIBuilder::separator() {
     Separator();
 }
 
+bool UIBuilder::segmentedControl(const std::string& id,
+                                 const std::vector<std::string>& options,
+                                 int* activeIndex) {
+    return SegmentedControl(id, options, activeIndex);
+}
+
+bool UIBuilder::segmentedControl(const std::string& id,
+                                 const std::vector<std::pair<std::string, uint32_t>>& options,
+                                 int* activeIndex) {
+    return SegmentedControl(id, options, activeIndex);
+}
+
 bool UIBuilder::checkbox(const std::string& label, bool* value) {
     return Checkbox(label, value);
+}
+
+bool UIBuilder::checkbox(const std::string& label, uint32_t iconCodepoint, bool* value) {
+    return Checkbox(label, iconCodepoint, value);
 }
 
 bool UIBuilder::radioButton(const std::string& label, int* value, int option,
                             const std::string& group) {
     return RadioButton(label, value, option, group);
+}
+
+bool UIBuilder::radioButton(const std::string& label, uint32_t iconCodepoint,
+                            int* value, int option, const std::string& group) {
+    return RadioButton(label, iconCodepoint, value, option, group);
 }
 
 bool UIBuilder::slider(const std::string& label, float* value, float min, float max,
@@ -74,6 +113,11 @@ bool UIBuilder::textInput(const std::string& label, std::string* value, float wi
 
 bool UIBuilder::comboBox(const std::string& label, int* current,
                          const std::vector<std::string>& items, float width) {
+    return ComboBox(label, current, items, width);
+}
+
+bool UIBuilder::comboBox(const std::string& label, int* current,
+                         const std::vector<std::pair<std::string, uint32_t>>& items, float width) {
     return ComboBox(label, current, items, width);
 }
 
@@ -101,6 +145,14 @@ bool UIBuilder::colorPicker(const std::string& label, Color* value) {
 void UIBuilder::panel(const std::string& id, std::function<void(UIBuilder&)> content,
                       const Vec2& size) {
     if (BeginPanel(id, size)) {
+        if (content) content(*this);
+    }
+    EndPanel();
+}
+
+void UIBuilder::panel(const std::string& id, uint32_t iconCodepoint,
+                      std::function<void(UIBuilder&)> content, const Vec2& size) {
+    if (BeginPanel(id, iconCodepoint, size)) {
         if (content) content(*this);
     }
     EndPanel();
@@ -175,6 +227,17 @@ bool UIBuilder::treeNode(const std::string& label, bool* isOpen,
     return clicked;
 }
 
+bool UIBuilder::treeNode(const std::string& label, uint32_t iconCodepoint,
+                         bool* isOpen, std::function<void(UIBuilder&)> children) {
+    bool clicked = TreeNode(label, label, iconCodepoint, isOpen);
+    if (isOpen && *isOpen && children) {
+        TreeNodePush();
+        children(*this);
+        TreeNodePop();
+    }
+    return clicked;
+}
+
 // --- Menu system ---
 
 void UIBuilder::menuBar(std::function<void(UIBuilder&)> content) {
@@ -191,8 +254,20 @@ void UIBuilder::menu(const std::string& label, std::function<void(UIBuilder&)> c
     }
 }
 
+void UIBuilder::menu(const std::string& label, uint32_t iconCodepoint,
+                     std::function<void(UIBuilder&)> content) {
+    if (BeginMenu(label, iconCodepoint)) {
+        if (content) content(*this);
+        EndMenu();
+    }
+}
+
 bool UIBuilder::menuItem(const std::string& label, bool enabled) {
     return MenuItem(label, enabled);
+}
+
+bool UIBuilder::menuItem(const std::string& label, uint32_t iconCodepoint, bool enabled) {
+    return MenuItem(label, iconCodepoint, enabled);
 }
 
 void UIBuilder::menuSeparator() {
@@ -474,13 +549,25 @@ void UIBuilder::dockSpace(std::function<void(UIBuilder&)> content) {
 
         if (drag.isDragging) {
             if (!mouseDown) {
-                // Drop: dock or undock
-                if (drag.hoverZone != DockPosition::Float && !drag.hoverTargetId.empty()) {
+                // Phase E3: detect drop outside the window viewport — fire drag-out callback.
+                bool outsideViewport = (mx < 0.0f || my < 0.0f ||
+                                        mx > viewport.x || my > viewport.y);
+                if (outsideViewport && drag.onPanelDragOut) {
+                    float gx = 0.0f, gy = 0.0f;
+                    SDL_GetGlobalMouseState(&gx, &gy);
+                    std::string panelId = drag.panelId;
+                    auto cb = drag.onPanelDragOut;
+                    drag.Reset();
+                    cb(panelId, static_cast<int>(gx), static_cast<int>(gy));
+                } else if (drag.hoverZone != DockPosition::Float && !drag.hoverTargetId.empty()) {
+                    // Drop: dock at hovered zone
                     dock.UndockPanel(drag.panelId);
                     dock.DockPanel(drag.panelId, drag.hoverZone, drag.hoverTargetId);
                     dock.ComputeLayout(dockArea);
+                    drag.Reset();
+                } else {
+                    drag.Reset();
                 }
-                drag.Reset();
             } else {
                 // Update ghost position
                 drag.ghostPos = {mx - drag.dragOffset.x, my - drag.dragOffset.y};

@@ -26,17 +26,22 @@ bool BeginMenuBar() {
 
   const PanelStyle &panelStyle = ctx->style.panel;
 
-  // Dibujar fondo del MenuBar - con contraste sin borde
-  Color menuBarBg = AdjustContainerBackground(panelStyle.headerBackground, ctx->style.isDarkTheme);
-  ctx->renderer.DrawRectFilled(menuBar.position, menuBar.size,
-                               menuBarBg, 0.0f);
+  // Full-width background — darkest bar (use app background, not panel header)
+  Color menuBarBg = ctx->style.backgroundColor;
+  ctx->renderer.DrawRectFilled(menuBar.position, menuBar.size, menuBarBg, 0.0f);
 
-  // Configurar cursor para el MenuBar (sin padding)
-  ctx->cursorPos = menuBar.position;
+  // Subtle bottom border (--border-soft)
+  ctx->renderer.DrawRectFilled(
+      Vec2(0.0f, MENUBAR_HEIGHT - 1.0f),
+      Vec2(viewport.x, 1.0f),
+      panelStyle.borderColor, 0.0f);
+
+  // Cursor starts with left padding; horizontal layout uses auto width (not full viewport)
+  float leftPad = 12.0f;
+  ctx->cursorPos = Vec2(leftPad, 0.0f);
   ctx->lastItemPos = ctx->cursorPos;
 
-  // Iniciar layout horizontal para los menús (sin padding)
-  BeginHorizontal(0.0f, menuBar.size, Vec2(0.0f, 0.0f));
+  BeginHorizontal(4.0f, Vec2(0.0f, MENUBAR_HEIGHT), Vec2(0.0f, 0.0f));
 
   return true;
 }
@@ -46,18 +51,21 @@ void EndMenuBar() {
   if (!ctx)
     return;
 
-  // Cerrar layout horizontal
   EndHorizontal(false);
 
   auto &menuBar = ctx->menuBarState;
 
-  // Avanzar cursor después del MenuBar
+  // Advance cursor below the menu bar
   ctx->cursorPos = Vec2(0.0f, menuBar.size.y);
   ctx->lastItemPos = ctx->cursorPos;
   ctx->lastItemSize = menuBar.size;
 }
 
 bool BeginMenu(const std::string &label, bool enabled) {
+  return BeginMenu(label, 0u, enabled);
+}
+
+bool BeginMenu(const std::string &label, uint32_t iconCodepoint, bool enabled) {
   UIContext *ctx = GetContext();
   if (!ctx)
     return false;
@@ -71,8 +79,13 @@ bool BeginMenu(const std::string &label, bool enabled) {
 
   // Use the same constant height as MenuBar
   float menuHeight = MENUBAR_HEIGHT;
-  float menuPadding = 12.0f;
-  Vec2 menuSize(textSize.x + menuPadding * 2.0f, menuHeight);
+  float menuPadding = 10.0f;  // compact padding matching HTML reference
+  // Reserve an icon slot on the left when an icon is requested.
+  // Icon is rendered at label's font size + small gap.
+  float iconSize = textStyle.fontSize + 2.0f;
+  float iconGap = 6.0f;
+  float iconSlot = (iconCodepoint != 0u) ? (iconSize + iconGap) : 0.0f;
+  Vec2 menuSize(textSize.x + menuPadding * 2.0f + iconSlot, menuHeight);
   Vec2 menuPos = ctx->cursorPos;
 
   bool hover = enabled && IsMouseOver(ctx, menuPos, menuSize);
@@ -99,26 +112,43 @@ bool BeginMenu(const std::string &label, bool enabled) {
     ctx->activeMenuId = menuId;
   }
 
-  // Dibujar fondo del menú
-  Color menuBg = panelStyle.headerBackground;
-  if (hover && enabled) {
-    menuBg = panelStyle.background;
-  }
-  if (!enabled) {
-    menuBg = Color(menuBg.r * 0.5f, menuBg.g * 0.5f, menuBg.b * 0.5f, menuBg.a);
+  // Menu item background: transparent by default, subtle highlight on hover/open.
+  // Overlay tinted by theme — blanco aclara sobre barra oscura, negro oscurece
+  // sobre barra clara. Un overlay blanco fijo era invisible en tema claro.
+  menuSize.y = MENUBAR_HEIGHT;
+  bool darkBar = ctx->style.isDarkTheme;
+  if (state.open) {
+    Color openBg = darkBar ? Color(1.0f, 1.0f, 1.0f, 0.12f)
+                           : Color(0.0f, 0.0f, 0.0f, 0.10f);
+    ctx->renderer.DrawRectFilled(menuPos, menuSize, openBg, 4.0f);
+  } else if (hover && enabled) {
+    Color hoverBg = darkBar ? Color(1.0f, 1.0f, 1.0f, 0.08f)
+                            : Color(0.0f, 0.0f, 0.0f, 0.07f);
+    ctx->renderer.DrawRectFilled(menuPos, menuSize, hoverBg, 4.0f);
   }
 
-  // Force exact height before drawing to prevent any size modifications
-  menuSize.y = MENUBAR_HEIGHT;
-  ctx->renderer.DrawRectFilled(menuPos, menuSize, menuBg, 0.0f);
+  // Compute text / icon colors (icon shares the text color curve)
+  Color textColor;
+  if (!enabled) {
+    textColor = Color(textStyle.color.r * 0.4f, textStyle.color.g * 0.4f,
+                      textStyle.color.b * 0.4f, textStyle.color.a);
+  } else if (hover || state.open) {
+    textColor = textStyle.color;  // full brightness on hover/open
+  } else {
+    textColor = Color(textStyle.color.r * 0.75f, textStyle.color.g * 0.75f,
+                      textStyle.color.b * 0.75f, textStyle.color.a);  // dimmed default
+  }
+
+  // Dibujar icono (si hay)
+  if (iconCodepoint != 0u) {
+    Vec2 iconPos(menuPos.x + menuPadding,
+                 menuPos.y + (menuHeight - iconSize) * 0.5f);
+    ctx->renderer.DrawIconGlyph(iconPos, iconCodepoint, textColor, iconSize);
+  }
 
   // Dibujar texto del menú
-  Vec2 textPos(menuPos.x + menuPadding,
+  Vec2 textPos(menuPos.x + menuPadding + iconSlot,
                menuPos.y + (menuHeight - textSize.y) * 0.5f);
-  Color textColor =
-      enabled ? textStyle.color
-              : Color(textStyle.color.r * 0.5f, textStyle.color.g * 0.5f,
-                      textStyle.color.b * 0.5f, textStyle.color.a);
   ctx->renderer.DrawText(textPos, label, textColor, textStyle.fontSize);
 
   AdvanceCursor(ctx, menuSize);
@@ -137,19 +167,16 @@ bool BeginMenu(const std::string &label, bool enabled) {
     ctx->menuItemStartIndexStack.push_back(ctx->currentMenuItems.size());
 
     Vec2 dropdownPos(state.position.x, state.position.y + state.size.y);
-    float dropdownWidth = 200.0f;
-
-    // Asegurar que el dropdown no se salga de la ventana
-    Vec2 viewport = ctx->renderer.GetViewportSize();
-    if (dropdownPos.x + dropdownWidth > viewport.x) {
-      dropdownPos.x = viewport.x - dropdownWidth;
-    }
 
     // Configurar cursor para los items del menú (dentro del dropdown)
     ctx->cursorPos = dropdownPos;
 
-    // Iniciar layout vertical para los items del menú
-    BeginVertical(0.0f, Vec2(dropdownWidth, 0.0f), Vec2(0.0f, 0.0f));
+    // Los MenuItem siguientes caen DENTRO del dropdown abierto; eximir su
+    // detección de input del bloqueo por overlay (si no, se auto-bloquearían).
+    ctx->insideOverlayRender = true;
+
+    // Iniciar layout vertical — width will be determined by content in EndMenu
+    BeginVertical(0.0f, std::nullopt, Vec2(0.0f, 0.0f));
   }
 
   return state.open;
@@ -159,6 +186,10 @@ void EndMenu() {
   UIContext *ctx = GetContext();
   if (!ctx)
     return;
+
+  // Fin de los items del menú: vuelve a aplicar el bloqueo de input por overlay
+  // a los widgets de fondo.
+  ctx->insideOverlayRender = false;
 
   // Pop the menu ID from the stack to know which menu we're closing
   if (ctx->menuIdStack.empty())
@@ -198,7 +229,7 @@ void EndMenu() {
     // Calcular posición y tamaño del dropdown basado en el contenido real
     Vec2 dropdownStartPos(state.position.x, state.position.y + state.size.y);
 
-    float dropdownWidth = 200.0f;
+    float dropdownWidth = 120.0f; // minimum width
     float dropdownHeight = contentEndCursor.y - dropdownStartPos.y;
     if (dropdownHeight < 10.0f) {
       dropdownHeight = 10.0f;
@@ -267,6 +298,13 @@ void EndMenu() {
     it->second.dropdownPos = dropdown.dropdownPos;
     it->second.dropdownSize = dropdown.dropdownSize;
 
+    // Publicar el rect para el bloqueo de input por overlay de los widgets de
+    // fondo. Persiste hasta que RenderDeferredDropdowns lo limpie al cerrarse,
+    // así el click sobre un item no se cuela al widget de debajo.
+    ctx->openMenuId = currentMenuId;
+    ctx->openMenuDropdownPos = dropdown.dropdownPos;
+    ctx->openMenuDropdownSize = dropdown.dropdownSize;
+
     ctx->deferredMenuDropdowns.push_back(dropdown);
   } else {
     // Menu was closed by a MenuItem click this frame — discard pending items
@@ -281,6 +319,10 @@ void EndMenu() {
 }
 
 bool MenuItem(const std::string &label, bool enabled) {
+  return MenuItem(label, 0u, enabled);
+}
+
+bool MenuItem(const std::string &label, uint32_t iconCodepoint, bool enabled) {
   UIContext *ctx = GetContext();
   if (!ctx)
     return false;
@@ -297,10 +339,12 @@ bool MenuItem(const std::string &label, bool enabled) {
   const PanelStyle &panelStyle = ctx->style.panel;
   const TextStyle &textStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
   float itemHeight = textStyle.fontSize + panelStyle.padding.y * 2.0f;
-  float itemWidth = 200.0f;
 
   Vec2 textSize = MeasureTextCached(ctx, label, textStyle.fontSize);
-  itemWidth = std::max(itemWidth, textSize.x + panelStyle.padding.x * 2.0f);
+  float iconSize = textStyle.fontSize;
+  float iconGap = 6.0f;
+  float iconSlot = (iconCodepoint != 0u) ? (iconSize + iconGap) : 0.0f;
+  float itemWidth = textSize.x + iconSlot + panelStyle.padding.x * 2.0f + 32.0f; // text + icon + padding + margin for shortcuts
 
   Vec2 itemSize(itemWidth, itemHeight);
   Vec2 itemPos = ctx->cursorPos;
@@ -314,6 +358,7 @@ bool MenuItem(const std::string &label, bool enabled) {
   item.enabled = enabled;
   item.pos = itemPos;
   item.size = itemSize;
+  item.iconCodepoint = iconCodepoint;
 
   // Calcular colores
   Color itemBg = hover ? panelStyle.headerBackground : panelStyle.background;
@@ -360,7 +405,8 @@ void MenuSeparator() {
   const PanelStyle &panelStyle = ctx->style.panel;
   float separatorHeight = 1.0f;
   float separatorPadding = 1.0f; // Reduced padding
-  float separatorWidth = 200.0f;
+  // Width will be adjusted to match other items in EndMenu
+  float separatorWidth = 120.0f; // minimum, will be expanded by EndMenu
 
   Vec2 separatorSize(separatorWidth, separatorHeight + separatorPadding * 2.0f);
   Vec2 separatorPos = ctx->cursorPos;
@@ -392,8 +438,8 @@ void BeginToolbar() {
 
   const PanelStyle &panelStyle = ctx->style.panel;
 
-  // Draw toolbar background - slightly different shade from menubar
-  Color toolbarBg = AdjustContainerBackground(panelStyle.headerBackground, ctx->style.isDarkTheme);
+  // Draw toolbar background — slightly lighter than menubar for visual separation
+  Color toolbarBg = panelStyle.background;
   ctx->renderer.DrawRectFilled(toolbarPos, toolbarSize, toolbarBg, 0.0f);
 
   // Draw a subtle bottom border
@@ -402,13 +448,14 @@ void BeginToolbar() {
   ctx->renderer.DrawRectFilled(Vec2(toolbarPos.x, toolbarPos.y + TOOLBAR_HEIGHT - 1.0f),
                                Vec2(viewport.x, 1.0f), borderColor, 0.0f);
 
-  // Set cursor inside the toolbar with small vertical padding
-  float vPad = (TOOLBAR_HEIGHT - 24.0f) * 0.5f; // center 24px content in 36px bar
-  ctx->cursorPos = Vec2(toolbarPos.x + 4.0f, toolbarPos.y + vPad);
+  // Set cursor to toolbar origin; let BeginHorizontal apply the padding once
+  float hPad = 10.0f;
+  float vPad = (TOOLBAR_HEIGHT - 26.0f) * 0.5f;  // center 26px buttons
+  ctx->cursorPos = toolbarPos;
   ctx->lastItemPos = ctx->cursorPos;
 
-  // Begin horizontal layout for toolbar contents
-  BeginHorizontal(4.0f, toolbarSize, Vec2(4.0f, vPad));
+  // Horizontal layout applies padding internally (no double-apply)
+  BeginHorizontal(4.0f, Vec2(0.0f, TOOLBAR_HEIGHT), Vec2(hPad, vPad));
 }
 
 void EndToolbar() {

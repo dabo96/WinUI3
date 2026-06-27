@@ -1,5 +1,6 @@
 #include "core/Renderer.h"
 #include "core/Context.h"
+#include "core/Elevation.h"
 #include "Theme/Style.h"
 #include <SDL3/SDL.h>
 #include <fstream>
@@ -184,6 +185,9 @@ namespace FluentUI {
         currentBatchTexture = nullptr;
         currentBatchTextColor = Color(1,1,1,1);
 
+        // Reset clip stack to prevent accumulation from imbalanced Push/Pop
+        clipStack.clear();
+
         // Perf R6: Evict stale dynamic MSDF glyphs periodically
         glyphCacheFrame++;
         if ((glyphCacheFrame % 300) == 0 && dynamicMSDFGlyphCache.size() > MAX_GLYPH_CACHE) {
@@ -230,6 +234,12 @@ namespace FluentUI {
             }
             backend->EndFrame();
         }
+    }
+
+    Color Renderer::ReadPixel(int x, int y) {
+        FlushBatch();
+        if (!backend) return Color(0, 0, 0, 0);
+        return backend->ReadPixel(x, y);
     }
 
     void Renderer::SetViewport(int width, int height) {
@@ -356,24 +366,59 @@ namespace FluentUI {
     }
 
     void Renderer::DrawLine(const Vec2& start, const Vec2& end, const Color& color, float width) {
-        // Issue 1: Ensure we're in Basic batch state for lines
+        // AA line as a triangulated quad with 1px feather on each side.
+        // No more GL_LINES — line width changes don't break batching anymore.
         EnsureBatchState(ShaderType::Basic, nullptr, Color(1,1,1,1));
-        if (!lineVertices.empty() && std::abs(width - lineBatchWidth) > 0.01f) FlushBatch();
-        if (lineVertices.size() + 2 > MAX_LINE_VERTICES) FlushBatch();
-        lineBatchWidth = width;
-        lineVertices.push_back({ start.x, start.y, color.r, color.g, color.b, color.a, 0, 0 });
-        lineVertices.push_back({ end.x,   end.y,   color.r, color.g, color.b, color.a, 0, 0 });
+
+        float dx = end.x - start.x, dy = end.y - start.y;
+        float len = std::sqrt(dx*dx + dy*dy);
+        if (len < 1e-6f) return;
+        float nx = -dy / len, ny = dx / len; // unit perpendicular
+
+        const float AA_FRINGE = std::max(1.0f, dpiScale); // Phase A4: 1 physical pixel
+        float halfCore = std::max(0.5f, width * 0.5f); // core half-width (≥0.5px so 1px lines render)
+        float halfOuter = halfCore + AA_FRINGE;
+
+        if (quadVertices.size() + 8 > MAX_QUAD_VERTICES) FlushBatch();
+        unsigned int b = static_cast<unsigned int>(quadVertices.size());
+
+        // 0..3 = inner core (alpha=color.a); 4..7 = outer fringe (alpha=0)
+        // 0 = start - n*halfCore   1 = start + n*halfCore   2 = end + n*halfCore   3 = end - n*halfCore
+        quadVertices.push_back({start.x - nx*halfCore, start.y - ny*halfCore, color.r, color.g, color.b, color.a, 0, 0});
+        quadVertices.push_back({start.x + nx*halfCore, start.y + ny*halfCore, color.r, color.g, color.b, color.a, 0, 0});
+        quadVertices.push_back({end.x   + nx*halfCore, end.y   + ny*halfCore, color.r, color.g, color.b, color.a, 0, 0});
+        quadVertices.push_back({end.x   - nx*halfCore, end.y   - ny*halfCore, color.r, color.g, color.b, color.a, 0, 0});
+        // 4 = start - n*halfOuter  5 = start + n*halfOuter  6 = end + n*halfOuter  7 = end - n*halfOuter
+        quadVertices.push_back({start.x - nx*halfOuter, start.y - ny*halfOuter, color.r, color.g, color.b, 0.0f, 0, 0});
+        quadVertices.push_back({start.x + nx*halfOuter, start.y + ny*halfOuter, color.r, color.g, color.b, 0.0f, 0, 0});
+        quadVertices.push_back({end.x   + nx*halfOuter, end.y   + ny*halfOuter, color.r, color.g, color.b, 0.0f, 0, 0});
+        quadVertices.push_back({end.x   - nx*halfOuter, end.y   - ny*halfOuter, color.r, color.g, color.b, 0.0f, 0, 0});
+
+        // Core body (2 tris)
+        quadIndices.push_back(b+0); quadIndices.push_back(b+1); quadIndices.push_back(b+2);
+        quadIndices.push_back(b+0); quadIndices.push_back(b+2); quadIndices.push_back(b+3);
+        // Fringe on +n side (between inner 1↔2 and outer 5↔6)
+        quadIndices.push_back(b+1); quadIndices.push_back(b+5); quadIndices.push_back(b+6);
+        quadIndices.push_back(b+1); quadIndices.push_back(b+6); quadIndices.push_back(b+2);
+        // Fringe on -n side (between inner 0↔3 and outer 4↔7)
+        quadIndices.push_back(b+4); quadIndices.push_back(b+0); quadIndices.push_back(b+3);
+        quadIndices.push_back(b+4); quadIndices.push_back(b+3); quadIndices.push_back(b+7);
     }
 
     void Renderer::DrawRect(const Vec2& pos, const Vec2& size, const Color& color, float cornerRadius) {
         float lineWidth = 1.0f;
         if (cornerRadius < 0.5f) {
-            DrawLine(pos, Vec2(pos.x + size.x, pos.y), color, lineWidth);
-            DrawLine(Vec2(pos.x + size.x, pos.y), Vec2(pos.x + size.x, pos.y + size.y), color, lineWidth);
-            DrawLine(Vec2(pos.x + size.x, pos.y + size.y), Vec2(pos.x, pos.y + size.y), color, lineWidth);
-            DrawLine(Vec2(pos.x, pos.y + size.y), pos, color, lineWidth);
+            // Sharp rect outline as a closed 4-point polyline (one stroke = no corner micro-jumps).
+            Vec2 corners[4] = {
+                pos,
+                {pos.x + size.x, pos.y},
+                {pos.x + size.x, pos.y + size.y},
+                {pos.x, pos.y + size.y}
+            };
+            StrokePolyline(corners, 4, true, color, lineWidth);
         } else {
-            // Perf 3.1: Use pre-computed trig tables
+            // Rounded outline as a single closed stroke — miter joins eliminate the
+            // per-segment alpha seams the previous DrawLine-per-segment version had.
             float cr = std::min(cornerRadius, std::min(size.x, size.y) * 0.5f);
             float cx_left = pos.x + cr; float cx_right = pos.x + size.x - cr;
             float cy_top = pos.y + cr; float cy_bot = pos.y + size.y - cr;
@@ -388,9 +433,7 @@ namespace FluentUI {
                 points[pi++] = {cx_left - cr * sinTable[i], cy_bot + cr * cosTable[i]};
             for (int i = 0; i < CORNER_POINTS; ++i)
                 points[pi++] = {cx_left - cr * cosTable[i], cy_top - cr * sinTable[i]};
-            for (int i = 0; i < PTS; ++i) {
-                DrawLine(points[i], points[(i + 1) % PTS], color, lineWidth);
-            }
+            StrokePolyline(points, PTS, true, color, lineWidth);
         }
     }
 
@@ -399,56 +442,141 @@ namespace FluentUI {
         EnsureBatchState(ShaderType::Basic, nullptr, Color(1,1,1,1));
 
         if (cornerRadius < 0.5f) {
-            if (quadVertices.size() + 4 > MAX_QUAD_VERTICES) FlushBatch();
-            unsigned int baseIndex = static_cast<unsigned int>(quadVertices.size());
-            quadVertices.push_back({pos.x, pos.y, color.r, color.g, color.b, color.a, 0, 0});
-            quadVertices.push_back({pos.x + size.x, pos.y, color.r, color.g, color.b, color.a, 0, 0});
-            quadVertices.push_back({pos.x + size.x, pos.y + size.y, color.r, color.g, color.b, color.a, 0, 0});
-            quadVertices.push_back({pos.x, pos.y + size.y, color.r, color.g, color.b, color.a, 0, 0});
-            quadIndices.push_back(baseIndex + 0); quadIndices.push_back(baseIndex + 1); quadIndices.push_back(baseIndex + 2);
-            quadIndices.push_back(baseIndex + 0); quadIndices.push_back(baseIndex + 2); quadIndices.push_back(baseIndex + 3);
+            // AA fringe: 4 inner corners (alpha=color.a) + 4 outer corners offset diagonally
+            // by 1px (alpha=0). Diagonal offset gives 1px perpendicular distance to each edge.
+            const float AA_FRINGE = std::max(1.0f, dpiScale); // Phase A4: 1 physical pixel
+            if (quadVertices.size() + 8 > MAX_QUAD_VERTICES) FlushBatch();
+            unsigned int b = static_cast<unsigned int>(quadVertices.size());
+            float x0 = pos.x, y0 = pos.y;
+            float x1 = pos.x + size.x, y1 = pos.y + size.y;
+            // Inner: 0=TL, 1=TR, 2=BR, 3=BL
+            quadVertices.push_back({x0, y0, color.r, color.g, color.b, color.a, 0, 0});
+            quadVertices.push_back({x1, y0, color.r, color.g, color.b, color.a, 0, 0});
+            quadVertices.push_back({x1, y1, color.r, color.g, color.b, color.a, 0, 0});
+            quadVertices.push_back({x0, y1, color.r, color.g, color.b, color.a, 0, 0});
+            // Outer (alpha=0): 4=TL, 5=TR, 6=BR, 7=BL
+            quadVertices.push_back({x0 - AA_FRINGE, y0 - AA_FRINGE, color.r, color.g, color.b, 0.0f, 0, 0});
+            quadVertices.push_back({x1 + AA_FRINGE, y0 - AA_FRINGE, color.r, color.g, color.b, 0.0f, 0, 0});
+            quadVertices.push_back({x1 + AA_FRINGE, y1 + AA_FRINGE, color.r, color.g, color.b, 0.0f, 0, 0});
+            quadVertices.push_back({x0 - AA_FRINGE, y1 + AA_FRINGE, color.r, color.g, color.b, 0.0f, 0, 0});
+            // Inner body
+            quadIndices.push_back(b+0); quadIndices.push_back(b+1); quadIndices.push_back(b+2);
+            quadIndices.push_back(b+0); quadIndices.push_back(b+2); quadIndices.push_back(b+3);
+            // Top fringe
+            quadIndices.push_back(b+4); quadIndices.push_back(b+5); quadIndices.push_back(b+1);
+            quadIndices.push_back(b+4); quadIndices.push_back(b+1); quadIndices.push_back(b+0);
+            // Right fringe
+            quadIndices.push_back(b+1); quadIndices.push_back(b+5); quadIndices.push_back(b+6);
+            quadIndices.push_back(b+1); quadIndices.push_back(b+6); quadIndices.push_back(b+2);
+            // Bottom fringe
+            quadIndices.push_back(b+3); quadIndices.push_back(b+2); quadIndices.push_back(b+6);
+            quadIndices.push_back(b+3); quadIndices.push_back(b+6); quadIndices.push_back(b+7);
+            // Left fringe
+            quadIndices.push_back(b+4); quadIndices.push_back(b+0); quadIndices.push_back(b+3);
+            quadIndices.push_back(b+4); quadIndices.push_back(b+3); quadIndices.push_back(b+7);
         } else {
             // Perf 3.1: Use pre-computed trig tables instead of cos/sin per vertex
-            // cosTable[i] = cos(i * pi/2 / N), sinTable[i] = sin(i * pi/2 / N)
-            // where i goes from 0..N (N=CORNER_SEGMENTS=8)
-            // cos goes 1→0, sin goes 0→1 over the quarter circle
             float cr = std::min(cornerRadius, std::min(size.x, size.y) * 0.5f);
             float cx_left = pos.x + cr; float cx_right = pos.x + size.x - cr;
             float cy_top = pos.y + cr; float cy_bot = pos.y + size.y - cr;
-            // Perf R6: Fixed-size array instead of thread_local vector
             constexpr int PERIM_SIZE = CORNER_POINTS * 4; // 36 points
             Vec2 perim[PERIM_SIZE];
+            Vec2 normals[PERIM_SIZE]; // unit outward normal at each perimeter point (for AA fringe)
             int pi = 0;
-            for (int i = 0; i < CORNER_POINTS; ++i)
-                perim[pi++] = {cx_right + cr * sinTable[i], cy_top - cr * cosTable[i]};
-            for (int i = 0; i < CORNER_POINTS; ++i)
-                perim[pi++] = {cx_right + cr * cosTable[i], cy_bot + cr * sinTable[i]};
-            for (int i = 0; i < CORNER_POINTS; ++i)
-                perim[pi++] = {cx_left - cr * sinTable[i], cy_bot + cr * cosTable[i]};
-            for (int i = 0; i < CORNER_POINTS; ++i)
-                perim[pi++] = {cx_left - cr * cosTable[i], cy_top - cr * sinTable[i]};
-            if (quadVertices.size() + PERIM_SIZE + 1 > MAX_QUAD_VERTICES) FlushBatch();
+            for (int i = 0; i < CORNER_POINTS; ++i) {
+                normals[pi] = {sinTable[i], -cosTable[i]};
+                perim[pi++]  = {cx_right + cr * sinTable[i], cy_top - cr * cosTable[i]};
+            }
+            for (int i = 0; i < CORNER_POINTS; ++i) {
+                normals[pi] = {cosTable[i], sinTable[i]};
+                perim[pi++]  = {cx_right + cr * cosTable[i], cy_bot + cr * sinTable[i]};
+            }
+            for (int i = 0; i < CORNER_POINTS; ++i) {
+                normals[pi] = {-sinTable[i], cosTable[i]};
+                perim[pi++]  = {cx_left - cr * sinTable[i], cy_bot + cr * cosTable[i]};
+            }
+            for (int i = 0; i < CORNER_POINTS; ++i) {
+                normals[pi] = {-cosTable[i], -sinTable[i]};
+                perim[pi++]  = {cx_left - cr * cosTable[i], cy_top - cr * sinTable[i]};
+            }
+            // AA fringe: 1px outer ring with alpha=0 — linear interpolation across the
+            // fringe quads gives a smooth 1-pixel falloff at the rounded edge.
+            const float AA_FRINGE = std::max(1.0f, dpiScale); // Phase A4: 1 physical pixel
+            if (quadVertices.size() + 1 + 2 * PERIM_SIZE > MAX_QUAD_VERTICES) FlushBatch();
             unsigned int centerIdx = static_cast<unsigned int>(quadVertices.size());
             quadVertices.push_back({pos.x + size.x * 0.5f, pos.y + size.y * 0.5f, color.r, color.g, color.b, color.a, 0, 0});
-            for (int i = 0; i < PERIM_SIZE; ++i) quadVertices.push_back({perim[i].x, perim[i].y, color.r, color.g, color.b, color.a, 0, 0});
+            for (int i = 0; i < PERIM_SIZE; ++i)
+                quadVertices.push_back({perim[i].x, perim[i].y, color.r, color.g, color.b, color.a, 0, 0});
+            for (int i = 0; i < PERIM_SIZE; ++i)
+                quadVertices.push_back({perim[i].x + normals[i].x * AA_FRINGE, perim[i].y + normals[i].y * AA_FRINGE, color.r, color.g, color.b, 0.0f, 0, 0});
+            unsigned int innerBase = centerIdx + 1;
+            unsigned int outerBase = centerIdx + 1 + PERIM_SIZE;
             for (int i = 0; i < PERIM_SIZE; ++i) {
+                unsigned int next = static_cast<unsigned int>((i + 1) % PERIM_SIZE);
+                // Inner fan triangle
                 quadIndices.push_back(centerIdx);
-                quadIndices.push_back(centerIdx + 1 + static_cast<unsigned int>(i));
-                quadIndices.push_back(centerIdx + 1 + static_cast<unsigned int>((i + 1) % PERIM_SIZE));
+                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
+                quadIndices.push_back(innerBase + next);
+                // Fringe quad (2 triangles): inner_i → inner_next → outer_next → outer_i
+                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
+                quadIndices.push_back(innerBase + next);
+                quadIndices.push_back(outerBase + next);
+                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
+                quadIndices.push_back(outerBase + next);
+                quadIndices.push_back(outerBase + static_cast<unsigned int>(i));
             }
         }
     }
 
     void Renderer::DrawRectWithElevation(const Vec2& pos, const Vec2& size, const Color& color, float cornerRadius, float elevation) {
-        if (elevation > 0.0f) {
-            float ambientOpacity = std::min(0.12f, elevation * 0.006f);
-            Vec2 ambientExpand(elevation * 0.8f, elevation * 0.8f);
-            DrawRectFilled(pos - ambientExpand * 0.5f + Vec2(0.0f, elevation * 0.15f), size + ambientExpand, Color(0,0,0,ambientOpacity), cornerRadius + elevation * 0.3f);
-            float keyOpacity = std::min(0.20f, elevation * 0.012f);
-            Vec2 keyExpand(elevation * 0.3f, elevation * 0.3f);
-            DrawRectFilled(pos - keyExpand * 0.5f + Vec2(0.0f, elevation * 0.4f), size + keyExpand, Color(0,0,0,keyOpacity), cornerRadius + elevation * 0.15f);
-        }
+        DrawElevationShadow(pos, size, cornerRadius, elevation);
         DrawRectFilled(pos, size, color, cornerRadius);
+    }
+
+    void Renderer::DrawElevationShadow(const Vec2& pos, const Vec2& size, float cornerRadius, float z, float opacityScale) {
+        if (z <= 0.0f || opacityScale <= 0.0f) return;
+        // Unified depth → shadow curve: a surface's z (depth) drives the
+        // penumbra spread, downward offset and peak opacity, so every floating
+        // element casts a shadow consistent with its place in the z-order.
+        Elevation::ShadowParams sp = Elevation::Params(z);
+        DrawRectShadow(pos, size, cornerRadius, sp.blur,
+                       Color(0.0f, 0.0f, 0.0f, sp.opacity * opacityScale),
+                       Vec2(0.0f, sp.offsetY));
+    }
+
+    void Renderer::DrawRectShadow(const Vec2& pos, const Vec2& size, float cornerRadius,
+                                  float blur, const Color& color, const Vec2& offset) {
+        if (color.a <= 0.0f || blur <= 0.0f || size.x <= 0.0f || size.y <= 0.0f) return;
+
+        float spread = blur * dpiScale; // penumbra in physical px
+        // More layers = smoother gradient (finer, more dispersed outer tail with no
+        // visible final step); scale with the spread but cap for perf.
+        int layers = std::clamp(static_cast<int>(std::round(spread * 3.5f)), 16, 40);
+
+        // Per-layer alpha chosen so that, where all layers overlap (the element
+        // edge), the composited "over" alpha 1-(1-aL)^layers equals color.a.
+        float aL = 1.0f - std::pow(1.0f - color.a, 1.0f / static_cast<float>(layers));
+        Color layerColor(color.r, color.g, color.b, aL);
+
+        Vec2 base = pos + offset;
+        // Soft penumbra: every layer is a filled rounded rect expanded outward, so
+        // the element edge (inside all layers) accumulates to the peak opacity and
+        // each ring outward drops one layer of coverage → darkest at the edge,
+        // fading outward. The expansion follows a power curve with exponent > 1 so
+        // the layers bunch up NEAR the element: the opacity drops quickly just past
+        // the edge and trails off into a long, faint tail. This reads as a soft,
+        // diffuse shadow (most of it barely-there haze) rather than a uniform dark
+        // band with a hard outer edge. A higher exponent makes the outer tail even
+        // fainter and more dispersed (fades to almost nothing) while keeping the
+        // dark near-edge. Outermost (faintest) drawn first.
+        constexpr float kFalloff = 2.5f;
+        for (int i = layers; i >= 1; --i) {
+            float t = static_cast<float>(i) / static_cast<float>(layers);
+            float expand = spread * std::pow(t, kFalloff);
+            Vec2 lpos(base.x - expand, base.y - expand);
+            Vec2 lsize(size.x + expand * 2.0f, size.y + expand * 2.0f);
+            DrawRectFilled(lpos, lsize, layerColor, cornerRadius + expand);
+        }
     }
 
     void Renderer::DrawRectGradient(const Vec2& pos, const Vec2& size,
@@ -479,31 +607,53 @@ namespace FluentUI {
 
         constexpr int PERIM_SIZE = CORNER_POINTS * 4;
         Vec2 perim[PERIM_SIZE];
+        Vec2 normals[PERIM_SIZE];
         int pi = 0;
-        for (int i = 0; i < CORNER_POINTS; ++i)
-            perim[pi++] = {cx_right + cr * sinTable[i], cy_top - cr * cosTable[i]};
-        for (int i = 0; i < CORNER_POINTS; ++i)
-            perim[pi++] = {cx_right + cr * cosTable[i], cy_bot + cr * sinTable[i]};
-        for (int i = 0; i < CORNER_POINTS; ++i)
-            perim[pi++] = {cx_left - cr * sinTable[i], cy_bot + cr * cosTable[i]};
-        for (int i = 0; i < CORNER_POINTS; ++i)
-            perim[pi++] = {cx_left - cr * cosTable[i], cy_top - cr * sinTable[i]};
+        for (int i = 0; i < CORNER_POINTS; ++i) {
+            normals[pi] = {sinTable[i], -cosTable[i]};
+            perim[pi++]  = {cx_right + cr * sinTable[i], cy_top - cr * cosTable[i]};
+        }
+        for (int i = 0; i < CORNER_POINTS; ++i) {
+            normals[pi] = {cosTable[i], sinTable[i]};
+            perim[pi++]  = {cx_right + cr * cosTable[i], cy_bot + cr * sinTable[i]};
+        }
+        for (int i = 0; i < CORNER_POINTS; ++i) {
+            normals[pi] = {-sinTable[i], cosTable[i]};
+            perim[pi++]  = {cx_left - cr * sinTable[i], cy_bot + cr * cosTable[i]};
+        }
+        for (int i = 0; i < CORNER_POINTS; ++i) {
+            normals[pi] = {-cosTable[i], -sinTable[i]};
+            perim[pi++]  = {cx_left - cr * cosTable[i], cy_top - cr * sinTable[i]};
+        }
 
         EnsureBatchState(ShaderType::Basic, nullptr, Color(1,1,1,1));
 
         float centerX = pos.x + size.x * 0.5f;
         float centerY = pos.y + size.y * 0.5f;
+        const float AA_FRINGE = std::max(1.0f, dpiScale); // Phase A4: 1 physical pixel
 
         for (int c = 0; c < count; ++c) {
             const Color& color = colors[c];
-            if (quadVertices.size() + PERIM_SIZE + 1 > MAX_QUAD_VERTICES) FlushBatch();
+            if (quadVertices.size() + 1 + 2 * PERIM_SIZE > MAX_QUAD_VERTICES) FlushBatch();
             unsigned int centerIdx = static_cast<unsigned int>(quadVertices.size());
             quadVertices.push_back({centerX, centerY, color.r, color.g, color.b, color.a, 0, 0});
-            for (int i = 0; i < PERIM_SIZE; ++i) quadVertices.push_back({perim[i].x, perim[i].y, color.r, color.g, color.b, color.a, 0, 0});
+            for (int i = 0; i < PERIM_SIZE; ++i)
+                quadVertices.push_back({perim[i].x, perim[i].y, color.r, color.g, color.b, color.a, 0, 0});
+            for (int i = 0; i < PERIM_SIZE; ++i)
+                quadVertices.push_back({perim[i].x + normals[i].x * AA_FRINGE, perim[i].y + normals[i].y * AA_FRINGE, color.r, color.g, color.b, 0.0f, 0, 0});
+            unsigned int innerBase = centerIdx + 1;
+            unsigned int outerBase = centerIdx + 1 + PERIM_SIZE;
             for (int i = 0; i < PERIM_SIZE; ++i) {
+                unsigned int next = static_cast<unsigned int>((i + 1) % PERIM_SIZE);
                 quadIndices.push_back(centerIdx);
-                quadIndices.push_back(centerIdx + 1 + static_cast<unsigned int>(i));
-                quadIndices.push_back(centerIdx + 1 + static_cast<unsigned int>((i + 1) % PERIM_SIZE));
+                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
+                quadIndices.push_back(innerBase + next);
+                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
+                quadIndices.push_back(innerBase + next);
+                quadIndices.push_back(outerBase + next);
+                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
+                quadIndices.push_back(outerBase + next);
+                quadIndices.push_back(outerBase + static_cast<unsigned int>(i));
             }
         }
     }
@@ -534,17 +684,36 @@ namespace FluentUI {
 
         const float pi = 3.14159265f; int segments = static_cast<int>(std::max(12.0f, radius * 0.75f));
         if (filled) {
-            if (quadVertices.size() + segments + 1 > MAX_QUAD_VERTICES) FlushBatch();
+            // AA fringe: inner ring at radius (alpha=color.a) + outer ring at radius+1px (alpha=0)
+            const float AA_FRINGE = std::max(1.0f, dpiScale); // Phase A4: 1 physical pixel
+            if (quadVertices.size() + 1 + 2 * static_cast<size_t>(segments) > MAX_QUAD_VERTICES) FlushBatch();
             unsigned int centerIdx = static_cast<unsigned int>(quadVertices.size());
             quadVertices.push_back({center.x, center.y, color.r, color.g, color.b, color.a, 0, 0});
-            for (int i = 0; i <= segments; ++i) {
+            for (int i = 0; i < segments; ++i) {
                 float a = 2.0f * pi * i / segments;
-                quadVertices.push_back({center.x + std::cos(a) * radius, center.y + std::sin(a) * radius, color.r, color.g, color.b, color.a, 0, 0});
-                if (i > 0) {
-                    quadIndices.push_back(centerIdx);
-                    quadIndices.push_back(centerIdx + static_cast<unsigned int>(i));
-                    quadIndices.push_back(centerIdx + static_cast<unsigned int>(i + 1));
-                }
+                float cx = std::cos(a), cy = std::sin(a);
+                quadVertices.push_back({center.x + cx * radius, center.y + cy * radius, color.r, color.g, color.b, color.a, 0, 0});
+            }
+            for (int i = 0; i < segments; ++i) {
+                float a = 2.0f * pi * i / segments;
+                float cx = std::cos(a), cy = std::sin(a);
+                quadVertices.push_back({center.x + cx * (radius + AA_FRINGE), center.y + cy * (radius + AA_FRINGE), color.r, color.g, color.b, 0.0f, 0, 0});
+            }
+            unsigned int innerBase = centerIdx + 1;
+            unsigned int outerBase = centerIdx + 1 + static_cast<unsigned int>(segments);
+            for (int i = 0; i < segments; ++i) {
+                unsigned int next = static_cast<unsigned int>((i + 1) % segments);
+                // Inner fan triangle
+                quadIndices.push_back(centerIdx);
+                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
+                quadIndices.push_back(innerBase + next);
+                // Fringe quad
+                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
+                quadIndices.push_back(innerBase + next);
+                quadIndices.push_back(outerBase + next);
+                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
+                quadIndices.push_back(outerBase + next);
+                quadIndices.push_back(outerBase + static_cast<unsigned int>(i));
             }
         } else {
             for (int i = 0; i < segments; ++i) {
@@ -552,6 +721,18 @@ namespace FluentUI {
                 DrawLine({center.x + std::cos(a1) * radius, center.y + std::sin(a1) * radius}, {center.x + std::cos(a2) * radius, center.y + std::sin(a2) * radius}, color);
             }
         }
+    }
+
+    void Renderer::DrawTriangleFilled(const Vec2& p0, const Vec2& p1, const Vec2& p2, const Color& color) {
+        EnsureBatchState(ShaderType::Basic, nullptr, Color(1,1,1,1));
+        if (quadVertices.size() + 3 > MAX_QUAD_VERTICES) FlushBatch();
+        unsigned int base = static_cast<unsigned int>(quadVertices.size());
+        quadVertices.push_back({p0.x, p0.y, color.r, color.g, color.b, color.a, 0, 0});
+        quadVertices.push_back({p1.x, p1.y, color.r, color.g, color.b, color.a, 0, 0});
+        quadVertices.push_back({p2.x, p2.y, color.r, color.g, color.b, color.a, 0, 0});
+        quadIndices.push_back(base);
+        quadIndices.push_back(base + 1);
+        quadIndices.push_back(base + 2);
     }
 
     void Renderer::DrawRipple(const Vec2& center, float radius, float opacity) {
@@ -588,17 +769,27 @@ namespace FluentUI {
 
             constexpr int PERIM_SIZE = CORNER_POINTS * 4;
             Vec2 perim[PERIM_SIZE];
+            Vec2 normals[PERIM_SIZE];
             int pi = 0;
-            for (int i = 0; i < CORNER_POINTS; ++i)
-                perim[pi++] = {cx_right + cr * sinTable[i], cy_top - cr * cosTable[i]};
-            for (int i = 0; i < CORNER_POINTS; ++i)
-                perim[pi++] = {cx_right + cr * cosTable[i], cy_bot + cr * sinTable[i]};
-            for (int i = 0; i < CORNER_POINTS; ++i)
-                perim[pi++] = {cx_left - cr * sinTable[i], cy_bot + cr * cosTable[i]};
-            for (int i = 0; i < CORNER_POINTS; ++i)
-                perim[pi++] = {cx_left - cr * cosTable[i], cy_top - cr * sinTable[i]};
+            for (int i = 0; i < CORNER_POINTS; ++i) {
+                normals[pi] = {sinTable[i], -cosTable[i]};
+                perim[pi++]  = {cx_right + cr * sinTable[i], cy_top - cr * cosTable[i]};
+            }
+            for (int i = 0; i < CORNER_POINTS; ++i) {
+                normals[pi] = {cosTable[i], sinTable[i]};
+                perim[pi++]  = {cx_right + cr * cosTable[i], cy_bot + cr * sinTable[i]};
+            }
+            for (int i = 0; i < CORNER_POINTS; ++i) {
+                normals[pi] = {-sinTable[i], cosTable[i]};
+                perim[pi++]  = {cx_left - cr * sinTable[i], cy_bot + cr * cosTable[i]};
+            }
+            for (int i = 0; i < CORNER_POINTS; ++i) {
+                normals[pi] = {-cosTable[i], -sinTable[i]};
+                perim[pi++]  = {cx_left - cr * cosTable[i], cy_top - cr * sinTable[i]};
+            }
 
-            if (quadVertices.size() + PERIM_SIZE + 1 > MAX_QUAD_VERTICES) FlushBatch();
+            const float AA_FRINGE = std::max(1.0f, dpiScale); // Phase A4: 1 physical pixel
+            if (quadVertices.size() + 1 + 2 * PERIM_SIZE > MAX_QUAD_VERTICES) FlushBatch();
 
             float invW = 1.0f / size.x;
             float invH = 1.0f / size.y;
@@ -613,15 +804,30 @@ namespace FluentUI {
             Vec2 centerUV = posToUV(centerPos.x, centerPos.y);
             quadVertices.push_back({centerPos.x, centerPos.y, tint.r, tint.g, tint.b, tint.a, centerUV.x, centerUV.y});
 
+            // Inner ring: full alpha, sample inside texture
             for (int i = 0; i < PERIM_SIZE; ++i) {
                 Vec2 uv = posToUV(perim[i].x, perim[i].y);
                 quadVertices.push_back({perim[i].x, perim[i].y, tint.r, tint.g, tint.b, tint.a, uv.x, uv.y});
             }
-
+            // Outer ring: alpha=0 (texture sample doesn't matter — kept at edge UV to stay clamped)
             for (int i = 0; i < PERIM_SIZE; ++i) {
+                Vec2 uv = posToUV(perim[i].x, perim[i].y);
+                quadVertices.push_back({perim[i].x + normals[i].x * AA_FRINGE, perim[i].y + normals[i].y * AA_FRINGE, tint.r, tint.g, tint.b, 0.0f, uv.x, uv.y});
+            }
+
+            unsigned int innerBase = centerIdx + 1;
+            unsigned int outerBase = centerIdx + 1 + PERIM_SIZE;
+            for (int i = 0; i < PERIM_SIZE; ++i) {
+                unsigned int next = static_cast<unsigned int>((i + 1) % PERIM_SIZE);
                 quadIndices.push_back(centerIdx);
-                quadIndices.push_back(centerIdx + 1 + static_cast<unsigned int>(i));
-                quadIndices.push_back(centerIdx + 1 + static_cast<unsigned int>((i + 1) % PERIM_SIZE));
+                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
+                quadIndices.push_back(innerBase + next);
+                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
+                quadIndices.push_back(innerBase + next);
+                quadIndices.push_back(outerBase + next);
+                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
+                quadIndices.push_back(outerBase + next);
+                quadIndices.push_back(outerBase + static_cast<unsigned int>(i));
             }
         }
     }
@@ -742,6 +948,14 @@ namespace FluentUI {
         return {std::max(maxW, currentW), totalH};
     }
 
+    float Renderer::GetFontAscender() const {
+        if (msdfFont && msdfFont->IsLoaded()) {
+            return msdfFont->GetAscender();
+        }
+        // Fallback razonable para fonts típicos (sans-serif estándar).
+        return 0.8f;
+    }
+
     // Issue 8: Public glyph advance accessor
     float Renderer::GetGlyphAdvance(uint32_t codepoint, float fontSize) {
         if (msdfFont && msdfFont->IsLoaded()) {
@@ -777,6 +991,71 @@ namespace FluentUI {
         g.uv0 = Vec2(static_cast<float>(ax) / atlasWidth, static_cast<float>(ay) / atlasHeight);
         g.uv1 = Vec2(static_cast<float>(ax + w) / atlasWidth, static_cast<float>(ay + h) / atlasHeight);
         g.valid = true; return true;
+    }
+
+    // ─── Icon Font (secondary) ─────────────────────────────────────────────
+    bool Renderer::LoadIconFont(const std::string& filepath, int pixelHeight) {
+        std::filesystem::path resolved = ResolveResourcePath(filepath);
+        if (resolved.empty()) {
+            Log(LogLevel::Error, "Icon font not found: %s", filepath.c_str());
+            return false;
+        }
+        if (FT_New_Face(ftLibrary, resolved.string().c_str(), 0, &iconFontFace)) {
+            Log(LogLevel::Error, "Failed to load icon font: %s", resolved.string().c_str());
+            return false;
+        }
+        FT_Set_Pixel_Sizes(iconFontFace, 0, pixelHeight);
+        iconFontPixelHeight = static_cast<float>(pixelHeight);
+        iconFontAscent = static_cast<float>(iconFontFace->size->metrics.ascender) / 64.0f;
+        iconFontLoaded = true;
+        Log(LogLevel::Info, "Icon font loaded: %s (%dpx)", resolved.string().c_str(), pixelHeight);
+        return true;
+    }
+
+    bool Renderer::LoadIconGlyph(uint32_t cp) {
+        if (!iconFontFace) return false;
+        if (FT_Load_Char(iconFontFace, cp, FT_LOAD_RENDER | FT_LOAD_TARGET_NORMAL)) return false;
+        FT_GlyphSlot slot = iconFontFace->glyph;
+        int w = slot->bitmap.width, h = slot->bitmap.rows;
+        int ax, ay; if (!EnsureAtlasSpace(w, h, ax, ay)) return false;
+        if (w > 0 && h > 0) backend->UpdateTexture(fontAtlasTexture, ax, ay, w, h, slot->bitmap.buffer);
+        auto& g = iconGlyphCache[cp];
+        g.advance = static_cast<float>(slot->advance.x) / 64.0f;
+        g.bearing = Vec2(static_cast<float>(slot->bitmap_left), static_cast<float>(slot->bitmap_top));
+        g.size = Vec2(static_cast<float>(w), static_cast<float>(h));
+        g.uv0 = Vec2(static_cast<float>(ax) / atlasWidth, static_cast<float>(ay) / atlasHeight);
+        g.uv1 = Vec2(static_cast<float>(ax + w) / atlasWidth, static_cast<float>(ay + h) / atlasHeight);
+        g.valid = true; return true;
+    }
+
+    const Renderer::Glyph* Renderer::GetIconGlyph(uint32_t cp) {
+        auto it = iconGlyphCache.find(cp);
+        if (it != iconGlyphCache.end() && it->second.valid) return &it->second;
+        if (LoadIconGlyph(cp)) return &iconGlyphCache[cp];
+        return nullptr;
+    }
+
+    void Renderer::DrawIconGlyph(const Vec2& pos, uint32_t codepoint, const Color& color, float fontSize) {
+        if (!iconFontLoaded) return;
+        const Glyph* g = GetIconGlyph(codepoint);
+        if (!g) return;
+
+        float scale = fontSize / iconFontPixelHeight;
+        float x0 = std::round(pos.x + g->bearing.x * scale);
+        float y0 = std::round(pos.y + (iconFontAscent - g->bearing.y) * scale);
+        float w = g->size.x * scale;
+        float h = g->size.y * scale;
+
+        EnsureBatchState(ShaderType::Text, fontAtlasTexture, color);
+        if (quadVertices.size() + 4 > MAX_QUAD_VERTICES) FlushBatch();
+
+        unsigned int base = static_cast<unsigned int>(quadVertices.size());
+        quadVertices.push_back({x0,     y0,     color.r, color.g, color.b, color.a, g->uv0.x, g->uv0.y});
+        quadVertices.push_back({x0 + w, y0,     color.r, color.g, color.b, color.a, g->uv1.x, g->uv0.y});
+        quadVertices.push_back({x0 + w, y0 + h, color.r, color.g, color.b, color.a, g->uv1.x, g->uv1.y});
+        quadVertices.push_back({x0,     y0 + h, color.r, color.g, color.b, color.a, g->uv0.x, g->uv1.y});
+        quadIndices.push_back(base); quadIndices.push_back(base+1); quadIndices.push_back(base+2);
+        quadIndices.push_back(base); quadIndices.push_back(base+2); quadIndices.push_back(base+3);
     }
 
     bool Renderer::EnsureAtlasSpace(int w, int h, int& ox, int& oy) {
@@ -863,21 +1142,32 @@ namespace FluentUI {
         std::filesystem::path atlasPng = ResolveResourcePath("assets/fonts/atlas.png");
         std::filesystem::path atlasJson = ResolveResourcePath("assets/fonts/atlas.json");
 
+        bool textReady = false;
         if (!atlasPng.empty() && !atlasJson.empty()) {
             if (msdfFont->Load(atlasPng.string(), atlasJson.string())) {
                 Log(LogLevel::Info, "MSDF Font loaded successfully from: %s", atlasPng.string().c_str());
-                return;
+                textReady = true;
             }
         }
 
-        Log(LogLevel::Error, "Could not load MSDF font, falling back to System font.");
+        if (!textReady) {
+            Log(LogLevel::Error, "Could not load MSDF font, falling back to System font.");
 #if defined(_WIN32)
-        LoadFont("C:/Windows/Fonts/segoeui.ttf", 14);
+            LoadFont("C:/Windows/Fonts/segoeui.ttf", 14);
 #elif defined(__APPLE__)
-        LoadFont("/System/Library/Fonts/SFNS.ttf", 14);
+            LoadFont("/System/Library/Fonts/SFNS.ttf", 14);
 #else
-        LoadFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14);
+            LoadFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14);
 #endif
+        }
+
+        // Auto-load the Lucide icon font here, at the renderer level, so icon
+        // glyphs render on EVERY entry point — FluentApp, the standalone gallery,
+        // or an external-GL host — not only when FluentApp's constructor runs.
+        // FluentApp may still override this with an explicit path afterwards.
+        if (!iconFontLoaded) {
+            LoadIconFont("assets/fonts/lucide.ttf", 32);
+        }
     }
 
     void Renderer::PushClipRect(const Vec2& pos, const Vec2& size) {
@@ -918,17 +1208,278 @@ namespace FluentUI {
         if (backend) backend->PopClipRect();
     }
 
+    // --- Path API (Phase A1) ---
+    void Renderer::PathClear() {
+        pathPoints.clear();
+    }
+
+    void Renderer::PathLineTo(const Vec2& p) {
+        pathPoints.push_back(p);
+    }
+
+    void Renderer::PathArcTo(const Vec2& center, float radius, float a_min, float a_max, int num_segments) {
+        if (radius <= 0.0f) {
+            pathPoints.push_back(center);
+            return;
+        }
+        if (num_segments <= 0) {
+            // Auto: ~12 segments per quarter at radius~32, scale by arc length
+            float arc = std::abs(a_max - a_min);
+            num_segments = std::max(2, static_cast<int>(std::ceil(arc * radius * 0.25f)));
+            num_segments = std::min(num_segments, 64);
+        }
+        pathPoints.reserve(pathPoints.size() + static_cast<size_t>(num_segments + 1));
+        for (int i = 0; i <= num_segments; ++i) {
+            float t = static_cast<float>(i) / static_cast<float>(num_segments);
+            float a = a_min + (a_max - a_min) * t;
+            pathPoints.push_back({center.x + std::cos(a) * radius, center.y + std::sin(a) * radius});
+        }
+    }
+
+    void Renderer::PathArcToFast(const Vec2& center, float radius, int a_min12, int a_max12) {
+        // 12 steps == 90° (a quarter), so 48 steps == 360°. We use CORNER_POINTS-1 segments per quarter
+        // sampled from the precomputed cosTable/sinTable; for arbitrary 12-step ranges we compute the angle.
+        if (radius <= 0.0f) { pathPoints.push_back(center); return; }
+        if (a_min12 == a_max12) return;
+        const float pi = 3.14159265358979323846f;
+        int steps = std::abs(a_max12 - a_min12);
+        int num_segments = std::max(2, steps * 3); // ~3 sub-steps per "12-unit"
+        pathPoints.reserve(pathPoints.size() + static_cast<size_t>(num_segments + 1));
+        for (int i = 0; i <= num_segments; ++i) {
+            float t = static_cast<float>(i) / static_cast<float>(num_segments);
+            float step = static_cast<float>(a_min12) + (static_cast<float>(a_max12 - a_min12)) * t;
+            float a = (step / 48.0f) * 2.0f * pi; // 48 steps = 360°
+            pathPoints.push_back({center.x + std::cos(a) * radius, center.y + std::sin(a) * radius});
+        }
+    }
+
+    void Renderer::PathBezierCubicCurveTo(const Vec2& p2, const Vec2& p3, const Vec2& p4, int segments) {
+        if (pathPoints.empty()) return;
+        if (segments <= 0) segments = 16;
+        Vec2 p1 = pathPoints.back();
+        for (int i = 1; i <= segments; ++i) {
+            float t = static_cast<float>(i) / static_cast<float>(segments);
+            float u = 1.0f - t;
+            float u2 = u * u, u3 = u2 * u;
+            float t2 = t * t, t3 = t2 * t;
+            pathPoints.push_back({
+                u3 * p1.x + 3.0f * u2 * t * p2.x + 3.0f * u * t2 * p3.x + t3 * p4.x,
+                u3 * p1.y + 3.0f * u2 * t * p2.y + 3.0f * u * t2 * p3.y + t3 * p4.y
+            });
+        }
+    }
+
+    void Renderer::PathRect(const Vec2& p_min, const Vec2& p_max, float rounding) {
+        float w = p_max.x - p_min.x;
+        float h = p_max.y - p_min.y;
+        float r = std::min(rounding, std::min(w, h) * 0.5f);
+        if (r < 0.5f) {
+            pathPoints.push_back(p_min);
+            pathPoints.push_back({p_max.x, p_min.y});
+            pathPoints.push_back(p_max);
+            pathPoints.push_back({p_min.x, p_max.y});
+            return;
+        }
+        // CCW order matching how DrawRectFilled rounded constructs perimeters:
+        // top-right corner, bottom-right, bottom-left, top-left.
+        const float pi = 3.14159265358979323846f;
+        Vec2 c_tr(p_max.x - r, p_min.y + r);
+        Vec2 c_br(p_max.x - r, p_max.y - r);
+        Vec2 c_bl(p_min.x + r, p_max.y - r);
+        Vec2 c_tl(p_min.x + r, p_min.y + r);
+        // Each arc spans 90° (pi/2). Use CORNER_SEGMENTS (8) per corner.
+        PathArcTo(c_tr, r, -pi * 0.5f, 0.0f,    CORNER_SEGMENTS);
+        PathArcTo(c_br, r,  0.0f,       pi * 0.5f, CORNER_SEGMENTS);
+        PathArcTo(c_bl, r,  pi * 0.5f,  pi,        CORNER_SEGMENTS);
+        PathArcTo(c_tl, r,  pi,         pi * 1.5f, CORNER_SEGMENTS);
+    }
+
+    // Compute outward unit normals at each path point as the bisector of adjacent edges.
+    // Assumes a CCW (counter-clockwise) polygon, where outward = right-perpendicular of the
+    // forward edge direction. For CW polygons the result will be inward — caller must orient.
+    static void ComputeOutwardNormals(const Vec2* points, int count, std::vector<Vec2>& normals) {
+        normals.resize(count);
+        if (count < 2) {
+            for (int i = 0; i < count; ++i) normals[i] = Vec2(0, 0);
+            return;
+        }
+        // First pass: per-edge unit normals (right-perp of forward direction)
+        std::vector<Vec2> edgeN(count);
+        for (int i = 0; i < count; ++i) {
+            int j = (i + 1) % count;
+            Vec2 d = points[j] - points[i];
+            float len = std::sqrt(d.x * d.x + d.y * d.y);
+            if (len < 1e-6f) { edgeN[i] = Vec2(0, 0); continue; }
+            // Right-perpendicular for CCW polygon points outward: (dy, -dx)/len
+            edgeN[i] = Vec2(d.y / len, -d.x / len);
+        }
+        // Second pass: average of incoming and outgoing edge normals, scaled by miter factor
+        for (int i = 0; i < count; ++i) {
+            int prev = (i + count - 1) % count;
+            Vec2 n = edgeN[prev] + edgeN[i];
+            float lenSq = n.x * n.x + n.y * n.y;
+            if (lenSq < 1e-6f) { normals[i] = edgeN[i]; continue; }
+            float invLen = 1.0f / std::sqrt(lenSq);
+            n.x *= invLen; n.y *= invLen;
+            // Miter scale: 1/cos(half-angle) so that perpendicular distance to each edge = AA_FRINGE
+            float dotV = n.x * edgeN[i].x + n.y * edgeN[i].y;
+            float scale = (dotV > 0.5f) ? (1.0f / dotV) : 2.0f; // clamp at 2x to avoid spikes
+            normals[i] = Vec2(n.x * scale, n.y * scale);
+        }
+    }
+
+    void Renderer::EmitConvexFanWithFringe(const Vec2* points, int count, const Color& color) {
+        if (count < 3) return;
+        EnsureBatchState(ShaderType::Basic, nullptr, Color(1,1,1,1));
+        const float AA_FRINGE = std::max(1.0f, dpiScale); // Phase A4: 1 physical pixel
+        if (quadVertices.size() + 1 + 2 * static_cast<size_t>(count) > MAX_QUAD_VERTICES) FlushBatch();
+
+        std::vector<Vec2> normals;
+        ComputeOutwardNormals(points, count, normals);
+
+        // Compute centroid for fan center
+        float cx = 0.0f, cy = 0.0f;
+        for (int i = 0; i < count; ++i) { cx += points[i].x; cy += points[i].y; }
+        cx /= count; cy /= count;
+
+        unsigned int centerIdx = static_cast<unsigned int>(quadVertices.size());
+        quadVertices.push_back({cx, cy, color.r, color.g, color.b, color.a, 0, 0});
+        for (int i = 0; i < count; ++i)
+            quadVertices.push_back({points[i].x, points[i].y, color.r, color.g, color.b, color.a, 0, 0});
+        for (int i = 0; i < count; ++i)
+            quadVertices.push_back({points[i].x + normals[i].x * AA_FRINGE,
+                                     points[i].y + normals[i].y * AA_FRINGE,
+                                     color.r, color.g, color.b, 0.0f, 0, 0});
+
+        unsigned int innerBase = centerIdx + 1;
+        unsigned int outerBase = centerIdx + 1 + static_cast<unsigned int>(count);
+        for (int i = 0; i < count; ++i) {
+            unsigned int next = static_cast<unsigned int>((i + 1) % count);
+            quadIndices.push_back(centerIdx);
+            quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
+            quadIndices.push_back(innerBase + next);
+            quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
+            quadIndices.push_back(innerBase + next);
+            quadIndices.push_back(outerBase + next);
+            quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
+            quadIndices.push_back(outerBase + next);
+            quadIndices.push_back(outerBase + static_cast<unsigned int>(i));
+        }
+    }
+
+    void Renderer::PathFillConvex(const Color& color) {
+        if (pathPoints.size() < 3) { pathPoints.clear(); return; }
+        EmitConvexFanWithFringe(pathPoints.data(), static_cast<int>(pathPoints.size()), color);
+        pathPoints.clear();
+    }
+
+    void Renderer::StrokePolyline(const Vec2* points, int count, bool closed,
+                                    const Color& color, float thickness) {
+        if (count < 2) return;
+        EnsureBatchState(ShaderType::Basic, nullptr, Color(1,1,1,1));
+
+        const float AA_FRINGE = std::max(1.0f, dpiScale); // Phase A4: 1 physical pixel
+        float halfCore = std::max(0.5f, thickness * 0.5f);
+        float halfOuter = halfCore + AA_FRINGE;
+
+        // Per-edge unit normal (left-perp of forward direction).
+        // Number of edges is count-1 (open) or count (closed).
+        int numEdges = closed ? count : count - 1;
+        std::vector<Vec2> edgeN(numEdges);
+        for (int i = 0; i < numEdges; ++i) {
+            int j = (i + 1) % count;
+            Vec2 d = points[j] - points[i];
+            float len = std::sqrt(d.x * d.x + d.y * d.y);
+            if (len < 1e-6f) { edgeN[i] = Vec2(0, 0); continue; }
+            edgeN[i] = Vec2(-d.y / len, d.x / len);
+        }
+
+        // Per-vertex bisector with miter scale (1/cos(half_angle)) clamped to avoid spikes.
+        std::vector<Vec2> bisector(count);
+        for (int i = 0; i < count; ++i) {
+            Vec2 nIn, nOut;
+            int eOut = i;             // outgoing edge index = i
+            int eIn = i - 1;          // incoming edge index = i-1
+
+            if (closed) {
+                if (eIn < 0) eIn = numEdges - 1;
+                if (eOut >= numEdges) eOut = 0;
+                nIn = edgeN[eIn];
+                nOut = edgeN[eOut];
+            } else {
+                // Open: first vertex has no incoming edge, last has no outgoing edge
+                if (i == 0) { nIn = edgeN[0]; nOut = edgeN[0]; }
+                else if (i == count - 1) { nIn = edgeN[numEdges - 1]; nOut = edgeN[numEdges - 1]; }
+                else { nIn = edgeN[eIn]; nOut = edgeN[eOut]; }
+            }
+
+            Vec2 b = nIn + nOut;
+            float lenSq = b.x * b.x + b.y * b.y;
+            if (lenSq < 1e-6f) {
+                bisector[i] = nOut;
+            } else {
+                float invLen = 1.0f / std::sqrt(lenSq);
+                b.x *= invLen; b.y *= invLen;
+                float dotV = b.x * nOut.x + b.y * nOut.y;
+                float scale = (dotV > 0.5f) ? (1.0f / dotV) : 2.0f;
+                bisector[i] = Vec2(b.x * scale, b.y * scale);
+            }
+        }
+
+        // Emit 4 vertices per path point: outer-left, inner-left, inner-right, outer-right.
+        // Triangulate as 3 quad strips (outer-left fringe, core, outer-right fringe) between
+        // each consecutive pair of path points.
+        if (quadVertices.size() + static_cast<size_t>(count) * 4 > MAX_QUAD_VERTICES) FlushBatch();
+
+        unsigned int base = static_cast<unsigned int>(quadVertices.size());
+        for (int i = 0; i < count; ++i) {
+            const Vec2& p = points[i];
+            const Vec2& b = bisector[i];
+            // 0: outer-left fringe (alpha 0)
+            quadVertices.push_back({p.x + b.x * halfOuter, p.y + b.y * halfOuter,
+                                     color.r, color.g, color.b, 0.0f, 0, 0});
+            // 1: inner-left core
+            quadVertices.push_back({p.x + b.x * halfCore, p.y + b.y * halfCore,
+                                     color.r, color.g, color.b, color.a, 0, 0});
+            // 2: inner-right core
+            quadVertices.push_back({p.x - b.x * halfCore, p.y - b.y * halfCore,
+                                     color.r, color.g, color.b, color.a, 0, 0});
+            // 3: outer-right fringe (alpha 0)
+            quadVertices.push_back({p.x - b.x * halfOuter, p.y - b.y * halfOuter,
+                                     color.r, color.g, color.b, 0.0f, 0, 0});
+        }
+
+        int segCount = closed ? count : count - 1;
+        for (int s = 0; s < segCount; ++s) {
+            unsigned int a = base + static_cast<unsigned int>(s) * 4;
+            unsigned int c = base + static_cast<unsigned int>((s + 1) % count) * 4;
+            // Outer-left fringe quad: a+0, a+1, c+1, c+0
+            quadIndices.push_back(a + 0); quadIndices.push_back(a + 1); quadIndices.push_back(c + 1);
+            quadIndices.push_back(a + 0); quadIndices.push_back(c + 1); quadIndices.push_back(c + 0);
+            // Core quad: a+1, a+2, c+2, c+1
+            quadIndices.push_back(a + 1); quadIndices.push_back(a + 2); quadIndices.push_back(c + 2);
+            quadIndices.push_back(a + 1); quadIndices.push_back(c + 2); quadIndices.push_back(c + 1);
+            // Outer-right fringe quad: a+2, a+3, c+3, c+2
+            quadIndices.push_back(a + 2); quadIndices.push_back(a + 3); quadIndices.push_back(c + 3);
+            quadIndices.push_back(a + 2); quadIndices.push_back(c + 3); quadIndices.push_back(c + 2);
+        }
+    }
+
+    void Renderer::PathStroke(const Color& color, bool closed, float thickness) {
+        if (pathPoints.size() < 2) { pathPoints.clear(); return; }
+        StrokePolyline(pathPoints.data(), static_cast<int>(pathPoints.size()),
+                       closed, color, thickness);
+        pathPoints.clear();
+    }
+
     // --- Bezier Curve (Phase 5) ---
-    // Perf 3.3: Generate all line vertices directly without per-segment DrawLine overhead
     void Renderer::DrawBezier(const Vec2& p0, const Vec2& p1, const Vec2& p2, const Vec2& p3,
                                const Color& color, float thickness, int segments) {
         if (segments < 2) segments = 2;
-        EnsureBatchState(ShaderType::Basic, nullptr, Color(1,1,1,1));
-        if (!lineVertices.empty() && std::abs(thickness - lineBatchWidth) > 0.01f) FlushBatch();
-        if (lineVertices.size() + segments * 2 > MAX_LINE_VERTICES) FlushBatch();
-        lineBatchWidth = thickness;
-
-        Vec2 prev = p0;
+        // Tessellate into a polyline and emit as a single continuous stroke (Phase A2).
+        std::vector<Vec2> pts;
+        pts.reserve(static_cast<size_t>(segments) + 1);
+        pts.push_back(p0);
         for (int i = 1; i <= segments; ++i) {
             float t = static_cast<float>(i) / static_cast<float>(segments);
             float u = 1.0f - t;
@@ -936,14 +1487,12 @@ namespace FluentUI {
             float u3 = u2 * u;
             float t2 = t * t;
             float t3 = t2 * t;
-            Vec2 point = {
+            pts.push_back({
                 u3 * p0.x + 3.0f * u2 * t * p1.x + 3.0f * u * t2 * p2.x + t3 * p3.x,
                 u3 * p0.y + 3.0f * u2 * t * p1.y + 3.0f * u * t2 * p2.y + t3 * p3.y
-            };
-            lineVertices.push_back({prev.x, prev.y, color.r, color.g, color.b, color.a, 0, 0});
-            lineVertices.push_back({point.x, point.y, color.r, color.g, color.b, color.a, 0, 0});
-            prev = point;
+            });
         }
+        StrokePolyline(pts.data(), static_cast<int>(pts.size()), false, color, thickness);
     }
 
     // --- Multi-font DrawText (Phase 5) ---

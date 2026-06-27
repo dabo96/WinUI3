@@ -4,6 +4,7 @@
 #include "core/Animation.h"
 #include "core/Context.h"
 #include "core/Renderer.h"
+#include "core/Elevation.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -161,7 +162,13 @@ void EndHorizontal(bool advanceParent) {
   }
 }
 
+bool Button(const std::string &label, uint32_t iconCodepoint, const Vec2 &size, std::optional<Vec2> pos, bool enabled);
+
 bool Button(const std::string &label, const Vec2 &size, std::optional<Vec2> pos, bool enabled) {
+  return Button(label, 0u, size, pos, enabled);
+}
+
+bool Button(const std::string &label, uint32_t iconCodepoint, const Vec2 &size, std::optional<Vec2> pos, bool enabled) {
   UIContext *ctx = GetContext();
   if (!ctx)
     return false;
@@ -169,17 +176,32 @@ bool Button(const std::string &label, const Vec2 &size, std::optional<Vec2> pos,
   const ButtonStyle &buttonStyle = ctx->GetEffectiveButtonStyle();
 
   Vec2 textSize = MeasureTextCached(ctx, label, buttonStyle.text.fontSize);
-  if (textSize.x <= 0.0f || textSize.y <= 0.0f) {
+  if ((textSize.x <= 0.0f || textSize.y <= 0.0f) && !label.empty()) {
     textSize = Vec2(label.length() * buttonStyle.text.fontSize * 0.6f,
                     buttonStyle.text.fontSize);
   }
 
+  // Icon-only button: collapse text size to the line height so the button is square.
+  bool iconOnly = (iconCodepoint != 0u) && label.empty();
+  float iconSize = buttonStyle.text.fontSize;
+  float iconGap = (iconCodepoint != 0u && !label.empty()) ? 6.0f : 0.0f;
+  float iconSlot = (iconCodepoint != 0u) ? (iconSize + iconGap) : 0.0f;
+
+  if (iconOnly) {
+    textSize = Vec2(0.0f, iconSize);
+  }
+
   Vec2 desiredSize = size;
   if (desiredSize.x <= 0.0f) {
-    desiredSize.x = textSize.x + buttonStyle.padding.x * 2.0f;
+    if (iconOnly) {
+      // Square: same width and height, both derived from line height + padding.
+      desiredSize.x = iconSize + buttonStyle.padding.y * 2.0f;
+    } else {
+      desiredSize.x = textSize.x + iconSlot + buttonStyle.padding.x * 2.0f;
+    }
   }
   if (desiredSize.y <= 0.0f) {
-    desiredSize.y = textSize.y + buttonStyle.padding.y * 2.0f;
+    desiredSize.y = std::max(textSize.y, iconSize) + buttonStyle.padding.y * 2.0f;
   }
 
   LayoutConstraints constraints = ConsumeNextConstraints();
@@ -209,8 +231,9 @@ bool Button(const std::string &label, const Vec2 &size, std::optional<Vec2> pos,
   float mouseX = ctx->input.MouseX();
   float mouseY = ctx->input.MouseY();
   bool hover =
-      enabled && (mouseX >= btnPos.x && mouseX < (btnPos.x + btnSize.x) &&
-                  mouseY >= btnPos.y && mouseY < (btnPos.y + btnSize.y));
+      enabled && !IsMouseInputBlocked(ctx) &&
+      (mouseX >= btnPos.x && mouseX < (btnPos.x + btnSize.x) &&
+       mouseY >= btnPos.y && mouseY < (btnPos.y + btnSize.y));
   bool pressed = hover && ctx->input.IsMouseDown(0);
   bool clicked = hover && ctx->input.IsMousePressed(0);
 
@@ -284,11 +307,17 @@ bool Button(const std::string &label, const Vec2 &size, std::optional<Vec2> pos,
 
   // Viewport culling: skip drawing if button is completely off-screen
   if (IsRectInViewport(ctx, btnPos, btnSize)) {
-    Vec2 shadowPos = btnPos + Vec2(0.0f, buttonStyle.shadowOffsetY);
-    Color shadowColor(0.0f, 0.0f, 0.0f, buttonStyle.shadowOpacity);
     if (buttonStyle.shadowOpacity > 0.0f) {
-      ctx->renderer.DrawRectFilled(shadowPos, btnSize, shadowColor,
-                                   buttonStyle.cornerRadius);
+      // Sombra por elevación (z) reactiva al estado: en REPOSO el botón es plano
+      // (z=ButtonRest=0, sin sombra) para que se vea igual en claro y oscuro; la
+      // sombra aparece al pasar el ratón (ButtonHover) y se mantiene, algo más
+      // hundida, al presionar (ButtonPressed); deshabilitado queda plano.
+      // shadowOpacity del tema actúa de interruptor (los temas "flat" lo ponen a 0).
+      float z = !enabled ? 0.0f
+              : pressed  ? Elevation::Z::ButtonPressed
+              : hover    ? Elevation::Z::ButtonHover
+                         : Elevation::Z::ButtonRest;
+      ctx->renderer.DrawElevationShadow(btnPos, btnSize, buttonStyle.cornerRadius, z);
     }
 
     if (hasFocus && enabled) {
@@ -305,16 +334,24 @@ bool Button(const std::string &label, const Vec2 &size, std::optional<Vec2> pos,
     Vec2 contentPos(btnPos.x + buttonStyle.padding.x,
                     btnPos.y + buttonStyle.padding.y);
 
+    // Center the (icon + gap + text) block horizontally inside the button.
+    float contentWidth = textSize.x + iconSlot;
+    float blockX = btnPos.x + (btnSize.x - contentWidth) * 0.5f;
+    blockX = std::max(blockX, btnPos.x + 2.0f);
+
+    if (iconCodepoint != 0u) {
+      DrawWidgetIcon(ctx, btnPos, btnSize, iconCodepoint, fgColor, iconSize,
+                     blockX - btnPos.x, iconGap);
+    }
+
     Vec2 textPos(
-        contentPos.x +
-            (btnSize.x - buttonStyle.padding.x * 2.0f - textSize.x) * 0.5f,
+        blockX + iconSlot,
         contentPos.y +
             (btnSize.y - buttonStyle.padding.y * 2.0f - textSize.y) * 0.5f - 1.0f); // Pequeño ajuste visual
-    
-    // Asegurar que el texto no se dibuje fuera del botón por errores de redondeo
-    textPos.x = std::max(textPos.x, btnPos.x + 2.0f);
-    
-    ctx->renderer.DrawText(textPos, label, fgColor, buttonStyle.text.fontSize);
+
+    if (!label.empty()) {
+      ctx->renderer.DrawText(textPos, label, fgColor, buttonStyle.text.fontSize);
+    }
 
     // Dibujar ripple effects
     auto &ripple = ctx->rippleEffects[buttonId];
@@ -332,11 +369,235 @@ bool Button(const std::string &label, const Vec2 &size, std::optional<Vec2> pos,
     ctx->lastItemSize = btnSize;
   }
 
+  // Phase B1: publish item state for IsItemActivated/Edited/etc.
+  SetLastItem(buttonId, btnPos, btnPos + btnSize, hover, pressed, hasFocus, enabled && clicked);
+
   return enabled && clicked;
 }
 
+static bool SegmentedControlImpl(const std::string &id,
+                                 const std::vector<std::string> &options,
+                                 const std::vector<uint32_t> *icons,
+                                 int *activeIndex,
+                                 std::optional<Vec2> pos);
+
+bool SegmentedControl(const std::string &id,
+                      const std::vector<std::pair<std::string, uint32_t>> &options,
+                      int *activeIndex,
+                      std::optional<Vec2> pos) {
+  std::vector<std::string> labels;
+  std::vector<uint32_t> ics;
+  labels.reserve(options.size());
+  ics.reserve(options.size());
+  for (const auto &p : options) { labels.push_back(p.first); ics.push_back(p.second); }
+  return SegmentedControlImpl(id, labels, &ics, activeIndex, pos);
+}
+
+bool SegmentedControl(const std::string &id,
+                      const std::vector<std::string> &options,
+                      int *activeIndex,
+                      std::optional<Vec2> pos) {
+  return SegmentedControlImpl(id, options, nullptr, activeIndex, pos);
+}
+
+static bool SegmentedControlImpl(const std::string &id,
+                                 const std::vector<std::string> &options,
+                                 const std::vector<uint32_t> *icons,
+                                 int *activeIndex,
+                                 std::optional<Vec2> pos) {
+  UIContext *ctx = GetContext();
+  if (!ctx || options.empty())
+    return false;
+
+  // Fluent 2 SegmentedControl: a single rounded container holding equal-width
+  // pill segments. Selected segment uses the brand accent fill; inactive
+  // segments are transparent with body-color text.
+  const TextStyle &textStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
+  const PanelStyle &panelStyle = ctx->style.panel;
+  Color accent = ctx->style.accentColor;
+
+  float vPadding = 5.0f;
+  float hPadding = 12.0f;
+  float gap = 2.0f;
+  float height = textStyle.fontSize + vPadding * 2.0f; // ≈26 with 14px body
+  float radius = 4.0f;                                  // borderRadiusMedium
+
+  // Compute per-segment widths from icon + text + padding.
+  std::vector<float> segWidths(options.size());
+  float segIconSize = textStyle.fontSize;
+  float segIconGap = options.empty() ? 0.0f : 6.0f;
+  float totalW = 0.0f;
+  for (size_t i = 0; i < options.size(); ++i) {
+    Vec2 ts = MeasureTextCached(ctx, options[i], textStyle.fontSize);
+    uint32_t cp = (icons && i < icons->size()) ? (*icons)[i] : 0u;
+    bool iconOnly = (cp != 0u) && options[i].empty();
+    float iconSlot = 0.0f;
+    if (cp != 0u) {
+      iconSlot = segIconSize + (options[i].empty() ? 0.0f : segIconGap);
+    }
+    if (iconOnly) {
+      // Square segment for icon-only entries
+      segWidths[i] = segIconSize + hPadding * 2.0f;
+    } else {
+      segWidths[i] = ts.x + iconSlot + hPadding * 2.0f;
+    }
+    totalW += segWidths[i];
+  }
+  totalW += gap * (options.size() - 1);
+
+  Vec2 desired(totalW, height);
+  LayoutConstraints constraints = ConsumeNextConstraints();
+  Vec2 finalSize = ApplyConstraints(ctx, constraints, desired);
+
+  Vec2 widgetPos = pos.has_value()
+                       ? ResolveAbsolutePosition(ctx, pos.value(), finalSize)
+                       : ctx->cursorPos;
+
+  // Container background (subtle inset)
+  Color containerBg = panelStyle.headerBackground;
+  ctx->renderer.DrawRectFilled(widgetPos, finalSize, containerBg, radius);
+
+  int currentIndex = activeIndex ? *activeIndex : 0;
+  if (currentIndex < 0 || currentIndex >= (int)options.size()) currentIndex = 0;
+
+  bool changed = false;
+  float cursorX = widgetPos.x;
+  for (size_t i = 0; i < options.size(); ++i) {
+    Vec2 segPos(cursorX, widgetPos.y);
+    Vec2 segSize(segWidths[i], finalSize.y);
+    bool hover = IsMouseOver(ctx, segPos, segSize);
+    bool isActive = (int)i == currentIndex;
+
+    if (hover && ctx->input.IsMousePressed(0) && !isActive) {
+      currentIndex = (int)i;
+      changed = true;
+    }
+
+    Color segBg(0, 0, 0, 0);
+    Color textColor = textStyle.color;
+    if (isActive) {
+      segBg = accent;
+      textColor = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    } else if (hover) {
+      // Overlay tinted by theme so the hover is visible on light backgrounds too.
+      segBg = ctx->style.isDarkTheme ? Color(1.0f, 1.0f, 1.0f, 0.08f)
+                                     : Color(0.0f, 0.0f, 0.0f, 0.06f);
+    }
+    if (segBg.a > 0.001f) {
+      ctx->renderer.DrawRectFilled(segPos, segSize, segBg, radius);
+    }
+
+    Vec2 ts = MeasureTextCached(ctx, options[i], textStyle.fontSize);
+    uint32_t cp = (icons && i < icons->size()) ? (*icons)[i] : 0u;
+    float iconSlot = 0.0f;
+    if (cp != 0u) {
+      iconSlot = segIconSize + (options[i].empty() ? 0.0f : segIconGap);
+    }
+    float blockWidth = ts.x + iconSlot;
+    float blockX = segPos.x + (segSize.x - blockWidth) * 0.5f;
+    if (cp != 0u) {
+      DrawWidgetIcon(ctx, segPos, segSize, cp, textColor, segIconSize,
+                     blockX - segPos.x, options[i].empty() ? 0.0f : segIconGap);
+    }
+    if (!options[i].empty()) {
+      Vec2 textPos(blockX + iconSlot,
+                   segPos.y + (segSize.y - ts.y) * 0.5f);
+      ctx->renderer.DrawText(textPos, options[i], textColor, textStyle.fontSize);
+    }
+
+    cursorX += segWidths[i] + gap;
+  }
+
+  if (activeIndex) *activeIndex = currentIndex;
+
+  // Generate stable id used as a hash key; not currently used but reserved
+  // for future state (focus, animations).
+  uint32_t segId = GenerateId("SEG:", id.c_str());
+  (void)segId;
+
+  ctx->lastItemPos = widgetPos;
+  AdvanceCursor(ctx, finalSize);
+  return changed;
+}
+
+bool Button(const std::string &label, ButtonSize variant,
+            std::optional<Vec2> pos, bool enabled) {
+  UIContext *ctx = GetContext();
+  if (!ctx)
+    return false;
+
+  // Build an override style based on Fluent 2 size variants.
+  // Heights derive from font + padding*2: Small≈24, Medium≈32, Large≈40.
+  ButtonStyle s = ctx->GetEffectiveButtonStyle();
+  switch (variant) {
+    case ButtonSize::Small:
+      s.padding = Vec2(8.0f, 3.0f);   // spacingHorizontalS × Fluent S
+      s.text.fontSize = 12.0f;        // fontSizeBase200
+      s.cornerRadius = 2.0f;          // <32px → borderRadiusSmall
+      break;
+    case ButtonSize::Medium:
+      s.padding = Vec2(12.0f, 5.0f);  // spacingHorizontalM × Fluent M
+      s.text.fontSize = 14.0f;        // fontSizeBase300
+      s.cornerRadius = 4.0f;          // borderRadiusMedium
+      break;
+    case ButtonSize::Large:
+      s.padding = Vec2(16.0f, 8.0f);  // spacingHorizontalL × Fluent L
+      s.text.fontSize = 16.0f;        // fontSizeBase400
+      s.cornerRadius = 4.0f;
+      break;
+  }
+  ctx->buttonStyleStack.push_back(s);
+  bool clicked = Button(label, Vec2(0.0f, 0.0f), pos, enabled);
+  ctx->buttonStyleStack.pop_back();
+  return clicked;
+}
+
+bool Button(const std::string &label, uint32_t iconCodepoint, ButtonSize variant,
+            std::optional<Vec2> pos, bool enabled) {
+  UIContext *ctx = GetContext();
+  if (!ctx) return false;
+
+  ButtonStyle s = ctx->GetEffectiveButtonStyle();
+  switch (variant) {
+    case ButtonSize::Small:
+      s.padding = Vec2(8.0f, 3.0f);
+      s.text.fontSize = 12.0f;
+      s.cornerRadius = 2.0f;
+      break;
+    case ButtonSize::Medium:
+      s.padding = Vec2(12.0f, 5.0f);
+      s.text.fontSize = 14.0f;
+      s.cornerRadius = 4.0f;
+      break;
+    case ButtonSize::Large:
+      s.padding = Vec2(16.0f, 8.0f);
+      s.text.fontSize = 16.0f;
+      s.cornerRadius = 4.0f;
+      break;
+  }
+  ctx->buttonStyleStack.push_back(s);
+  bool clicked = Button(label, iconCodepoint, Vec2(0.0f, 0.0f), pos, enabled);
+  ctx->buttonStyleStack.pop_back();
+  return clicked;
+}
+
+bool IconButton(uint32_t iconCodepoint, float size, std::optional<Vec2> pos, bool enabled) {
+  UIContext *ctx = GetContext();
+  if (!ctx) return false;
+  Vec2 sz(size, size);
+  return Button(std::string(), iconCodepoint, sz, pos, enabled);
+}
+
+void Label(const std::string &text, uint32_t iconCodepoint,
+           std::optional<Vec2> position, TypographyStyle variant, bool disabled);
+
 void Label(const std::string &text, std::optional<Vec2> position,
            TypographyStyle variant, bool disabled) {
+  Label(text, 0u, position, variant, disabled);
+}
+
+void Label(const std::string &text, uint32_t iconCodepoint,
+           std::optional<Vec2> position, TypographyStyle variant, bool disabled) {
   UIContext *ctx = GetContext();
   if (!ctx)
     return;
@@ -345,28 +606,457 @@ void Label(const std::string &text, std::optional<Vec2> position,
   Color color = disabled ? ctx->style.label.disabledColor : textStyle.color;
 
   Vec2 measured = MeasureTextCached(ctx, text, textStyle.fontSize);
-  if (measured.x <= 0.0f || measured.y <= 0.0f) {
+  if ((measured.x <= 0.0f || measured.y <= 0.0f) && !text.empty()) {
     measured =
         Vec2(text.length() * textStyle.fontSize * 0.6f, textStyle.fontSize);
   }
+  if (measured.y <= 0.0f) measured.y = textStyle.fontSize;
+
+  float iconSize = textStyle.fontSize;
+  float iconGap = (iconCodepoint != 0u && !text.empty()) ? 6.0f : 0.0f;
+  float iconSlot = (iconCodepoint != 0u) ? (iconSize + iconGap) : 0.0f;
+
+  Vec2 contentSize(measured.x + iconSlot, std::max(measured.y, iconSize));
+
+  // En layouts horizontales con altura conocida (ej. toolbar), estirar la
+  // altura del label a la del slot para que quede vertical-centrado igual
+  // que el resto de widgets (botones, drag, combo) de la misma fila.
+  bool inHorizontal = !ctx->layoutStack.empty() && !ctx->layoutStack.back().isVertical;
+  if (inHorizontal) {
+    float lineH = ctx->layoutStack.back().availableSpace.y;
+    if (lineH > contentSize.y) {
+      contentSize.y = lineH;
+    }
+  }
 
   LayoutConstraints constraints = ConsumeNextConstraints();
-  Vec2 finalSize = ApplyConstraints(ctx, constraints, measured);
+  Vec2 finalSize = ApplyConstraints(ctx, constraints, contentSize);
 
   bool hasAbsolutePos = position.has_value();
   Vec2 pos;
   if (hasAbsolutePos) {
-    // Resolver posición absoluta considerando superposiciones
     pos = ResolveAbsolutePosition(ctx, position.value(), finalSize);
   } else {
     pos = ctx->cursorPos;
   }
 
   if (IsRectInViewport(ctx, pos, finalSize)) {
-    ctx->renderer.DrawText(pos, text, color, textStyle.fontSize);
+    if (iconCodepoint != 0u) {
+      DrawWidgetIcon(ctx, pos, finalSize, iconCodepoint, color, iconSize, 0.0f, iconGap);
+    }
+    if (!text.empty()) {
+      Vec2 textPos(pos.x + iconSlot,
+                   pos.y + (finalSize.y - measured.y) * 0.5f);
+      ctx->renderer.DrawText(textPos, text, color, textStyle.fontSize);
+    }
   }
   ctx->lastItemPos = pos;
 
+  if (!hasAbsolutePos) {
+    AdvanceCursor(ctx, finalSize);
+  } else {
+    ctx->lastItemSize = finalSize;
+  }
+}
+
+void IconLabel(uint32_t iconCodepoint, float size, std::optional<Color> color,
+               std::optional<Vec2> position) {
+  UIContext *ctx = GetContext();
+  if (!ctx || iconCodepoint == 0u) return;
+
+  const TextStyle &textStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
+  float iconSize = size > 0.0f ? size : textStyle.fontSize;
+  Color iconColor = color.has_value() ? color.value() : textStyle.color;
+
+  Vec2 finalSize(iconSize, iconSize);
+  bool hasAbsolutePos = position.has_value();
+  Vec2 pos;
+  if (hasAbsolutePos) {
+    pos = ResolveAbsolutePosition(ctx, position.value(), finalSize);
+  } else {
+    pos = ctx->cursorPos;
+  }
+
+  if (IsRectInViewport(ctx, pos, finalSize)) {
+    DrawWidgetIcon(ctx, pos, finalSize, iconCodepoint, iconColor, iconSize, 0.0f, 0.0f);
+  }
+  ctx->lastItemPos = pos;
+  if (!hasAbsolutePos) {
+    AdvanceCursor(ctx, finalSize);
+  } else {
+    ctx->lastItemSize = finalSize;
+  }
+}
+
+// Phase C1: Greedy word-wrap label.
+// maxWidth = 0 → use available width from the current layout cursor (Fill behavior).
+void LabelWrapped(const std::string &text, float maxWidth,
+                  std::optional<Vec2> position, TypographyStyle variant,
+                  bool disabled) {
+  UIContext *ctx = GetContext();
+  if (!ctx) return;
+
+  const TextStyle &textStyle = ctx->style.GetTextStyle(variant);
+  Color color = disabled ? ctx->style.label.disabledColor : textStyle.color;
+
+  // Resolve effective wrap width
+  float wrapW = maxWidth;
+  if (wrapW <= 0.0f) {
+    // Use remaining space in current vertical layout, or container width
+    if (!ctx->layoutStack.empty()) {
+      wrapW = ctx->layoutStack.back().availableSpace.x;
+    }
+    if (wrapW <= 0.0f) wrapW = 200.0f;
+  }
+
+  // Greedy wrap: split on spaces, accumulate words until line exceeds wrapW.
+  std::vector<std::string> lines;
+  std::string current;
+  size_t i = 0;
+  const size_t n = text.size();
+  while (i < n) {
+    // Hard newline
+    if (text[i] == '\n') {
+      lines.push_back(current);
+      current.clear();
+      ++i;
+      continue;
+    }
+    // Extract next word (run of non-space, non-newline chars)
+    size_t wStart = i;
+    while (i < n && text[i] != ' ' && text[i] != '\n') ++i;
+    std::string word = text.substr(wStart, i - wStart);
+
+    // Tentatively add separator + word
+    std::string tentative = current.empty() ? word : current + " " + word;
+    Vec2 sz = MeasureTextCached(ctx, tentative, textStyle.fontSize);
+    if (sz.x <= wrapW || current.empty()) {
+      current = tentative;
+    } else {
+      lines.push_back(current);
+      current = word;
+    }
+
+    // Skip a single space (multiple spaces collapse)
+    while (i < n && text[i] == ' ') ++i;
+  }
+  if (!current.empty()) lines.push_back(current);
+  if (lines.empty()) lines.push_back("");
+
+  // Compute total size
+  float lineH = textStyle.fontSize * 1.4f;
+  float maxLineW = 0.0f;
+  for (const auto& ln : lines) {
+    Vec2 m = MeasureTextCached(ctx, ln, textStyle.fontSize);
+    maxLineW = std::max(maxLineW, m.x);
+  }
+  Vec2 totalSize(std::min(maxLineW, wrapW), lineH * static_cast<float>(lines.size()));
+
+  LayoutConstraints constraints = ConsumeNextConstraints();
+  Vec2 finalSize = ApplyConstraints(ctx, constraints, totalSize);
+
+  bool hasAbsolutePos = position.has_value();
+  Vec2 pos = hasAbsolutePos
+      ? ResolveAbsolutePosition(ctx, position.value(), finalSize)
+      : ctx->cursorPos;
+
+  if (IsRectInViewport(ctx, pos, finalSize)) {
+    Vec2 cursor = pos;
+    for (const auto& ln : lines) {
+      ctx->renderer.DrawText(cursor, ln, color, textStyle.fontSize);
+      cursor.y += lineH;
+    }
+  }
+  ctx->lastItemPos = pos;
+
+  if (!hasAbsolutePos) {
+    AdvanceCursor(ctx, finalSize);
+  } else {
+    ctx->lastItemSize = finalSize;
+  }
+}
+
+// ─── Phase C8: Rich text label with inline markup ─────────────────────────
+namespace {
+
+struct RichSpan {
+  std::string text;
+  Color color;
+  float size;
+  bool bold = false;
+  bool italic = false;
+  bool isLink = false;
+  std::string linkUrl;
+};
+
+// Hex parser for #RRGGBB or #RRGGBBAA
+static bool ParseHexColor(const std::string &s, Color &out) {
+  size_t start = 0;
+  if (!s.empty() && s[0] == '#') start = 1;
+  if (s.size() - start != 6 && s.size() - start != 8) return false;
+  auto hex = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+  };
+  int v[8] = {0};
+  size_t len = s.size() - start;
+  for (size_t i = 0; i < len; ++i) {
+    int h = hex(s[start + i]);
+    if (h < 0) return false;
+    v[i] = h;
+  }
+  out.r = (v[0] * 16 + v[1]) / 255.0f;
+  out.g = (v[2] * 16 + v[3]) / 255.0f;
+  out.b = (v[4] * 16 + v[5]) / 255.0f;
+  out.a = (len == 8) ? (v[6] * 16 + v[7]) / 255.0f : 1.0f;
+  return true;
+}
+
+// Tokenize markup into spans. Tags supported: <b> <i> <color=...> <size=N> <a href="url">
+static std::vector<RichSpan> ParseMarkup(const std::string &markup,
+                                         const Color &baseColor,
+                                         float baseSize) {
+  std::vector<RichSpan> out;
+  std::vector<Color> colorStack{baseColor};
+  std::vector<float> sizeStack{baseSize};
+  int boldDepth = 0;
+  int italicDepth = 0;
+  std::string linkUrl;
+
+  std::string buf;
+  auto flush = [&]() {
+    if (!buf.empty()) {
+      RichSpan s;
+      s.text = buf;
+      s.color = colorStack.back();
+      s.size = sizeStack.back();
+      s.bold = boldDepth > 0;
+      s.italic = italicDepth > 0;
+      s.isLink = !linkUrl.empty();
+      s.linkUrl = linkUrl;
+      out.push_back(std::move(s));
+      buf.clear();
+    }
+  };
+
+  size_t i = 0, n = markup.size();
+  while (i < n) {
+    if (markup[i] == '<') {
+      size_t j = markup.find('>', i + 1);
+      if (j == std::string::npos) { buf.push_back(markup[i]); ++i; continue; }
+      std::string tag = markup.substr(i + 1, j - i - 1);
+      flush();
+
+      // Closing tag?
+      if (!tag.empty() && tag[0] == '/') {
+        std::string name = tag.substr(1);
+        if (name == "b" && boldDepth > 0) --boldDepth;
+        else if (name == "i" && italicDepth > 0) --italicDepth;
+        else if (name == "color" && colorStack.size() > 1) colorStack.pop_back();
+        else if (name == "size" && sizeStack.size() > 1) sizeStack.pop_back();
+        else if (name == "a") linkUrl.clear();
+      } else {
+        // Opening tag
+        if (tag == "b") {
+          ++boldDepth;
+        } else if (tag == "i") {
+          ++italicDepth;
+        } else if (tag.rfind("color=", 0) == 0) {
+          Color c = colorStack.back();
+          if (ParseHexColor(tag.substr(6), c)) colorStack.push_back(c);
+          else colorStack.push_back(colorStack.back());
+        } else if (tag.rfind("size=", 0) == 0) {
+          try {
+            float s = std::stof(tag.substr(5));
+            sizeStack.push_back(s > 1.0f ? s : sizeStack.back());
+          } catch (...) {
+            sizeStack.push_back(sizeStack.back());
+          }
+        } else if (tag.rfind("a ", 0) == 0 || tag == "a") {
+          // Parse href="..."
+          size_t hp = tag.find("href=");
+          if (hp != std::string::npos) {
+            size_t qs = hp + 5;
+            char q = '"';
+            if (qs < tag.size() && (tag[qs] == '"' || tag[qs] == '\'')) {
+              q = tag[qs]; ++qs;
+            }
+            size_t qe = tag.find(q, qs);
+            if (qe != std::string::npos) {
+              linkUrl = tag.substr(qs, qe - qs);
+            }
+          }
+          if (linkUrl.empty()) linkUrl = "#";
+        }
+      }
+      i = j + 1;
+    } else {
+      buf.push_back(markup[i]);
+      ++i;
+    }
+  }
+  flush();
+  return out;
+}
+
+} // namespace
+
+void LabelRich(const std::string &markup, float maxWidth,
+               std::optional<Vec2> position, TypographyStyle variant,
+               std::function<void(const std::string &url)> onLinkClicked) {
+  UIContext *ctx = GetContext();
+  if (!ctx) return;
+
+  const TextStyle &textStyle = ctx->style.GetTextStyle(variant);
+  Color baseColor = textStyle.color;
+  float baseSize = textStyle.fontSize;
+
+  std::vector<RichSpan> spans = ParseMarkup(markup, baseColor, baseSize);
+
+  // Resolve effective wrap width (0 = no wrap)
+  float wrapW = maxWidth;
+  if (wrapW <= 0.0f && !ctx->layoutStack.empty()) {
+    wrapW = ctx->layoutStack.back().availableSpace.x;
+  }
+
+  // Token = a contiguous chunk inside a span split on whitespace.
+  // Each token carries its own style. A token can break across lines.
+  struct Token {
+    std::string text;
+    bool isSpace = false;
+    bool isNewline = false;
+    Color color;
+    float size = 16.0f;
+    bool bold = false, italic = false;
+    bool isLink = false;
+    std::string linkUrl;
+    Vec2 measured;
+  };
+
+  std::vector<Token> tokens;
+  for (const auto &s : spans) {
+    size_t i = 0, n = s.text.size();
+    while (i < n) {
+      if (s.text[i] == '\n') {
+        Token t; t.text = "\n"; t.isNewline = true; t.color = s.color;
+        t.size = s.size; t.bold = s.bold; t.italic = s.italic;
+        t.isLink = s.isLink; t.linkUrl = s.linkUrl;
+        tokens.push_back(t); ++i; continue;
+      }
+      if (s.text[i] == ' ' || s.text[i] == '\t') {
+        Token t; t.text = " "; t.isSpace = true; t.color = s.color;
+        t.size = s.size; t.bold = s.bold; t.italic = s.italic;
+        t.isLink = s.isLink; t.linkUrl = s.linkUrl;
+        t.measured = MeasureTextCached(ctx, " ", s.size);
+        tokens.push_back(t); ++i;
+        while (i < n && (s.text[i] == ' ' || s.text[i] == '\t')) ++i;
+        continue;
+      }
+      size_t start = i;
+      while (i < n && s.text[i] != ' ' && s.text[i] != '\t' && s.text[i] != '\n') ++i;
+      Token t; t.text = s.text.substr(start, i - start);
+      t.color = s.color; t.size = s.size; t.bold = s.bold; t.italic = s.italic;
+      t.isLink = s.isLink; t.linkUrl = s.linkUrl;
+      t.measured = MeasureTextCached(ctx, t.text, s.size);
+      tokens.push_back(t);
+    }
+  }
+
+  // Lay out tokens into lines respecting wrapW.
+  struct LineEntry {
+    std::vector<size_t> tokenIndices;
+    float width = 0.0f;
+    float height = 0.0f;
+  };
+  std::vector<LineEntry> lines;
+  LineEntry cur;
+  for (size_t k = 0; k < tokens.size(); ++k) {
+    const Token &t = tokens[k];
+    if (t.isNewline) {
+      if (cur.height <= 0.0f) cur.height = t.size * 1.4f;
+      lines.push_back(std::move(cur));
+      cur = {};
+      continue;
+    }
+    float w = t.measured.x;
+    if (wrapW > 0.0f && !t.isSpace && cur.width + w > wrapW &&
+        !cur.tokenIndices.empty()) {
+      lines.push_back(std::move(cur));
+      cur = {};
+      // Skip if the wrap candidate is just a leading space — fold instead
+      if (t.isSpace) continue;
+    }
+    if (t.isSpace && cur.tokenIndices.empty()) continue;
+    cur.tokenIndices.push_back(k);
+    cur.width += w;
+    cur.height = std::max(cur.height, t.size * 1.4f);
+  }
+  if (!cur.tokenIndices.empty() || cur.height > 0.0f) lines.push_back(std::move(cur));
+  if (lines.empty()) lines.push_back({});
+
+  // Total size
+  float totalH = 0.0f, maxLineW = 0.0f;
+  for (auto &l : lines) {
+    if (l.height <= 0.0f) l.height = baseSize * 1.4f;
+    totalH += l.height;
+    maxLineW = std::max(maxLineW, l.width);
+  }
+  Vec2 totalSize(wrapW > 0.0f ? std::min(maxLineW, wrapW) : maxLineW, totalH);
+
+  LayoutConstraints constraints = ConsumeNextConstraints();
+  Vec2 finalSize = ApplyConstraints(ctx, constraints, totalSize);
+
+  bool hasAbsolutePos = position.has_value();
+  Vec2 pos = hasAbsolutePos
+      ? ResolveAbsolutePosition(ctx, position.value(), finalSize)
+      : ctx->cursorPos;
+
+  // Render
+  if (IsRectInViewport(ctx, pos, finalSize)) {
+    float yCursor = pos.y;
+    for (const auto &line : lines) {
+      float xCursor = pos.x;
+      for (size_t idx : line.tokenIndices) {
+        const Token &t = tokens[idx];
+        float baseline = yCursor + (line.height - t.size) * 0.5f;
+        if (t.isLink) {
+          // Underline + link colour (use accent; honour explicit color overrides)
+          Color linkCol = (t.color.r == baseColor.r &&
+                          t.color.g == baseColor.g &&
+                          t.color.b == baseColor.b)
+              ? Color(0.30f, 0.60f, 1.0f, 1.0f)
+              : t.color;
+          ctx->renderer.DrawText(Vec2(xCursor, baseline), t.text, linkCol, t.size);
+          float underY = baseline + t.size * 0.95f;
+          ctx->renderer.DrawLine(Vec2(xCursor, underY),
+                                 Vec2(xCursor + t.measured.x, underY),
+                                 linkCol, 1.0f);
+
+          // Hover/click detection
+          Vec2 lpos(xCursor, baseline);
+          Vec2 lsize(t.measured.x, t.size);
+          if (IsMouseOver(ctx, lpos, lsize)) {
+            ctx->desiredCursor = UIContext::CursorType::Hand;
+            if (ctx->input.IsMousePressed(0) && onLinkClicked) {
+              onLinkClicked(t.linkUrl);
+            }
+          }
+        } else if (t.bold) {
+          // Fake bold by drawing twice with a 0.5px offset
+          ctx->renderer.DrawText(Vec2(xCursor, baseline), t.text, t.color, t.size);
+          ctx->renderer.DrawText(Vec2(xCursor + 0.5f, baseline), t.text, t.color, t.size);
+        } else {
+          ctx->renderer.DrawText(Vec2(xCursor, baseline), t.text, t.color, t.size);
+        }
+        xCursor += t.measured.x;
+      }
+      yCursor += line.height;
+    }
+  }
+
+  ctx->lastItemPos = pos;
   if (!hasAbsolutePos) {
     AdvanceCursor(ctx, finalSize);
   } else {
@@ -380,28 +1070,49 @@ void Separator() {
     return;
 
   const SeparatorStyle &separator = ctx->style.separator;
-  // Use container available space if in a layout, otherwise viewport
-  Vec2 available = GetCurrentAvailableSpace(ctx);
-  float separatorWidth = available.x > 0.0f ? available.x
-               : ctx->renderer.GetViewportSize().x - ctx->cursorPos.x * 2.0f;
-  Vec2 desired(separatorWidth, separator.thickness);
 
-  LayoutConstraints constraints = ConsumeNextConstraints();
-  Vec2 finalSize = ApplyConstraints(ctx, constraints, desired);
-  finalSize.y = std::max(finalSize.y, separator.thickness);
+  // Detect if we're inside a horizontal layout
+  bool inHorizontal = !ctx->layoutStack.empty() && !ctx->layoutStack.back().isVertical;
 
-  // Resolver posición: usar cursor directamente (separator no tiene posición
-  // absoluta)
-  Vec2 pos = ctx->cursorPos;
-  Vec2 drawPos = pos + Vec2(0.0f, separator.padding * 0.5f);
-  if (IsRectInViewport(ctx, drawPos, finalSize)) {
-    ctx->renderer.DrawRectFilled(drawPos, Vec2(finalSize.x, finalSize.y),
-                                 separator.color, 0.0f);
+  if (inHorizontal) {
+    // Vertical separator: thin line, full height of the layout
+    float lineHeight = ctx->layoutStack.back().contentSize.y;
+    if (lineHeight <= 0.0f) lineHeight = ctx->layoutStack.back().availableSpace.y;
+    if (lineHeight <= 0.0f) lineHeight = 20.0f; // fallback
+    float sepWidth = separator.thickness;
+
+    Vec2 pos = ctx->cursorPos;
+    Vec2 drawPos = pos + Vec2(separator.padding * 0.5f, 0.0f);
+    Vec2 drawSize(sepWidth, lineHeight);
+    if (IsRectInViewport(ctx, drawPos, drawSize)) {
+      ctx->renderer.DrawRectFilled(drawPos, drawSize, separator.color, 0.0f);
+    }
+
+    Vec2 totalSize(sepWidth + separator.padding, lineHeight);
+    ctx->lastItemPos = pos;
+    AdvanceCursor(ctx, totalSize);
+  } else {
+    // Horizontal separator (default): full width line
+    Vec2 available = GetCurrentAvailableSpace(ctx);
+    float separatorWidth = available.x > 0.0f ? available.x
+                 : ctx->renderer.GetViewportSize().x - ctx->cursorPos.x * 2.0f;
+    Vec2 desired(separatorWidth, separator.thickness);
+
+    LayoutConstraints constraints = ConsumeNextConstraints(SizeConstraint::Fill);
+    Vec2 finalSize = ApplyConstraints(ctx, constraints, desired);
+    finalSize.y = std::max(finalSize.y, separator.thickness);
+
+    Vec2 pos = ctx->cursorPos;
+    Vec2 drawPos = pos + Vec2(0.0f, separator.padding * 0.5f);
+    if (IsRectInViewport(ctx, drawPos, finalSize)) {
+      ctx->renderer.DrawRectFilled(drawPos, Vec2(finalSize.x, finalSize.y),
+                                   separator.color, 0.0f);
+    }
+
+    Vec2 totalSize(finalSize.x, finalSize.y + separator.padding);
+    ctx->lastItemPos = pos;
+    AdvanceCursor(ctx, totalSize);
   }
-
-  Vec2 totalSize(finalSize.x, finalSize.y + separator.padding);
-  ctx->lastItemPos = pos;
-  AdvanceCursor(ctx, totalSize);
 }
 
 // ============================================================
@@ -627,7 +1338,7 @@ bool ColorPicker(const std::string &label, Color *value,
 
   // Layout
   Vec2 desiredSize(widgetWidth + INNER_PAD * 2.0f, widgetHeight + INNER_PAD * 2.0f);
-  LayoutConstraints constraints = ConsumeNextConstraints();
+  LayoutConstraints constraints = ConsumeNextConstraints(SizeConstraint::Fill);
   Vec2 totalSize = ApplyConstraints(ctx, constraints, desiredSize);
 
   bool hasAbsPos = pos.has_value();
@@ -945,6 +1656,47 @@ bool ColorPicker(const std::string &label, Color *value,
     ctx->renderer.DrawText(
         Vec2(hexPos.x + 4.0f, hexPos.y + (hexSize.y - 13.0f) * 0.5f),
         state.hexText, ctx->style.GetTextStyle(TypographyStyle::Body).color, 13.0f);
+
+    // Phase C6: eyedropper button overlay (small square at right of hex)
+    {
+      Vec2 eyePos(hexPos.x + hexSize.x - PREVIEW_H, hexPos.y);
+      Vec2 eyeSize(PREVIEW_H, PREVIEW_H);
+      bool hoverEye = (mx >= eyePos.x && mx < eyePos.x + eyeSize.x &&
+                       my >= eyePos.y && my < eyePos.y + eyeSize.y);
+      Color eyeBg = state.eyedropperActive
+          ? ctx->style.button.background.hover
+          : (hoverEye ? Color(0.2f, 0.2f, 0.2f, 0.7f) : Color(0.13f, 0.13f, 0.13f, 0.5f));
+      ctx->renderer.DrawRectFilled(eyePos, eyeSize, eyeBg, 3.0f);
+      ctx->renderer.DrawRect(eyePos, eyeSize, Color(0.3f, 0.3f, 0.3f, 0.7f), 3.0f);
+      ctx->renderer.DrawText(
+          Vec2(eyePos.x + 4.0f, eyePos.y + (eyeSize.y - 13.0f) * 0.5f),
+          "Pick", ctx->style.GetTextStyle(TypographyStyle::Body).color, 11.0f);
+      if (hoverEye && mousePressed) {
+        state.eyedropperActive = !state.eyedropperActive;
+      }
+      if (state.eyedropperActive) {
+        ctx->desiredCursor = UIContext::CursorType::Hand;
+        // Click anywhere outside the picker captures the pixel
+        bool insidePicker = (mx >= widgetPos.x && mx < widgetPos.x + totalSize.x &&
+                             my >= widgetPos.y && my < widgetPos.y + totalSize.y);
+        if (mousePressed && !insidePicker) {
+          int px = static_cast<int>(mx);
+          int py = static_cast<int>(my);
+          float dpi = ctx->renderer.GetDPIScale();
+          Color picked = ctx->renderer.ReadPixel(static_cast<int>(px * dpi),
+                                                  static_cast<int>(py * dpi));
+          if (picked.a > 0.0f) {
+            picked.ToHSV(state.hue, state.saturation, state.value);
+            state.alpha = picked.a;
+            changed = true;
+          }
+          state.eyedropperActive = false;
+        }
+        if (ctx->input.IsKeyPressed(SDL_SCANCODE_ESCAPE)) {
+          state.eyedropperActive = false;
+        }
+      }
+    }
   }
 
   // -- RGB Sliders --
@@ -1032,6 +1784,15 @@ bool ColorPicker(const std::string &label, Color *value,
   // Advance cursor in layout
   if (!hasAbsPos) {
     AdvanceCursor(ctx, totalSize);
+  }
+
+  // Phase B1: publish color-picker state
+  {
+    bool hover = (mx >= widgetPos.x && mx < widgetPos.x + totalSize.x &&
+                  my >= widgetPos.y && my < widgetPos.y + totalSize.y);
+    bool active = (ctx->activeWidgetId == pickerId);
+    SetLastItem(pickerId, widgetPos, widgetPos + totalSize,
+                hover, active, ctx->focusedWidgetId == pickerId, changed);
   }
 
   return changed;

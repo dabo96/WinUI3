@@ -1,12 +1,28 @@
 #include "core/Context.h"
 #include "core/Renderer.h"
 #include "core/OpenGLBackend.h"
+#include "core/VulkanBackend.h"
 #include "Theme/FluentTheme.h"
 
 namespace FluentUI {
 
     // Logging system
     static LogCallback g_logCallback = nullptr;
+
+    // Backend selection (defaults to OpenGL)
+    static RenderBackendType g_preferredBackend = RenderBackendType::OpenGL;
+
+    void SetPreferredBackend(RenderBackendType type) { g_preferredBackend = type; }
+    RenderBackendType GetPreferredBackend() { return g_preferredBackend; }
+
+    // Factory: instantiate the configured backend (not yet initialized).
+    static RenderBackend* CreateBackendInstance() {
+        switch (g_preferredBackend) {
+            case RenderBackendType::Vulkan: return new VulkanBackend();
+            case RenderBackendType::OpenGL:
+            default:                        return new OpenGLBackend();
+        }
+    }
 
     void SetLogCallback(LogCallback callback) {
         g_logCallback = std::move(callback);
@@ -58,9 +74,9 @@ namespace FluentUI {
         }
     }
 
-    UIContext* CreateContext(SDL_Window* window) {
+    UIContext* CreateContext(SDL_Window* window, void* existingGLContext) {
         if (g_ctx) return g_ctx;
-        
+
         if (!window) {
             Log(LogLevel::Error, "Window handle is NULL");
             return nullptr;
@@ -69,9 +85,13 @@ namespace FluentUI {
         g_ctx = new UIContext();
         g_ctx->window = window;
 
-        g_backend = new OpenGLBackend();
-        if (!g_backend->Init(window)) {
-            Log(LogLevel::Error, "Failed to initialize OpenGL backend");
+        g_backend = CreateBackendInstance();
+        if (!g_backend->Init(window, existingGLContext)) {
+            Log(LogLevel::Error, "Failed to initialize render backend");
+            if (g_preferredBackend == RenderBackendType::OpenGL) {
+                Log(LogLevel::Error, "Hint: if this is a Vulkan window, call "
+                    "SetPreferredBackend(RenderBackendType::Vulkan) before CreateContext().");
+            }
             delete g_backend;
             delete g_ctx;
             g_backend = nullptr;
@@ -99,8 +119,26 @@ namespace FluentUI {
         return g_ctx;
     }
 
+    UIContext* CreateContext(SDL_Window* window, RenderBackendType backend, void* existingContext) {
+        // Keep the backend choice and its handle together so they can't desync.
+        SetPreferredBackend(backend);
+        return CreateContext(window, existingContext);
+    }
+
     UIContext* GetContext() {
         return g_ctx;
+    }
+
+    void* RegisterExternalTexture(void* nativeView, void* sampler, int layout) {
+        if (!g_backend) {
+            Log(LogLevel::Error, "RegisterExternalTexture: no active backend (call CreateContext first)");
+            return nullptr;
+        }
+        return g_backend->RegisterExternalTexture(nativeView, sampler, layout);
+    }
+
+    void DestroyExternalTexture(void* handle) {
+        if (g_backend && handle) g_backend->DeleteTexture(handle);
     }
 
     void SetCurrentContext(UIContext* ctx) {
@@ -116,9 +154,9 @@ namespace FluentUI {
         auto* ctx = new UIContext();
         ctx->window = window;
 
-        auto* backend = new OpenGLBackend();
+        auto* backend = CreateBackendInstance();
         if (!backend->Init(window)) {
-            Log(LogLevel::Error, "Failed to initialize OpenGL backend for secondary window");
+            Log(LogLevel::Error, "Failed to initialize render backend for secondary window");
             delete backend;
             delete ctx;
             return nullptr;
@@ -260,6 +298,13 @@ namespace FluentUI {
 
         g_ctx->renderer.BeginFrame(g_ctx->style.backgroundColor);
         g_ctx->scrollConsumedThisFrame = false;
+        g_ctx->mouseOverAnyWidgetLastFrame = g_ctx->mouseOverAnyWidget;
+        g_ctx->mouseOverAnyWidget = false;
+
+        // Phase D: drag-drop per-frame reset (acceptedThisFrame is for current frame)
+        g_ctx->dragDrop.acceptedThisFrame = false;
+        g_ctx->dragDrop.delivered = false;
+        g_ctx->insideContextMenu = false;
         g_ctx->cursorPos = { 20.0f, 20.0f };
         g_ctx->lastItemPos = g_ctx->cursorPos;
         g_ctx->lastItemSize = { 0.0f, 0.0f };
@@ -431,6 +476,33 @@ namespace FluentUI {
 
     void Render() {
         if (!g_ctx || !g_ctx->initialized) return;
+
+        // Phase D: render the drag-drop floating preview on the overlay layer
+        if (g_ctx->dragDrop.active && g_ctx->dragDrop.previewDrawCtx) {
+            auto prevLayer = g_ctx->renderer.GetLayer();
+            g_ctx->renderer.SetLayer(RenderLayer::Tooltip);
+            Vec2 savedCursor = g_ctx->cursorPos;
+            Vec2 mp = g_ctx->dragDrop.currentPos;
+            g_ctx->cursorPos = Vec2(mp.x + 12.0f, mp.y + 12.0f);
+            auto *fn = static_cast<std::function<void()> *>(g_ctx->dragDrop.previewDrawCtx);
+            if (fn && *fn) (*fn)();
+            g_ctx->cursorPos = savedCursor;
+            g_ctx->renderer.SetLayer(prevLayer);
+        }
+
+        // Phase D: when the drag was just delivered or cancelled, clean preview
+        if (!g_ctx->input.IsMouseDown(0) && g_ctx->dragDrop.previewDrawCtx) {
+            auto *fn = static_cast<std::function<void()> *>(g_ctx->dragDrop.previewDrawCtx);
+            delete fn;
+            g_ctx->dragDrop.previewDrawCtx = nullptr;
+            if (g_ctx->dragDrop.acceptedThisFrame || !g_ctx->dragDrop.active) {
+                g_ctx->dragDrop.active = false;
+                g_ctx->dragDrop.payloadType.clear();
+                g_ctx->dragDrop.payloadBytes.clear();
+                g_ctx->dragDrop.sourceWidgetId = 0;
+            }
+        }
+
         g_ctx->renderer.EndFrame();
 
         // Apply mouse cursor at end of frame
@@ -441,6 +513,68 @@ namespace FluentUI {
             }
             g_ctx->currentCursor = g_ctx->desiredCursor;
         }
+    }
+
+    bool WantCaptureMouse() {
+        if (!g_ctx) return false;
+        return g_ctx->mouseOverAnyWidgetLastFrame;
+    }
+
+    // --- Phase B1: Item-state query implementations ---
+    bool IsItemHovered()   { return g_ctx ? g_ctx->lastItem.hovered  : false; }
+    bool IsItemActive()    { return g_ctx ? g_ctx->lastItem.active   : false; }
+    bool IsItemFocused()   { return g_ctx ? g_ctx->lastItem.focused  : false; }
+    bool IsItemEdited()    { return g_ctx ? g_ctx->lastItem.edited   : false; }
+    bool IsItemActivated() { return g_ctx ? g_ctx->lastItem.activated : false; }
+    bool IsItemDeactivated() { return g_ctx ? g_ctx->lastItem.deactivated : false; }
+    bool IsItemDeactivatedAfterEdit() { return g_ctx ? g_ctx->lastItem.deactivatedAfterEdit : false; }
+
+    void GetItemRect(Vec2* outMin, Vec2* outMax) {
+        if (!g_ctx) {
+            if (outMin) *outMin = Vec2(0, 0);
+            if (outMax) *outMax = Vec2(0, 0);
+            return;
+        }
+        if (outMin) *outMin = g_ctx->lastItem.bboxMin;
+        if (outMax) *outMax = g_ctx->lastItem.bboxMax;
+    }
+
+    void SetLastItem(uint32_t id, const Vec2& bboxMin, const Vec2& bboxMax,
+                     bool hovered, bool active, bool focused, bool edited) {
+        if (!g_ctx) return;
+        UIContext::LastItemData& li = g_ctx->lastItem;
+        li.id = id;
+        li.bboxMin = bboxMin;
+        li.bboxMax = bboxMax;
+        li.hovered = hovered;
+        li.active = active;
+        li.focused = focused;
+        li.edited = edited;
+
+        // Track activation transitions
+        bool wasActive = false;
+        auto itPrev = g_ctx->prevActiveItems.find(id);
+        if (itPrev != g_ctx->prevActiveItems.end()) wasActive = itPrev->second;
+
+        li.activated = (active && !wasActive);
+        li.deactivated = (!active && wasActive);
+
+        if (li.activated) {
+            g_ctx->editedSinceActivate[id] = false;
+        }
+        if (edited) {
+            g_ctx->editedSinceActivate[id] = true;
+        }
+        if (li.deactivated) {
+            auto itEd = g_ctx->editedSinceActivate.find(id);
+            li.deactivatedAfterEdit = (itEd != g_ctx->editedSinceActivate.end() && itEd->second);
+            g_ctx->editedSinceActivate.erase(id);
+        } else {
+            li.deactivatedAfterEdit = false;
+        }
+
+        // Update prev-frame state for next frame
+        g_ctx->prevActiveItems[id] = active;
     }
 
 } // namespace FluentUI

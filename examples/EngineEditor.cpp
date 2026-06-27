@@ -10,16 +10,16 @@ using namespace FluentUI;
 void InitEditorState(EditorState& state) {
     if (state.initialized) return;
 
-    state.objects.push_back({"Main Camera", {0, 5, -10}, {30, 0, 0}, {1,1,1}, Color(0.3f,0.7f,1,1), true, false, 0, "MainCamera", {}, -1});
-    state.objects.push_back({"Directional Light", {0, 10, 0}, {50, -30, 0}, {1,1,1}, Color(1,0.95f,0.8f,1), true, true, 0, "Light", {}, -1});
-    state.objects.push_back({"Ground", {0, 0, 0}, {0, 0, 0}, {50, 1, 50}, Color(0.4f,0.5f,0.3f,1), true, true, 2, "Environment", {}, -1});
-    state.objects.push_back({"Player", {0, 1, 0}, {0, 0, 0}, {1,2,1}, Color(0.2f,0.6f,1,1), true, false, 1, "Player", {4, 5}, -1});
-    state.objects.push_back({"Weapon", {0.5f, 1.5f, 0.3f}, {0, 0, 0}, {0.2f,0.2f,1.0f}, Color(0.6f,0.6f,0.6f,1), true, false, 3, "Weapon", {}, 3});
-    state.objects.push_back({"Shield", {-0.5f, 1.2f, 0.2f}, {0, 15, 0}, {0.8f,0.8f,0.1f}, Color(0.8f,0.7f,0.2f,1), true, false, 0, "Shield", {}, 3});
-    state.objects.push_back({"Enemy_01", {5, 1, 3}, {0, -45, 0}, {1,1.5f,1}, Color(0.9f,0.2f,0.2f,1), true, false, 1, "Enemy", {}, -1});
-    state.objects.push_back({"Enemy_02", {-4, 1, 7}, {0, 120, 0}, {1.2f,1.8f,1.2f}, Color(0.8f,0.15f,0.15f,1), true, false, 1, "Enemy", {}, -1});
-    state.objects.push_back({"Collectible", {3, 0.5f, -2}, {0, 0, 0}, {0.5f,0.5f,0.5f}, Color(1,0.9f,0,1), true, false, 1, "Pickup", {}, -1});
-    state.objects.push_back({"Wall_North", {0, 2, 15}, {0, 0, 0}, {30, 4, 1}, Color(0.5f,0.5f,0.5f,1), true, true, 0, "Environment", {}, -1});
+    state.objects.push_back({"Main Camera", {0, 5, -10}, {30, 0, 0}, {1,1,1}, Color(0.3f,0.7f,1,1), 1.0f, true, false, 0, "MainCamera", {}, -1});
+    state.objects.push_back({"Directional Light", {0, 10, 0}, {50, -30, 0}, {1,1,1}, Color(1,0.95f,0.8f,1), 1.0f, true, true, 0, "Light", {}, -1});
+    state.objects.push_back({"Ground", {0, 0, 0}, {0, 0, 0}, {50, 1, 50}, Color(0.4f,0.5f,0.3f,1), 1.0f, true, true, 2, "Environment", {}, -1});
+    state.objects.push_back({"Player", {0, 1, 0}, {0, 0, 0}, {1,2,1}, Color(0.2f,0.6f,1,1), 1.0f, true, false, 1, "Player", {4, 5}, -1});
+    state.objects.push_back({"Weapon", {0.5f, 1.5f, 0.3f}, {0, 0, 0}, {0.2f,0.2f,1.0f}, Color(0.6f,0.6f,0.6f,1), 1.0f, true, false, 3, "Weapon", {}, 3});
+    state.objects.push_back({"Shield", {-0.5f, 1.2f, 0.2f}, {0, 15, 0}, {0.8f,0.8f,0.1f}, Color(0.8f,0.7f,0.2f,1), 1.0f, true, false, 0, "Shield", {}, 3});
+    state.objects.push_back({"Enemy_01", {5, 1, 3}, {0, -45, 0}, {1,1.5f,1}, Color(0.9f,0.2f,0.2f,1), 1.0f, true, false, 1, "Enemy", {}, -1});
+    state.objects.push_back({"Enemy_02", {-4, 1, 7}, {0, 120, 0}, {1.2f,1.8f,1.2f}, Color(0.8f,0.15f,0.15f,1), 1.0f, true, false, 1, "Enemy", {}, -1});
+    state.objects.push_back({"Collectible", {3, 0.5f, -2}, {0, 0, 0}, {0.5f,0.5f,0.5f}, Color(1,0.9f,0,1), 1.0f, true, false, 1, "Pickup", {}, -1});
+    state.objects.push_back({"Wall_North", {0, 2, 15}, {0, 0, 0}, {30, 4, 1}, Color(0.5f,0.5f,0.5f,1), 1.0f, true, true, 0, "Environment", {}, -1});
 
     state.consoleMessages.push_back({ConsoleMessage::Info, "FluentUI Engine Editor initialized", 0.0f});
     state.consoleMessages.push_back({ConsoleMessage::Info, "Scene loaded: SampleScene.scene (10 objects)", 0.1f});
@@ -154,7 +154,7 @@ static void BuildMenuBar(UIBuilder& ui, FluentApp& app, EditorState& state) {
         });
 
         ui.menu("Help", [&](UIBuilder& ui) {
-            if (ui.menuItem("About")) state.showAboutModal = true;
+            //if (ui.menuItem("About")) state.showAboutModal = true;
         });
     });
 }
@@ -169,7 +169,7 @@ static void BuildToolbar(UIBuilder& ui, EditorState& state) {
                 .cornerRadius = 4.0f,
                 .text = {12.0f, 0, FontWeight::Bold, Color(1,1,1,1)}
             });
-            if (ui.button("Stop", {55, 26})) {
+            if (ui.button("Stop", Icons::Stop, {55, 26})) {
                 state.isPlaying = false;
                 state.consoleMessages.push_back({ConsoleMessage::Info, "Play mode stopped", state.playTime});
             }
@@ -180,7 +180,7 @@ static void BuildToolbar(UIBuilder& ui, EditorState& state) {
                 .cornerRadius = 4.0f,
                 .text = {12.0f, 0, FontWeight::Bold, Color(1,1,1,1)}
             });
-            if (ui.button("Play", {55, 26})) {
+            if (ui.button("Play", Icons::Play, {55, 26})) {
                 state.isPlaying = true;
                 state.playTime = 0.0f;
                 state.consoleMessages.push_back({ConsoleMessage::Info, "Entering play mode...", state.playTime});
@@ -188,19 +188,15 @@ static void BuildToolbar(UIBuilder& ui, EditorState& state) {
             ui.popButtonStyle();
         }
 
-        ui.sameLine();
-        if (ui.button("Pause", {55, 26})) {}
-        ui.sameLine();
+        if (ui.button("Pause", Icons::Pause, {55, 26})) {}
         ui.separator();
-        ui.sameLine();
-        if (ui.button("Move", {45, 26})) {}
-        ui.sameLine();
-        if (ui.button("Rot", {40, 26})) {}
-        ui.sameLine();
-        if (ui.button("Scl", {40, 26})) {}
-        ui.sameLine();
+        static int gizmoMode = 0; // 0=Move, 1=Rot, 2=Scl
+        ui.segmentedControl("gizmo", std::vector<std::pair<std::string, uint32_t>>{
+            {"Move", Icons::Move},
+            {"Rot",  Icons::Rotate},
+            {"Scl",  Icons::Scale}
+        }, &gizmoMode);
         ui.separator();
-        ui.sameLine();
         static bool snap = true;
         ui.checkbox("Snap", &snap);
     });
@@ -295,6 +291,7 @@ static void BuildInspector(UIBuilder& ui, FluentApp& app, EditorState& state) {
     static std::vector<std::string> meshTypes = {"Cube", "Sphere", "Plane", "Cylinder"};
     ui.comboBox("Mesh", &obj.meshType, meshTypes, 180);
     ui.colorPicker("Color", &obj.color);
+    ui.slider("Opacity", &obj.opacity, 0.0f, 1.0f, 180.0f, "%.2f");
 
     ui.spacing(8);
     ui.separator();
@@ -404,36 +401,31 @@ static void BuildConsole(UIBuilder& ui, EditorState& state) {
     // Header row
     ui.horizontal([&](UIBuilder& ui) {
         ui.checkbox("Info", &state.showInfo);
-        ui.sameLine();
         ui.checkbox("Warn", &state.showWarnings);
-        ui.sameLine();
         ui.checkbox("Err", &state.showErrors);
-        ui.sameLine();
         if (ui.button("Clear", {45, 22})) state.consoleMessages.clear();
     });
 
     ui.spacing(2);
 
-    // Messages
-    ui.scrollView("console_scroll", {0, 0}, [&](UIBuilder& ui) {
-        for (auto& msg : state.consoleMessages) {
-            bool show = (msg.level == ConsoleMessage::Info && state.showInfo) ||
-                        (msg.level == ConsoleMessage::Warning && state.showWarnings) ||
-                        (msg.level == ConsoleMessage::Error && state.showErrors);
-            if (!show) continue;
+    // Messages — tabView already provides scrolling, no need for nested scrollView
+    for (auto& msg : state.consoleMessages) {
+        bool show = (msg.level == ConsoleMessage::Info && state.showInfo) ||
+                    (msg.level == ConsoleMessage::Warning && state.showWarnings) ||
+                    (msg.level == ConsoleMessage::Error && state.showErrors);
+        if (!show) continue;
 
-            Color c;
-            std::string pfx;
-            switch (msg.level) {
-                case ConsoleMessage::Info:    c = Color(0.7f,0.8f,0.9f,1); pfx = "[INFO] "; break;
-                case ConsoleMessage::Warning: c = Color(1.0f,0.85f,0.3f,1); pfx = "[WARN] "; break;
-                case ConsoleMessage::Error:   c = Color(1.0f,0.4f,0.4f,1); pfx = "[ERR]  "; break;
-            }
-            ui.pushTextColor(c);
-            ui.label(pfx + msg.text, TypographyStyle::Caption);
-            ui.popTextColor();
+        Color c;
+        std::string pfx;
+        switch (msg.level) {
+            case ConsoleMessage::Info:    c = Color(0.7f,0.8f,0.9f,1); pfx = "[INFO] "; break;
+            case ConsoleMessage::Warning: c = Color(1.0f,0.85f,0.3f,1); pfx = "[WARN] "; break;
+            case ConsoleMessage::Error:   c = Color(1.0f,0.4f,0.4f,1); pfx = "[ERR]  "; break;
         }
-    });
+        ui.pushTextColor(c);
+        ui.label(pfx + msg.text, TypographyStyle::Caption);
+        ui.popTextColor();
+    }
 }
 
 // ======================== Asset Browser (bottom right tab) ========================
@@ -484,7 +476,6 @@ static void BuildModals(UIBuilder& ui, EditorState& state) {
                 state.showNewObjectModal = false;
                 state.newObjectName = "NewObject";
             }
-            ui.sameLine();
             if (ui.button("Cancel", {70, 28})) state.showNewObjectModal = false;
         });
     });

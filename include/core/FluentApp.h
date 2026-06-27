@@ -2,6 +2,7 @@
 #include "core/UIBuilder.h"
 #include "core/ShortcutRegistry.h"
 #include "core/UndoSystem.h"
+#include "core/LayoutSerializer.h"
 #include "Theme/Style.h"
 #include <SDL3/SDL.h>
 #include <string>
@@ -25,6 +26,13 @@ struct AppConfig {
     bool darkMode = true;    ///< Start with dark Fluent theme.
     int targetFPS = 60;      ///< Frame rate cap (0 = vsync only).
     bool enableDPI = true;   ///< Auto-detect and apply DPI scaling.
+
+    /// Optional override for the icon font path. When empty (default),
+    /// FluentApp searches for `assets/fonts/lucide.ttf` next to the
+    /// executable, the current working directory, and the
+    /// FLUENTUI_ASSETS_DIR environment variable, in that order.
+    std::string iconFontPath;
+    int iconFontSize = 16;   ///< Pixel size used to bake the icon atlas.
 };
 
 /// Secondary window with its own UIContext, RenderBackend, and GL context.
@@ -45,6 +53,10 @@ public:
     UIContext* context() { return ctx_; }
     bool isOpen() const { return open_; }
     void close() { open_ = false; }
+
+    /// Phase E5: panel id when this window hosts a detached dock panel.
+    /// Empty for non-dock secondary windows. Set by detachPanelToWindow.
+    const std::string& panelId() const { return panelId_; }
 
 private:
     friend class FluentApp; // Only FluentApp can construct
@@ -68,6 +80,7 @@ private:
     UIContext* ctx_ = nullptr;
     bool open_ = true;
     std::function<void(UIBuilder&)> rootBuilder_;
+    std::string panelId_; // Phase E5: set when hosting a detached dock panel
 };
 
 /// Main application class. Owns the SDL window, GL context, and UIContext.
@@ -175,6 +188,34 @@ public:
     AppWindow* createWindow(const std::string& title, int width, int height);
     void closeWindow(AppWindow* win);
 
+    // Phase E: Multi-viewport — detach a docked panel into its own OS-window.
+    // The panel is removed from the main dock layout and a new AppWindow is
+    // created at the given screen position with the panel's build callback.
+    /// @return Pointer to the new AppWindow (lifetime owned by FluentApp).
+    AppWindow* detachPanelToWindow(const std::string& panelId,
+                                   std::function<void(UIBuilder&)> buildFn,
+                                   int x = 100, int y = 100,
+                                   int width = 480, int height = 360);
+
+    /// Phase E: Drag-out detection — register a callback fired when the user
+    /// drags any docked panel outside the main window bounds and releases.
+    /// Callback receives the panel id and screen-space drop position.
+    void setOnPanelDragOut(std::function<void(const std::string& panelId,
+                                              int screenX, int screenY)> cb);
+
+    /// Phase E5: enumerate currently-detached viewports (for serialization).
+    std::vector<ViewportInfo> getViewports() const;
+
+    /// Phase E5: pending viewports loaded from disk by loadLayout().
+    /// Empty until loadLayout() reads a [Viewports] section. Call
+    /// restoreViewports() to actually create the windows.
+    const std::vector<ViewportInfo>& pendingViewports() const { return pendingViewports_; }
+
+    /// Phase E5: recreate the previously-saved viewports using the supplied
+    /// builder factory. Factory receives a panelId and returns the build fn.
+    /// Clears pendingViewports() afterwards.
+    void restoreViewports(std::function<std::function<void(UIBuilder&)>(const std::string&)> factory);
+
     // DPI Scaling (Phase 4)
     float getDPIScale() const;
     void setDPIScale(float scale); // Manual override
@@ -214,6 +255,12 @@ private:
 
     // Multi-Window (Phase 4)
     std::vector<std::unique_ptr<AppWindow>> secondaryWindows_;
+
+    // Phase E: Drag-out detection callback
+    std::function<void(const std::string&, int, int)> onPanelDragOut_;
+
+    // Phase E5: viewports loaded from layout file, awaiting restoreViewports().
+    std::vector<ViewportInfo> pendingViewports_;
 };
 
 } // namespace FluentUI

@@ -1,16 +1,16 @@
 # FluentGUI - Referencia de API
 
-## Índice
-1. [Inicialización](#inicialización)
+## Ãndice
+1. [InicializaciÃ³n](#inicializaciÃ³n)
 2. [Layout](#layout)
-3. [Widgets Básicos](#widgets-básicos)
+3. [Widgets BÃ¡sicos](#widgets-bÃ¡sicos)
 4. [Drag Widgets](#drag-widgets)
 5. [Contenedores](#contenedores)
 6. [Splitter](#splitter)
 7. [Overlays](#overlays)
 8. [Listas](#listas)
 9. [TreeView](#treeview)
-10. [Menú](#menú)
+10. [MenÃº](#menÃº)
 11. [Toolbar y StatusBar](#toolbar-y-statusbar)
 12. [Grid](#grid)
 13. [Table / DataGrid](#table--datagrid)
@@ -22,7 +22,7 @@
 19. [Temas y Estilos](#temas-y-estilos)
 20. [Callbacks y Eventos](#callbacks-y-eventos)
 
-## Inicialización
+## InicializaciÃ³n
 
 ### CreateContext
 Crea el contexto UI principal.
@@ -31,7 +31,7 @@ Crea el contexto UI principal.
 UIContext* CreateContext(SDL_Window* window);
 ```
 
-**Parámetros:**
+**ParÃ¡metros:**
 - `window`: Puntero a la ventana SDL3
 
 **Retorna:** Puntero al contexto UI creado
@@ -50,8 +50,8 @@ Inicia un nuevo frame. Debe llamarse una vez por frame antes de renderizar widge
 void NewFrame(float deltaTime = 0.016f);
 ```
 
-**Parámetros:**
-- `deltaTime`: Tiempo transcurrido desde el último frame en segundos (por defecto 60 FPS)
+**ParÃ¡metros:**
+- `deltaTime`: Tiempo transcurrido desde el Ãºltimo frame en segundos (por defecto 60 FPS)
 
 ### Render
 Renderiza todos los widgets dibujados en el frame actual.
@@ -87,11 +87,11 @@ void BeginVertical(float spacing = -1.0f,
 void EndVertical(bool advanceParent = true);
 ```
 
-**Parámetros:**
-- `spacing`: Espaciado en píxeles entre hijos (-1 = usar valor por defecto del estilo)
-- `size`: Tamaño explícito; `std::nullopt` = automático desde el padre
+**ParÃ¡metros:**
+- `spacing`: Espaciado en pÃ­xeles entre hijos (-1 = usar valor por defecto del estilo)
+- `size`: TamaÃ±o explÃ­cito; `std::nullopt` = automÃ¡tico desde el padre
 - `padding`: Padding interno; `std::nullopt` = usar valor por defecto del estilo
-- `advanceParent`: Si avanza la posición del layout padre
+- `advanceParent`: Si avanza la posiciÃ³n del layout padre
 
 ### BeginHorizontal / EndHorizontal
 Crea un layout horizontal (los widgets se apilan horizontalmente).
@@ -105,16 +105,16 @@ void EndHorizontal(bool advanceParent = true);
 ```
 
 ### SetNextConstraints
-Establece restricciones de tamaño para el siguiente widget (Fixed / Fill / Auto).
+Establece restricciones de tamaÃ±o para el siguiente widget (Fixed / Fill / Auto).
 
 ```cpp
 void SetNextConstraints(const LayoutConstraints& constraints);
 ```
 
-## Widgets Básicos
+## Widgets BÃ¡sicos
 
 ### Button
-Crea un botón clickeable.
+Crea un botÃ³n clickeable.
 
 ```cpp
 bool Button(const std::string& label,
@@ -123,16 +123,16 @@ bool Button(const std::string& label,
             bool enabled = true);
 ```
 
-**Parámetros:**
-- `label`: Texto del botón
-- `size`: Tamaño del botón (`Vec2(0,0)` para auto-sizing)
-- `pos`: Posición absoluta (`std::nullopt` para usar layout)
-- `enabled`: Si el botón está habilitado
+**ParÃ¡metros:**
+- `label`: Texto del botÃ³n
+- `size`: TamaÃ±o del botÃ³n (`Vec2(0,0)` para auto-sizing)
+- `pos`: PosiciÃ³n absoluta (`std::nullopt` para usar layout)
+- `enabled`: Si el botÃ³n estÃ¡ habilitado
 
-**Retorna:** `true` si se hizo click en el botón
+**Retorna:** `true` si se hizo click en el botÃ³n
 
 ### Label
-Muestra texto estático.
+Muestra texto estÃ¡tico.
 
 ```cpp
 void Label(const std::string& text,
@@ -141,21 +141,21 @@ void Label(const std::string& text,
            bool disabled = false);
 ```
 
-**Parámetros:**
+**ParÃ¡metros:**
 - `text`: Texto a mostrar
-- `position`: Posición opcional (`std::nullopt` para usar layout)
-- `variant`: Estilo tipográfico (Caption, Body, Subtitle, Title, etc.)
-- `disabled`: Si el texto está deshabilitado
+- `position`: PosiciÃ³n opcional (`std::nullopt` para usar layout)
+- `variant`: Estilo tipogrÃ¡fico (Caption, Body, Subtitle, Title, etc.)
+- `disabled`: Si el texto estÃ¡ deshabilitado
 
 ### Separator
-Dibuja una línea horizontal separadora.
+Dibuja una lÃ­nea horizontal separadora.
 
 ```cpp
 void Separator();
 ```
 
 ### Checkbox
-Crea una casilla de verificación.
+Crea una casilla de verificaciÃ³n.
 
 ```cpp
 bool Checkbox(const std::string& label,
@@ -163,15 +163,15 @@ bool Checkbox(const std::string& label,
               std::optional<Vec2> pos = std::nullopt);
 ```
 
-**Parámetros:**
+**ParÃ¡metros:**
 - `label`: Etiqueta del checkbox
-- `value`: Puntero al valor booleano (`nullptr` para solo visualización)
-- `pos`: Posición absoluta (`std::nullopt` para usar layout)
+- `value`: Puntero al valor booleano (`nullptr` para solo visualizaciÃ³n)
+- `pos`: PosiciÃ³n absoluta (`std::nullopt` para usar layout)
 
-**Retorna:** `true` si el valor cambió
+**Retorna:** `true` si el valor cambiÃ³
 
 ### RadioButton
-Crea un botón de opción única.
+Crea un botÃ³n de opciÃ³n Ãºnica.
 
 ```cpp
 bool RadioButton(const std::string& label,
@@ -181,17 +181,17 @@ bool RadioButton(const std::string& label,
                  std::optional<Vec2> pos = std::nullopt);
 ```
 
-**Parámetros:**
+**ParÃ¡metros:**
 - `label`: Etiqueta del radio button
 - `value`: Puntero al valor actual del grupo
 - `optionValue`: Valor que representa este radio button
 - `group`: ID del grupo (radio buttons con el mismo group son mutuamente exclusivos)
-- `pos`: Posición absoluta (`std::nullopt` para usar layout)
+- `pos`: PosiciÃ³n absoluta (`std::nullopt` para usar layout)
 
-**Retorna:** `true` si se seleccionó este radio button
+**Retorna:** `true` si se seleccionÃ³ este radio button
 
 ### SliderFloat / SliderInt
-Crea un deslizador para valores numéricos.
+Crea un deslizador para valores numÃ©ricos.
 
 ```cpp
 bool SliderFloat(const std::string& label,
@@ -210,15 +210,15 @@ bool SliderInt(const std::string& label,
                std::optional<Vec2> pos = std::nullopt);
 ```
 
-**Parámetros:**
+**ParÃ¡metros:**
 - `label`: Etiqueta del slider
 - `value`: Puntero al valor
 - `minValue` / `maxValue`: Rango de valores
-- `width`: Ancho del slider en píxeles
+- `width`: Ancho del slider en pÃ­xeles
 - `format`: Formato de texto (solo SliderFloat)
-- `pos`: Posición absoluta (`std::nullopt` para usar layout)
+- `pos`: PosiciÃ³n absoluta (`std::nullopt` para usar layout)
 
-**Retorna:** `true` si el valor cambió
+**Retorna:** `true` si el valor cambiÃ³
 
 ### ProgressBar
 Muestra una barra de progreso.
@@ -230,14 +230,14 @@ void ProgressBar(float fraction,
                  std::optional<Vec2> pos = std::nullopt);
 ```
 
-**Parámetros:**
+**ParÃ¡metros:**
 - `fraction`: Valor entre 0.0 y 1.0
-- `size`: Tamaño de la barra
+- `size`: TamaÃ±o de la barra
 - `overlay`: Texto opcional a mostrar sobre la barra
-- `pos`: Posición absoluta (`std::nullopt` para usar layout)
+- `pos`: PosiciÃ³n absoluta (`std::nullopt` para usar layout)
 
 ### TextInput
-Crea un campo de texto editable. Soporta Ctrl+Z/Y (undo/redo), IME y selección con click-drag.
+Crea un campo de texto editable. Soporta Ctrl+Z/Y (undo/redo), IME y selecciÃ³n con click-drag.
 
 ```cpp
 bool TextInput(const std::string& label,
@@ -249,19 +249,19 @@ bool TextInput(const std::string& label,
                size_t maxLength = 0);
 ```
 
-**Parámetros:**
+**ParÃ¡metros:**
 - `label`: Etiqueta del campo
 - `value`: Puntero al string con el texto
-- `width`: Ancho del campo en píxeles
-- `multiline`: Si permite múltiples líneas
-- `pos`: Posición absoluta (`std::nullopt` para usar layout)
-- `placeholder`: Texto gris mostrado cuando está vacío y sin foco
-- `maxLength`: Número máximo de caracteres (0 = ilimitado)
+- `width`: Ancho del campo en pÃ­xeles
+- `multiline`: Si permite mÃºltiples lÃ­neas
+- `pos`: PosiciÃ³n absoluta (`std::nullopt` para usar layout)
+- `placeholder`: Texto gris mostrado cuando estÃ¡ vacÃ­o y sin foco
+- `maxLength`: NÃºmero mÃ¡ximo de caracteres (0 = ilimitado)
 
-**Retorna:** `true` si el texto cambió
+**Retorna:** `true` si el texto cambiÃ³
 
 ### ComboBox
-Dropdown con navegación por teclado (Up/Down/Enter/Escape).
+Dropdown con navegaciÃ³n por teclado (Up/Down/Enter/Escape).
 
 ```cpp
 bool ComboBox(const std::string& label,
@@ -271,18 +271,18 @@ bool ComboBox(const std::string& label,
               std::optional<Vec2> pos = std::nullopt);
 ```
 
-**Parámetros:**
+**ParÃ¡metros:**
 - `label`: Etiqueta del combo box
-- `currentItem`: Puntero al índice del item seleccionado
+- `currentItem`: Puntero al Ã­ndice del item seleccionado
 - `items`: Lista de opciones
-- `width`: Ancho del combo box en píxeles
-- `pos`: Posición absoluta (`std::nullopt` para usar layout)
+- `width`: Ancho del combo box en pÃ­xeles
+- `pos`: PosiciÃ³n absoluta (`std::nullopt` para usar layout)
 
-**Retorna:** `true` si el índice seleccionado cambió
+**Retorna:** `true` si el Ã­ndice seleccionado cambiÃ³
 
 ## Drag Widgets
 
-Editores numéricos de tipo click-drag. Se arrastra horizontalmente para cambiar el valor. Doble-click para entrada por teclado.
+Editores numÃ©ricos de tipo click-drag. Se arrastra horizontalmente para cambiar el valor. Doble-click para entrada por teclado.
 
 ### DragFloat
 ```cpp
@@ -295,15 +295,15 @@ bool DragFloat(const std::string& label,
                std::optional<Vec2> pos = std::nullopt);
 ```
 
-**Parámetros:**
+**ParÃ¡metros:**
 - `label`: Etiqueta del widget
 - `value`: Puntero al valor float
 - `speed`: Velocidad de cambio al arrastrar
-- `min` / `max`: Rango de valores (0/0 = sin límites)
+- `min` / `max`: Rango de valores (0/0 = sin lÃ­mites)
 - `format`: Formato de texto
-- `pos`: Posición absoluta (`std::nullopt` para usar layout)
+- `pos`: PosiciÃ³n absoluta (`std::nullopt` para usar layout)
 
-**Retorna:** `true` si el valor cambió
+**Retorna:** `true` si el valor cambiÃ³
 
 ### DragInt
 ```cpp
@@ -315,7 +315,7 @@ bool DragInt(const std::string& label,
              std::optional<Vec2> pos = std::nullopt);
 ```
 
-**Retorna:** `true` si el valor cambió
+**Retorna:** `true` si el valor cambiÃ³
 
 ### DragFloat3
 Editor de tres componentes float (por ejemplo, vectores XYZ).
@@ -330,12 +330,12 @@ bool DragFloat3(const std::string& label,
                 std::optional<Vec2> pos = std::nullopt);
 ```
 
-**Retorna:** `true` si algún valor cambió
+**Retorna:** `true` si algÃºn valor cambiÃ³
 
 ## Contenedores
 
 ### Panel
-Crea un panel arrastrable con título y opción de minimizar.
+Crea un panel arrastrable con tÃ­tulo y opciÃ³n de minimizar.
 
 ```cpp
 bool BeginPanel(const std::string& id,
@@ -349,20 +349,20 @@ bool BeginPanel(const std::string& id,
 void EndPanel();
 ```
 
-**Parámetros:**
-- `id`: Identificador único del panel
-- `size`: Tamaño del panel
+**ParÃ¡metros:**
+- `id`: Identificador Ãºnico del panel
+- `size`: TamaÃ±o del panel
 - `reserveLayoutSpace`: Si reserva espacio en el layout padre
-- `useAcrylic`: Habilitar efecto acrílico (`std::nullopt` = usar valor del estilo)
-- `acrylicOpacity`: Opacidad del efecto acrílico
-- `pos`: Posición absoluta (`std::nullopt` para usar layout)
-- `maxHeight`: Altura máxima (0 = sin límite)
+- `useAcrylic`: Habilitar efecto acrÃ­lico (`std::nullopt` = usar valor del estilo)
+- `acrylicOpacity`: Opacidad del efecto acrÃ­lico
+- `pos`: PosiciÃ³n absoluta (`std::nullopt` para usar layout)
+- `maxHeight`: Altura mÃ¡xima (0 = sin lÃ­mite)
 
-**Retorna:** `true` si el panel está visible (no minimizado)
+**Retorna:** `true` si el panel estÃ¡ visible (no minimizado)
 
-**Características:**
-- Título clickeable para minimizar/expandir
-- Efecto acrílico opcional
+**CaracterÃ­sticas:**
+- TÃ­tulo clickeable para minimizar/expandir
+- Efecto acrÃ­lico opcional
 - Arrastrable
 - Soporte para widgets dentro del panel
 
@@ -378,19 +378,19 @@ bool BeginScrollView(const std::string& id,
 void EndScrollView();
 ```
 
-**Parámetros:**
-- `id`: Identificador único
-- `size`: Tamaño de la vista (Vec2(0,0) para llenar espacio disponible)
+**ParÃ¡metros:**
+- `id`: Identificador Ãºnico
+- `size`: TamaÃ±o de la vista (Vec2(0,0) para llenar espacio disponible)
 - `scrollOffset`: Puntero opcional al offset de scroll
-- `pos`: Posición absoluta (`std::nullopt` para usar layout)
+- `pos`: PosiciÃ³n absoluta (`std::nullopt` para usar layout)
 
-**Características:**
-- Scrollbars automáticos cuando el contenido excede el tamaño
+**CaracterÃ­sticas:**
+- Scrollbars automÃ¡ticos cuando el contenido excede el tamaÃ±o
 - Soporte para scroll con mouse wheel
-- Clipping automático del contenido
+- Clipping automÃ¡tico del contenido
 
 ### TabView
-Crea una vista con pestañas.
+Crea una vista con pestaÃ±as.
 
 ```cpp
 bool BeginTabView(const std::string& id,
@@ -402,12 +402,12 @@ bool BeginTabView(const std::string& id,
 void EndTabView();
 ```
 
-**Parámetros:**
-- `id`: Identificador único
-- `activeTab`: Puntero al índice de la pestaña activa
-- `tabLabels`: Nombres de las pestañas
-- `size`: Tamaño del contenedor
-- `pos`: Posición absoluta (`std::nullopt` para usar layout)
+**ParÃ¡metros:**
+- `id`: Identificador Ãºnico
+- `activeTab`: Puntero al Ã­ndice de la pestaÃ±a activa
+- `tabLabels`: Nombres de las pestaÃ±as
+- `size`: TamaÃ±o del contenedor
+- `pos`: PosiciÃ³n absoluta (`std::nullopt` para usar layout)
 
 ## Splitter
 
@@ -423,11 +423,11 @@ void SplitterPanel();  // Llamar entre el contenido del primer y segundo panel
 void EndSplitter();
 ```
 
-**Parámetros:**
-- `id`: Identificador único
+**ParÃ¡metros:**
+- `id`: Identificador Ãºnico
 - `vertical`: `true` = divisor vertical (izquierda|derecha), `false` = horizontal (arriba/abajo)
-- `ratio`: Proporción de división (0.0 – 1.0), se actualiza al arrastrar
-- `size`: Tamaño total del splitter
+- `ratio`: ProporciÃ³n de divisiÃ³n (0.0 â€“ 1.0), se actualiza al arrastrar
+- `size`: TamaÃ±o total del splitter
 
 **Ejemplo:**
 ```cpp
@@ -447,18 +447,18 @@ EndSplitter();
 ## Overlays
 
 ### Tooltip
-Muestra un tooltip al pasar el mouse sobre el widget anterior. Soporta multi-línea (`\n`).
+Muestra un tooltip al pasar el mouse sobre el widget anterior. Soporta multi-lÃ­nea (`\n`).
 
 ```cpp
 void Tooltip(const std::string& text, float delay = 0.5f);
 ```
 
-**Parámetros:**
-- `text`: Texto del tooltip (soporta `\n` para múltiples líneas)
+**ParÃ¡metros:**
+- `text`: Texto del tooltip (soporta `\n` para mÃºltiples lÃ­neas)
 - `delay`: Tiempo en segundos antes de mostrar el tooltip
 
 ### ContextMenu
-Crea un menú contextual (clic derecho).
+Crea un menÃº contextual (clic derecho).
 
 ```cpp
 bool BeginContextMenu(const std::string& id);
@@ -467,10 +467,10 @@ void ContextMenuSeparator();
 void EndContextMenu();
 ```
 
-**Retorna:** `BeginContextMenu` retorna `true` si el menú está abierto; `ContextMenuItem` retorna `true` cuando se hace click
+**Retorna:** `BeginContextMenu` retorna `true` si el menÃº estÃ¡ abierto; `ContextMenuItem` retorna `true` cuando se hace click
 
 ### Modal
-Crea una ventana modal/diálogo.
+Crea una ventana modal/diÃ¡logo.
 
 ```cpp
 bool BeginModal(const std::string& id,
@@ -481,32 +481,32 @@ bool BeginModal(const std::string& id,
 void EndModal();
 ```
 
-**Parámetros:**
-- `id`: Identificador único
-- `title`: Título de la ventana
+**ParÃ¡metros:**
+- `id`: Identificador Ãºnico
+- `title`: TÃ­tulo de la ventana
 - `open`: Puntero al estado abierto/cerrado
-- `size`: Tamaño de la ventana
+- `size`: TamaÃ±o de la ventana
 
-**Características:**
+**CaracterÃ­sticas:**
 - Backdrop oscuro
-- Arrastrable por el título
-- Botón de cerrar (X)
+- Arrastrable por el tÃ­tulo
+- BotÃ³n de cerrar (X)
 - Se cierra con Escape
 
 ## Listas
 
 ### ListView
-Crea una lista de items seleccionables. Soporta selección simple y múltiple.
+Crea una lista de items seleccionables. Soporta selecciÃ³n simple y mÃºltiple.
 
 ```cpp
-// Selección simple
+// SelecciÃ³n simple
 bool BeginListView(const std::string& id,
                    const Vec2& size,
                    int* selectedItem,
                    const std::vector<std::string>& items,
                    std::optional<Vec2> pos = std::nullopt);
 
-// Selección múltiple (Ctrl+Click, Shift+Click)
+// SelecciÃ³n mÃºltiple (Ctrl+Click, Shift+Click)
 bool BeginListView(const std::string& id,
                    const Vec2& size,
                    std::vector<int>* selectedItems,
@@ -516,18 +516,18 @@ bool BeginListView(const std::string& id,
 void EndListView();
 ```
 
-**Parámetros:**
-- `id`: Identificador único
-- `size`: Tamaño de la lista
-- `selectedItem`: Puntero al índice seleccionado (selección simple)
-- `selectedItems`: Puntero al vector de índices seleccionados (selección múltiple)
+**ParÃ¡metros:**
+- `id`: Identificador Ãºnico
+- `size`: TamaÃ±o de la lista
+- `selectedItem`: Puntero al Ã­ndice seleccionado (selecciÃ³n simple)
+- `selectedItems`: Puntero al vector de Ã­ndices seleccionados (selecciÃ³n mÃºltiple)
 - `items`: Lista de textos a mostrar
-- `pos`: Posición absoluta (`std::nullopt` para usar layout)
+- `pos`: PosiciÃ³n absoluta (`std::nullopt` para usar layout)
 
 ## TreeView
 
 ### TreeNodeData
-Struct auxiliar para construcción declarativa de árboles.
+Struct auxiliar para construcciÃ³n declarativa de Ã¡rboles.
 
 ```cpp
 struct TreeNodeData {
@@ -553,18 +553,18 @@ bool TreeNode(const std::string& id,
               bool* isSelected = nullptr);
 
 void TreeNodePush();  // Antes de mostrar hijos (aumentar profundidad)
-void TreeNodePop();   // Después de mostrar hijos (reducir profundidad)
+void TreeNodePop();   // DespuÃ©s de mostrar hijos (reducir profundidad)
 
 void EndTreeView();
 ```
 
-**Parámetros de TreeNode:**
-- `id`: Identificador único del nodo
+**ParÃ¡metros de TreeNode:**
+- `id`: Identificador Ãºnico del nodo
 - `label`: Texto del nodo
 - `isOpen`: Puntero al estado expandido (pasar no-null para nodos expandibles)
-- `isSelected`: Puntero al estado de selección
+- `isSelected`: Puntero al estado de selecciÃ³n
 
-**Retorna:** `true` si el nodo está expandido y tiene hijos
+**Retorna:** `true` si el nodo estÃ¡ expandido y tiene hijos
 
 **Ejemplo:**
 ```cpp
@@ -580,10 +580,10 @@ if (BeginTreeView("tree", Vec2(250, 300))) {
 EndTreeView();
 ```
 
-## Menú
+## MenÃº
 
 ### MenuBar
-Crea una barra de menú horizontal.
+Crea una barra de menÃº horizontal.
 
 ```cpp
 bool BeginMenuBar();
@@ -634,12 +634,12 @@ void BeginStatusBar(const std::string& text = "");
 void EndStatusBar();
 ```
 
-**Parámetros:**
+**ParÃ¡metros:**
 - `text`: Texto inicial a mostrar en la barra de estado
 
 ## Grid
 
-Layout de cuadrícula con número fijo de columnas.
+Layout de cuadrÃ­cula con nÃºmero fijo de columnas.
 
 ```cpp
 void BeginGrid(const std::string& id,
@@ -650,10 +650,10 @@ void GridNextCell();
 void EndGrid();
 ```
 
-**Parámetros:**
-- `id`: Identificador único
-- `columns`: Número de columnas
-- `rowHeight`: Altura de cada fila (0 = automático)
+**ParÃ¡metros:**
+- `id`: Identificador Ãºnico
+- `columns`: NÃºmero de columnas
+- `rowHeight`: Altura de cada fila (0 = automÃ¡tico)
 
 **Ejemplo:**
 ```cpp
@@ -676,7 +676,7 @@ Tabla de datos con columnas ordenables y redimensionables.
 struct TableColumn {
     std::string header;       // Texto del encabezado
     float width = 100.0f;     // Ancho inicial/actual
-    float minWidth = 40.0f;   // Ancho mínimo
+    float minWidth = 40.0f;   // Ancho mÃ­nimo
     bool sortable = true;     // Si la columna es ordenable
 };
 ```
@@ -740,12 +740,12 @@ bool ColorPicker(const std::string& label,
                  std::optional<Vec2> pos = std::nullopt);
 ```
 
-**Parámetros:**
+**ParÃ¡metros:**
 - `label`: Etiqueta del widget
 - `value`: Puntero al color
-- `pos`: Posición absoluta (`std::nullopt` para usar layout)
+- `pos`: PosiciÃ³n absoluta (`std::nullopt` para usar layout)
 
-**Retorna:** `true` si el color cambió
+**Retorna:** `true` si el color cambiÃ³
 
 ### Image
 Muestra una textura GPU.
@@ -759,12 +759,12 @@ void Image(const std::string& id,
            std::optional<Vec2> pos = std::nullopt);
 ```
 
-**Parámetros:**
-- `id`: Identificador único
+**ParÃ¡metros:**
+- `id`: Identificador Ãºnico
 - `textureHandle`: Handle de textura del backend (ej. `GLuint` casteado a `void*`)
-- `size`: Tamaño de la imagen en píxeles
+- `size`: TamaÃ±o de la imagen en pÃ­xeles
 - `uv0` / `uv1`: Coordenadas UV para sub-regiones de la textura
-- `pos`: Posición absoluta (`std::nullopt` para usar layout)
+- `pos`: PosiciÃ³n absoluta (`std::nullopt` para usar layout)
 
 ## Espaciado y Cursor
 
@@ -776,14 +776,14 @@ void Spacing(float pixels);
 ```
 
 ### SameLine
-Continúa renderizando en la misma línea horizontal.
+ContinÃºa renderizando en la misma lÃ­nea horizontal.
 
 ```cpp
 void SameLine(float offset = 0.0f);
 ```
 
-**Parámetros:**
-- `offset`: Offset horizontal adicional en píxeles
+**ParÃ¡metros:**
+- `offset`: Offset horizontal adicional en pÃ­xeles
 
 ## DPI
 
@@ -795,7 +795,7 @@ float GetDPIScale();
 ```
 
 ### Scaled
-Escala un valor en píxeles por el factor DPI actual.
+Escala un valor en pÃ­xeles por el factor DPI actual.
 
 ```cpp
 float Scaled(float value);
@@ -826,22 +826,22 @@ Label("Este texto es rojo");
 PopTextColor();
 
 PushButtonStyle(customButtonStyle);
-Button("Botón personalizado");
+Button("BotÃ³n personalizado");
 PopButtonStyle();
 ```
 
 ## Accesibilidad
 
 ### DrawAccessibilityFocusRing
-Dibuja un anillo de foco de 2px alrededor de un widget para navegación por teclado.
+Dibuja un anillo de foco de 2px alrededor de un widget para navegaciÃ³n por teclado.
 
 ```cpp
 void DrawAccessibilityFocusRing(const Vec2& pos, const Vec2& size);
 ```
 
-**Parámetros:**
-- `pos`: Posición del widget
-- `size`: Tamaño del widget
+**ParÃ¡metros:**
+- `pos`: PosiciÃ³n del widget
+- `size`: TamaÃ±o del widget
 
 ## Temas y Estilos
 
@@ -880,7 +880,7 @@ namespace FluentColors {
 }
 ```
 
-### Estilos Tipográficos
+### Estilos TipogrÃ¡ficos
 ```cpp
 enum class TypographyStyle {
     Caption,        // 12px
@@ -899,7 +899,7 @@ enum class TypographyStyle {
 ### Registrar Callback
 ```cpp
 ctx->RegisterCallback(widgetId, []() {
-    // Acción cuando el widget se activa
+    // AcciÃ³n cuando el widget se activa
 });
 ```
 
@@ -908,6 +908,205 @@ ctx->RegisterCallback(widgetId, []() {
 ctx->RegisterValueChanged("mySlider",
     [](const std::string& id, void* value) {
         float* fval = static_cast<float*>(value);
-        // Acción cuando el valor cambia
+        // AcciÃ³n cuando el valor cambia
     });
 ```
+
+## Iconos en Widgets
+
+FluentUI viene con la fuente [Lucide](https://lucide.dev) preempaquetada y
+**la carga automÃ¡ticamente al construir `FluentApp`**. No necesitas tocar
+`LoadIconFont` ni el `.ttf`: simplemente pasa cualquier valor de
+`Icons::*` a un widget icon-aware.
+
+```cpp
+#include <FluentUI/API.h>
+using namespace FluentUI;
+
+if (Button("Guardar", Icons::Save)) save();
+
+SegmentedControl("tool", {
+    {"", Icons::Pointer}, {"", Icons::Move},
+    {"", Icons::Rotate},  {"", Icons::Scale},
+}, &tool);
+```
+
+`Icons::Save`, `Icons::Pointer`, etc. son entradas de un `enum Lucide : uint32_t`
+generado a partir del `.ttf` real, asÃ­ que se convierten implÃ­citamente al
+codepoint que esperan los overloads de los widgets. El catÃ¡logo completo
+(~1500 iconos) vive en `include/UI/Icons.h`.
+
+### 1. CÃ³mo encuentra la fuente
+
+Al construir un `FluentApp`, la librerÃ­a busca `lucide.ttf` en este orden:
+
+1. `AppConfig::iconFontPath` si lo proporcionas explÃ­citamente.
+2. `<directorio del ejecutable>/assets/fonts/lucide.ttf` (ruta canÃ³nica vendorizada).
+3. `<cwd>/assets/fonts/lucide.ttf`.
+4. `$FLUENTUI_ASSETS_DIR/fonts/lucide.ttf`.
+
+Si nada existe, la app sigue corriendo (los iconos quedan invisibles, no
+crashea) y se loguea un warning. CMake copia la fuente al directorio del
+binario automÃ¡ticamente, asÃ­ que en builds estÃ¡ndar nunca tienes que
+preocuparte.
+
+### Override avanzado (sustituir la fuente)
+
+Si quieres usar otra fuente (Font Awesome, Fluent UI System Icons, tu set
+custom de IcoMoon, etc.):
+
+```cpp
+AppConfig cfg;
+cfg.iconFontPath = "C:/assets/fa-solid.ttf";
+cfg.iconFontSize = 18;
+FluentApp app("MyApp", cfg);
+
+\ Tus codepoints van directos como uint32_t (sin Icons::):
+if (Button("Save", 0xF0C7 /* fa-save */)) save();
+```
+
+El catÃ¡logo `Icons::*` solo es vÃ¡lido para el `.ttf` de Lucide vendorizado â€”
+si lo reemplazas, define tus propios constantes o regenera el header con
+`tools/gen_icons.py` apuntando a tu nueva fuente.
+
+### 2. API expuesta
+
+Cada widget icon-aware tiene un overload con `uint32_t iconCodepoint` (0 = sin
+icono). El icono no afecta los IDs ni la lÃ³gica del widget â€” solo se dibuja.
+
+| Widget | PosiciÃ³n del icono | Notas |
+|---|---|---|
+| `Button(label, iconCp, â€¦)` | Izquierda del texto | Pasa `label=""` â†’ botÃ³n cuadrado solo-icono |
+| `Button(label, iconCp, ButtonSize, â€¦)` | Izquierda | Variante S/M/L |
+| `IconButton(iconCp, size?, â€¦)` | Centrado | Atajo idiomÃ¡tico para toolbars |
+| `Label(text, iconCp, â€¦)` | Izquierda del texto | |
+| `IconLabel(iconCp, size?, color?, â€¦)` | â€” | Icono suelto, sin texto |
+| `Checkbox(label, iconCp, â€¦)` | DespuÃ©s del label | Ãštil para badges |
+| `RadioButton(label, iconCp, â€¦)` | DespuÃ©s del label | |
+| `MenuItem(label, iconCp, â€¦)` | Izquierda | Paridad con `BeginMenu` |
+| `BeginMenu(label, iconCp, â€¦)` | Izquierda | Ya existÃ­a en versiones previas |
+| `ContextMenuItem(label, iconCp, â€¦)` | Izquierda | |
+| `BeginPanel(id, iconCp, â€¦)` | En la barra de tÃ­tulo | |
+| `BeginModal(id, title, iconCp, â€¦)` | En el header | Ideal para warning/info/error |
+| `BeginTabView(id, ptr, vector<pair<str,cp>>, â€¦)` | Por tab | Pasa `(label, codepoint)` por tab |
+| `ComboBox(label, ptr, vector<pair<str,cp>>, â€¦)` | Izquierda del item (dropdown + campo) | TambiÃ©n aplica a `ComboBoxSearchable` |
+| `SegmentedControl(id, vector<pair<str,cp>>, â€¦)` | Por segmento | `label=""` â†’ segmento cuadrado |
+| `BeginListView(â€¦, vector<pair<str,cp>>, â€¦)` | Por fila | Single y multi-selecciÃ³n |
+| `TableColumn{header, â€¦, iconCodepoint}` | En el header de la columna | Campo en la struct |
+| `TreeNode(id, label, iconCp, â€¦)` | DespuÃ©s del chevron | |
+| `TreeNodeMulti(id, label, iconCp, â€¦)` | DespuÃ©s del chevron | |
+
+Widgets sin overload (por diseÃ±o): `SliderFloat/Int`, `DragFloat/Int/3`,
+`ProgressBar`, `ColorPicker`, `TextInput`, `DatePicker`/`TimePicker`,
+`Plot*`, `Image`, `Separator`, layout primitives.
+
+### 3. Ejemplos
+
+**ComboBox de assets (campo + dropdown con icono por item):**
+```cpp
+int meshIdx = 0;
+ComboBox("Mesh", &meshIdx, {
+    {"PlayerBody.fbx", Icons::Get("box")},
+    {"Enemy.fbx",      Icons::Get("box")},
+    {"Crate.fbx",      Icons::Get("package")},
+}, 200.0f);
+```
+El icono se dibuja a la izquierda del texto seleccionado (en el campo cerrado)
+y a la izquierda de cada fila del dropdown. Cuando un item tiene icono se
+sustituye el "selection dot" por el icono coloreado con el accent.
+
+**Toolbar de transformaciones (tu primera captura):**
+```cpp
+BeginToolbar();
+    int tool = 0;
+    SegmentedControl("tool", {
+        {"", 0xE92Au /*mouse-pointer*/},
+        {"", 0xE93Cu /*move*/},
+        {"", 0xE948u /*rotate*/},
+        {"", 0xE954u /*scale*/}
+    }, &tool);
+EndToolbar();
+```
+
+**Hierarchy con carpetas (tu tercera captura):**
+```cpp
+if (BeginTreeView("hier", Vec2(220, 0))) {
+    bool aOpen = true;
+    if (TreeNode("assets", "Assets", 0xE823u /*folder*/, &aOpen)) {
+        TreeNodePush();
+        TreeNode("audio", "Audio", 0xE823u);
+        TreeNode("anim",  "Animations", 0xE823u);
+        TreeNodePop();
+    }
+    EndTreeView();
+}
+```
+
+**Status bar inline (tu segunda captura):**
+```cpp
+BeginStatusBar();
+    BeginHorizontal();
+        IconLabel(0xE901u /*activity*/, 14.0f, Color(0.4f, 1.0f, 0.4f, 1.0f));
+        Label("OpenGL 4.6 - RTX 4070");
+    EndHorizontal();
+EndStatusBar();
+```
+
+### CatÃ¡logo `Icons::*`
+
+El header `include/UI/Icons.h` se genera automÃ¡ticamente desde el `.ttf`
+vendorizado y contiene un `enum Lucide : uint32_t` con TODOS los iconos
+(actualmente ~1500). Como es un `enum` no-scoped, **se convierte implÃ­citamente
+a `uint32_t`** y entra en cualquier overload sin `static_cast`:
+
+```cpp
+Button("Save", Icons::Save);
+TreeNode("a", "Assets", Icons::Folder, &open);
+TableColumn{"Name", 160, 40, true, Icons::FileText};
+```
+
+**Nombres canÃ³nicos** â€” equivalentes a los que ves en
+[lucide.dev](https://lucide.dev), convertidos de kebab-case a PascalCase:
+`mouse-pointer` â†’ `MousePointer`, `arrow-up-right` â†’ `ArrowUpRight`,
+`rotate-cw` â†’ `RotateCw`.
+
+**Aliases semÃ¡nticos** â€” algunos nombres mÃ¡s cortos para el dÃ­a a dÃ­a en un
+editor:
+
+| Alias | Equivale a | Uso tÃ­pico |
+|---|---|---|
+| `Icons::Pointer` | `MousePointer` | SelecciÃ³n |
+| `Icons::Stop` | `Square` | Detener reproducciÃ³n |
+| `Icons::Cut` | `Scissors` | Edit menu |
+| `Icons::Paste` | `Clipboard` | Edit menu |
+| `Icons::Open` | `FolderOpen` | File menu |
+| `Icons::New` | `FilePlus` | File menu |
+| `Icons::Close` | `X` | BotÃ³n de cerrar |
+| `Icons::Help` | `CircleHelp` | Tooltips, F1 |
+| `Icons::Cube` | `Box` | Mesh, geometrÃ­a |
+| `Icons::Record` | `Circle` | Captura |
+| `Icons::Rotate` | `RotateCw` | Tool gizmo |
+| `Icons::Unlock` | `LockOpen` | Toggle de bloqueo |
+
+Si necesitas algÃºn icono que no encuentras: abre `include/UI/Icons.h` y busca
+en el enum (autocompletado del IDE en `Icons::` tambiÃ©n funciona). CategorÃ­as
+tÃ­picas: archivos (`Folder*`, `File*`, `Save`, `Download`), ediciÃ³n (`Copy`,
+`Pencil`, `Trash`, `Scissors`), transform (`Move`, `RotateCw`, `Scale`,
+`Box`), reproducciÃ³n (`Play`, `Pause`, `Square`), estado (`Check`, `X`,
+`Info`, `TriangleAlert`, `CircleHelp`), navegaciÃ³n (`Chevron*`, `Arrow*`,
+`House`), sistema (`Settings`, `Terminal`, `Monitor`, `Cpu`, `Database`).
+
+### Regenerar el catÃ¡logo
+
+Para actualizar la versiÃ³n de Lucide:
+
+```bash
+# 1) Reemplaza assets/fonts/lucide.ttf con la versiÃ³n nueva
+# 2) Regenera el header
+pip install fonttools
+python tools/gen_icons.py
+```
+
+El script lee el `.ttf` directamente con `fontTools` y reescribe
+`include/UI/Icons.h` con los codepoints correctos. Commitea ambos archivos.
+

@@ -83,13 +83,20 @@ Vec2 ComputeAvailableSpace(UIContext *ctx,
   return contentAvailable;
 }
 
-LayoutConstraints ConsumeNextConstraints() {
+LayoutConstraints ConsumeNextConstraints(SizeConstraint defaultWidth) {
   if (nextConstraints.has_value()) {
     LayoutConstraints c = nextConstraints.value();
     nextConstraints.reset();
     return c;
   }
-  return LayoutConstraints{};
+  LayoutConstraints c{};
+  if (defaultWidth == SizeConstraint::Fill) {
+    UIContext* ctx = GetContext();
+    if (ctx && !ctx->layoutStack.empty()) {
+      c.width = SizeConstraint::Fill;
+    }
+  }
+  return c;
 }
 
 Vec2 GetCurrentAvailableSpace(UIContext *ctx) {
@@ -105,16 +112,31 @@ Vec2 ApplyConstraints(UIContext *ctx, const LayoutConstraints &constraints,
   Vec2 result = desiredSize;
   Vec2 available = GetCurrentAvailableSpace(ctx);
 
+  // Detect current layout direction to avoid Fill consuming the shared axis
+  bool inHorizontal = ctx && !ctx->layoutStack.empty() && !ctx->layoutStack.back().isVertical;
+  bool inVertical   = ctx && !ctx->layoutStack.empty() &&  ctx->layoutStack.back().isVertical;
+
   switch (constraints.width) {
   case SizeConstraint::Fixed:
     result.x = constraints.fixedWidth;
     break;
   case SizeConstraint::Fill:
-    result.x = available.x > 0.0f ? available.x : desiredSize.x;
+    // In horizontal layout, Fill on X would consume all remaining space —
+    // use desiredSize instead so siblings get their share
+    if (inHorizontal) {
+      result.x = desiredSize.x;
+    } else {
+      result.x = available.x > 0.0f ? available.x : desiredSize.x;
+    }
     break;
   case SizeConstraint::Auto:
     if (constraints.fixedWidth > 0.0f) {
       result.x = constraints.fixedWidth;
+    } else if (inVertical && available.x > 0.0f && result.x > available.x) {
+      // Auto en eje secundario de un vertical layout: el ancho del padre es
+      // un límite — el hijo no debe sobresalirse. Para forzar overflow, usar
+      // SetNextConstraints con un Fixed/min explícito.
+      result.x = available.x;
     }
     break;
   }
@@ -124,11 +146,21 @@ Vec2 ApplyConstraints(UIContext *ctx, const LayoutConstraints &constraints,
     result.y = constraints.fixedHeight;
     break;
   case SizeConstraint::Fill:
-    result.y = available.y > 0.0f ? available.y : desiredSize.y;
+    // In vertical layout, Fill on Y would consume all remaining space —
+    // use desiredSize instead so siblings get their share
+    if (inVertical) {
+      result.y = desiredSize.y;
+    } else {
+      result.y = available.y > 0.0f ? available.y : desiredSize.y;
+    }
     break;
   case SizeConstraint::Auto:
     if (constraints.fixedHeight > 0.0f) {
       result.y = constraints.fixedHeight;
+    } else if (inHorizontal && available.y > 0.0f && result.y > available.y) {
+      // Auto en eje secundario de un horizontal layout (toolbar, statusbar):
+      // la altura del padre acota al hijo para que no se desborde.
+      result.y = available.y;
     }
     break;
   }
@@ -168,17 +200,14 @@ Vec2 ResolveAbsolutePosition(UIContext *ctx, const Vec2 &desiredPos,
   if (!ctx)
     return desiredPos;
 
-  Vec2 resolvedPos = desiredPos;
-  Vec2 viewport = ctx->renderer.GetViewportSize();
-
-  if (resolvedPos.x < 0.0f) {
-    resolvedPos.x = 0.0f;
-  }
-  if (resolvedPos.y < 0.0f) {
-    resolvedPos.y = 0.0f;
-  }
-
-  return resolvedPos;
+  // pos is interpreted relative to the current parent container's content
+  // origin (Panel, Vertical/Horizontal, ScrollView, etc.). With no active
+  // container the offset is (0,0), preserving window-absolute behavior for
+  // top-level widgets.
+  Vec2 clamped = desiredPos;
+  if (clamped.x < 0.0f) clamped.x = 0.0f;
+  if (clamped.y < 0.0f) clamped.y = 0.0f;
+  return clamped + CurrentOffset(ctx);
 }
 
 void AdvanceCursor(UIContext *ctx, const Vec2 &size) {
@@ -196,6 +225,8 @@ void AdvanceCursor(UIContext *ctx, const Vec2 &size) {
   if (stack.isVertical) {
     stack.contentSize.x = std::max(stack.contentSize.x, size.x);
     stack.contentSize.y += size.y;
+    // Reset X to left edge after each item, applying any active CollapsingHeader indent.
+    stack.cursor.x = stack.contentStart.x + stack.collapseIndent;
     stack.cursor.y += size.y;
     stack.availableSpace.y = std::max(0.0f, stack.availableSpace.y - size.y);
     stack.itemCount++;
@@ -450,9 +481,47 @@ Color AdjustContainerBackground(const Color &bg, bool isDarkTheme) {
   return Color(bg.r * 0.92f, bg.g * 0.92f, bg.b * 0.92f, 1.0f);
 }
 
+Color AdjustListSurfaceBackground(const Color &bg, bool isDarkTheme) {
+  // Stronger contrast than AdjustContainerBackground so list/tree surfaces are
+  // visible even when nested inside an already-adjusted panel.
+  if (isDarkTheme) {
+    return Color(bg.r * 1.35f, bg.g * 1.35f, bg.b * 1.35f, 1.0f);
+  }
+  return Color(bg.r * 0.85f, bg.g * 0.85f, bg.b * 0.85f, 1.0f);
+}
+
 bool PointInRect(const Vec2 &p, const Vec2 &pos, const Vec2 &size) {
-  return p.x >= pos.x && p.x <= pos.x + size.x && p.y >= pos.y &&
-         p.y <= pos.y + size.y;
+  return p.x >= pos.x && p.x < pos.x + size.x && p.y >= pos.y &&
+         p.y < pos.y + size.y;
+}
+
+Color InputFieldBackground(UIContext *ctx, bool hover) {
+  Color bg = ctx->GetEffectivePanelStyle().background;
+  if (ctx->style.isDarkTheme) {
+    // Recessed "well": clearly darker than the surrounding surface. Hover lifts
+    // it a little back toward the surface for feedback.
+    float f = hover ? 0.85f : 0.62f;
+    return Color(bg.r * f, bg.g * f, bg.b * f, 1.0f);
+  }
+  // Light: lift toward white so the field reads as a distinct input on the gray
+  // surface. Hover makes it a touch grayer.
+  float lift = hover ? 0.45f : 0.78f;
+  return Color(bg.r + (1.0f - bg.r) * lift,
+               bg.g + (1.0f - bg.g) * lift,
+               bg.b + (1.0f - bg.b) * lift, 1.0f);
+}
+
+Color InputFieldBorder(UIContext *ctx, bool hover) {
+  Color bg = ctx->GetEffectivePanelStyle().background;
+  if (ctx->style.isDarkTheme) {
+    // Brighter than the surface so the field edge reads as a crisp 1px line.
+    float f = hover ? 1.95f : 1.55f;
+    return Color(std::min(bg.r * f, 1.0f), std::min(bg.g * f, 1.0f),
+                 std::min(bg.b * f, 1.0f), 1.0f);
+  }
+  // Light: a touch darker than the surface for a subtle gray outline.
+  float f = hover ? 0.55f : 0.72f;
+  return Color(bg.r * f, bg.g * f, bg.b * f, 1.0f);
 }
 
 void SetNextConstraints(const LayoutConstraints &constraints) {
@@ -530,6 +599,18 @@ void DrawAccessibilityFocusRing(const Vec2& pos, const Vec2& size) {
     Vec2 innerPos = {pos.x - offset + thickness, pos.y - offset + thickness};
     Vec2 innerSize = {size.x + (offset - thickness) * 2.0f, size.y + (offset - thickness) * 2.0f};
     ctx->renderer.DrawRect(innerPos, innerSize, Color(1.0f, 1.0f, 1.0f, 0.6f), 3.0f);
+}
+
+float DrawWidgetIcon(UIContext *ctx, const Vec2 &rectPos, const Vec2 &rectSize,
+                     uint32_t codepoint, const Color &color,
+                     float iconSize, float leftPadding, float gap) {
+    if (codepoint == 0u) return 0.0f;
+    if (!ctx) return iconSize + gap;
+
+    Vec2 iconPos(rectPos.x + leftPadding,
+                 rectPos.y + (rectSize.y - iconSize) * 0.5f);
+    ctx->renderer.DrawIconGlyph(iconPos, codepoint, color, iconSize);
+    return iconSize + gap;
 }
 
 } // namespace FluentUI

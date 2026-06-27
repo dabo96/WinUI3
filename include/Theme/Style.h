@@ -91,6 +91,7 @@ namespace FluentUI {
         float borderWidth = 1.0f;
         float shadowOpacity = 0.25f;
         float shadowOffsetY = 2.0f;
+        float shadowBlur = 8.0f;     ///< Penumbra spread (px) for the soft drop shadow.
         TextStyle text;
     };
 
@@ -107,6 +108,7 @@ namespace FluentUI {
         float cornerRadius = 6.0f;
         float shadowOpacity = 0.35f;
         float shadowOffsetY = 4.0f;
+        float shadowBlur = 22.0f;    ///< Penumbra spread (px) for the soft drop shadow.
         TextStyle headerText;
         ColorState titleButton;
         Vec2 padding = Vec2(12.0f, 12.0f);
@@ -125,6 +127,10 @@ namespace FluentUI {
         float spacing = 8.0f;
         float padding = 12.0f;
         bool isDarkTheme = true; // Cached theme mode flag
+
+        // Accent colors used by widgets (sliders, checkboxes, tabs, etc.)
+        Color accentColor = Color(0.0f, 0.47f, 0.84f, 1.0f);       // Primary accent (default: Fluent Blue)
+        Color sliderFillColor = Color(0.0f, 0.0f, 0.0f, 0.0f);     // Slider fill override; if alpha=0, falls back to accentColor
 
         Typography typography;
         ButtonStyle button;

@@ -18,19 +18,28 @@ void OpenGLBackend::QueryUniforms(GLuint program, ShaderUniforms& uniforms) {
     uniforms.texture = glGetUniformLocation(program, "uTexture");
 }
 
-bool OpenGLBackend::Init(void* windowHandle) {
+bool OpenGLBackend::Init(void* windowHandle, void* existingGLContext) {
     window = static_cast<SDL_Window*>(windowHandle);
 
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 5);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    if (existingGLContext) {
+        // Reuse the caller's GL context — do not create a new one
+        glContext = static_cast<SDL_GLContext>(existingGLContext);
+        ownsGLContext = false;
+        SDL_GL_MakeCurrent(window, glContext);
+    } else {
+        // Create our own GL context
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 5);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 
-    glContext = SDL_GL_CreateContext(window);
-    if (!glContext) {
-        Log(LogLevel::Error, "OpenGL Error: Failed to create GL context: %s", SDL_GetError());
-        return false;
+        glContext = SDL_GL_CreateContext(window);
+        if (!glContext) {
+            Log(LogLevel::Error, "OpenGL Error: Failed to create GL context: %s", SDL_GetError());
+            return false;
+        }
+        ownsGLContext = true;
+        SDL_GL_MakeCurrent(window, glContext);
     }
-    SDL_GL_MakeCurrent(window, glContext);
 
     if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
         Log(LogLevel::Error, "OpenGL Error: Failed to initialize GLAD");
@@ -129,8 +138,12 @@ void OpenGLBackend::InitPersistentBuffers() {
 
 void OpenGLBackend::WaitForBufferRegion(int region) {
     if (bufferFences[region]) {
-        GLenum result = glClientWaitSync(bufferFences[region], GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000); // 1 second timeout
-        (void)result;
+        GLenum result = glClientWaitSync(bufferFences[region], GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000);
+        if (result == GL_TIMEOUT_EXPIRED) {
+            Log(LogLevel::Warning, "GPU fence wait timed out for buffer region %d", region);
+        } else if (result == GL_WAIT_FAILED) {
+            Log(LogLevel::Error, "GPU fence wait failed for buffer region %d", region);
+        }
         glDeleteSync(bufferFences[region]);
         bufferFences[region] = nullptr;
     }
@@ -174,16 +187,36 @@ void OpenGLBackend::Shutdown() {
     if (vbo) { glDeleteBuffers(1, &vbo); vbo = 0; }
     if (ebo) { glDeleteBuffers(1, &ebo); ebo = 0; }
 
-    if (glContext) {
+    if (glContext && ownsGLContext) {
         SDL_GL_DestroyContext(glContext);
-        glContext = nullptr;
     }
+    glContext = nullptr;
     textureIsAlphaOnly.clear();
 }
 
 void OpenGLBackend::BeginFrame(const Color& clearColor) {
-    glClearColor(clearColor.r, clearColor.g, clearColor.b, clearColor.a);
-    glClear(GL_COLOR_BUFFER_BIT);
+    // When using an external GL context, save the engine's state so we can restore it after UI rendering
+    if (!ownsGLContext) {
+        SaveState();
+    }
+
+    // Set GL state required for UI rendering
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_SCISSOR_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // Only clear the framebuffer when we own the context;
+    // with an external context the engine already rendered its scene
+    if (ownsGLContext) {
+        glClearColor(clearColor.r, clearColor.g, clearColor.b, clearColor.a);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+
+    // Reset clip stack from previous frame
+    clipStack.clear();
+
     // Issue 4: Reset cached GL state at frame start
     lastBoundProgram = 0;
     lastBoundTexture = 0;
@@ -208,6 +241,11 @@ void OpenGLBackend::EndFrame() {
     // Perf 1.5: Insert fence for current buffer region
     if (usePersistentMapping) {
         bufferFences[currentBufferRegion] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    }
+
+    // When using an external GL context, restore the engine's GL state
+    if (!ownsGLContext) {
+        RestoreState();
     }
 }
 
@@ -305,9 +343,21 @@ void OpenGLBackend::CopyTexture(void* src, void* dst, int width, int height) {
 
     glBindFramebuffer(GL_READ_FRAMEBUFFER, fbos[0]);
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, srcTex, 0);
+    if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        Log(LogLevel::Error, "CopyTexture: source FBO incomplete");
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glDeleteFramebuffers(2, fbos);
+        return;
+    }
 
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbos[1]);
     glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dstTex, 0);
+    if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        Log(LogLevel::Error, "CopyTexture: destination FBO incomplete");
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glDeleteFramebuffers(2, fbos);
+        return;
+    }
 
     glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
@@ -669,6 +719,19 @@ void OpenGLBackend::RestoreState() {
     vaoIsBound = (savedState.boundVAO != 0);
 
     savedState.saved = false;
+}
+
+// Phase C6: read a single pixel from the default framebuffer.
+// Note: glReadPixels uses bottom-up Y; we flip from top-down widget Y.
+Color OpenGLBackend::ReadPixel(int x, int y) {
+    GLint vp[4];
+    glGetIntegerv(GL_VIEWPORT, vp);
+    int fbHeight = vp[3];
+    int flippedY = fbHeight - 1 - y;
+    unsigned char rgba[4] = {0, 0, 0, 0};
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(x, flippedY, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    return Color(rgba[0] / 255.0f, rgba[1] / 255.0f, rgba[2] / 255.0f, rgba[3] / 255.0f);
 }
 
 } // namespace FluentUI

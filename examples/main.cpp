@@ -1,8 +1,22 @@
 #include "FluentGUI.h"
+#include "App.h"
 #include "EngineEditor.h"
 
 using namespace FluentUI;
 
+// Set to 1 to run the widget gallery (App) on the standalone Vulkan backend.
+// Set to 0 to run the engine-editor example (EngineEditor) on OpenGL via FluentApp.
+#define RUN_WIDGET_GALLERY_VULKAN 1
+
+#if RUN_WIDGET_GALLERY_VULKAN
+int main(int, char**) {
+    // Standalone test of the Vulkan backend with the full widget gallery.
+    SetPreferredBackend(RenderBackendType::Vulkan);
+    App app("FluentUI Widget Gallery - Vulkan (standalone)");
+    app.Run();
+    return 0;
+}
+#else
 int main(int, char**) {
     FluentApp app("FluentUI Engine Editor", {1400, 900, true, true, 60, true});
 
@@ -47,3 +61,4 @@ int main(int, char**) {
     app.run();
     return 0;
 }
+#endif // RUN_WIDGET_GALLERY_VULKAN

@@ -10,7 +10,11 @@ namespace FluentUI {
         // Colores base (Light theme)
         inline const Color Background = Color(1.0f, 1.0f, 1.0f, 1.0f);
         inline const Color Surface = Color(0.95f, 0.95f, 0.95f, 1.0f);
-        inline const Color SurfaceAlt = Color(0.90f, 0.90f, 0.90f, 1.0f);
+        // headerBackground (light): hover/selección, título de panel, campos en hover,
+        // rail de slider. Debe contrastar con panel.background (~0.902) Y con el fondo
+        // de campo (panel.background*0.94 ≈ 0.848). 0.80 deja margen con ambos; antes
+        // (0.90) coincidía con panel.background y el hover era invisible en tema claro.
+        inline const Color SurfaceAlt = Color(0.80f, 0.80f, 0.80f, 1.0f);
         inline const Color SurfaceElevated = Color(0.98f, 0.98f, 0.98f, 1.0f);
 
         // Colores base (Dark theme)
@@ -83,5 +87,8 @@ namespace FluentUI {
 
     // High contrast theme (Phase 6: Accessibility)
     Style GetHighContrastStyle();
+
+    // PokeMotor editor theme — matches the HTML/CSS reference design
+    Style GetEditorDarkStyle();
 
 } // namespace FluentUI

@@ -46,4 +46,11 @@ inline LayoutConstraints AutoSize() {
   return c;
 }
 
+inline LayoutConstraints FillWidth() {
+  LayoutConstraints c;
+  c.width = SizeConstraint::Fill;
+  c.height = SizeConstraint::Auto;
+  return c;
+}
+
 } // namespace FluentUI

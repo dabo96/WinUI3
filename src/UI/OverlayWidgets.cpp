@@ -4,6 +4,7 @@
 #include "core/Animation.h"
 #include "core/Context.h"
 #include "core/Renderer.h"
+#include "core/Elevation.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -26,7 +27,7 @@ void ProgressBar(float fraction, const Vec2 &size, const std::string &overlay,
 
   fraction = std::clamp(fraction, 0.0f, 1.0f);
 
-  LayoutConstraints constraints = ConsumeNextConstraints();
+  LayoutConstraints constraints = ConsumeNextConstraints(SizeConstraint::Fill);
   Vec2 barSize = ApplyConstraints(ctx, constraints, desiredSize);
   barSize.x = std::max(barSize.x, 1.0f);
   barSize.y = std::max(barSize.y, 4.0f);
@@ -174,6 +175,7 @@ bool BeginContextMenu(const std::string &id) {
       state.position = mousePos;
       state.open = true;
       state.initialized = true;
+      state.scrollOffset = 0.0f; // Reset scroll al abrir
       ctx->activeContextMenuId = menuId;
     }
   }
@@ -183,48 +185,95 @@ bool BeginContextMenu(const std::string &id) {
     return false;
   }
 
-  // Guardar el tamaño inicial (se calculará durante EndContextMenu)
   Vec2 menuPos = state.position;
-  const PanelStyle &panelStyle = ctx->style.panel;
 
   // Asegurarse de que el menú no se salga de la ventana
   Vec2 viewport = ctx->renderer.GetViewportSize();
-  if (menuPos.x + 200.0f > viewport.x) {
-    menuPos.x = viewport.x - 200.0f;
+  float menuPadding = 8.0f;
+  if (menuPos.x + 150.0f > viewport.x) {
+    menuPos.x = viewport.x - 150.0f;
   }
   if (menuPos.y + 100.0f > viewport.y) {
     menuPos.y = viewport.y - 100.0f;
   }
+  if (menuPos.y < menuPadding) menuPos.y = menuPadding;
   state.position = menuPos;
+
+  // Altura máxima disponible en el viewport
+  float maxHeight = viewport.y - menuPos.y - menuPadding;
+
+  // GUARDAR estado del padre para restaurar en EndContextMenu
+  state.savedCursorPos = ctx->cursorPos;
+  state.savedLastItemPos = ctx->lastItemPos;
+  state.savedLastItemSize = ctx->lastItemSize;
+  state.savedClipStack = ctx->renderer.GetClipStack();
+  state.savedLayoutStackSize = ctx->layoutStack.size();
 
   // IMPORTANTE: Resetear clipping para que el menú aparezca por encima de todo
   ctx->renderer.FlushBatch();
-  // Guardaríamos el clipStack si quisiéramos restaurarlo en End, pero como el menú
-  // es un elemento terminal de UI que suele ir al final, simplemente lo ignoramos aquí
-  // y lo restauraremos si es necesario. Para ContextMenus, lo ideal es dibujarlos
-  // sin clipping del padre.
   while(!ctx->renderer.GetClipStack().empty()) {
       ctx->renderer.PopClipRect();
   }
 
-  // Dibujar el contenedor del menú ANTES de los items
-  Vec2 approxSize(200.0f, 150.0f); // Tamaño estimado inicial
-  ctx->renderer.DrawRectWithElevation(state.position, approxSize,
-                                      ctx->style.panel.background, 4.0f, 8.0f);
-  Color borderColor = FluentColors::BorderDark;
-  borderColor.a = 0.7f;
-  ctx->renderer.DrawRect(state.position, approxSize, borderColor, 4.0f);
+  // Calcular tamaño visual (clamped a maxHeight)
+  float visualHeight = state.contentSize.y > 0.0f
+      ? std::min(state.contentSize.y, maxHeight)
+      : state.size.y;
+  float visualWidth = state.size.x > 0.0f ? state.size.x : 150.0f;
 
-  // Iniciar layout para calcular el tamaño real
-  ctx->cursorPos = menuPos;
-  ctx->lastItemPos = menuPos;
+  // Manejar scroll si el contenido excede la altura visual
+  bool needsScroll = state.contentSize.y > maxHeight && state.contentSize.y > 0.0f;
+  if (needsScroll) {
+    float maxScroll = state.contentSize.y - maxHeight;
+    // Scroll con rueda del mouse cuando el mouse está sobre el menú
+    float mx = ctx->input.MouseX();
+    float my = ctx->input.MouseY();
+    bool mouseOverMenu = mx >= menuPos.x && mx <= menuPos.x + visualWidth &&
+                         my >= menuPos.y && my <= menuPos.y + visualHeight;
+    if (mouseOverMenu && !ctx->scrollConsumedThisFrame) {
+      float wy = ctx->input.MouseWheelY();
+      if (std::abs(wy) > 0.001f) {
+        state.scrollOffset = std::clamp(state.scrollOffset - wy * SCROLL_SPEED, 0.0f, maxScroll);
+        ctx->scrollConsumedThisFrame = true;
+      }
+    }
+    state.scrollOffset = std::clamp(state.scrollOffset, 0.0f, maxScroll);
+  } else {
+    state.scrollOffset = 0.0f;
+  }
+
+  // Draw background using visual size
+  if (visualWidth > 0.0f && visualHeight > 0.0f) {
+    ctx->renderer.DrawRectWithElevation(menuPos, Vec2(visualWidth, visualHeight),
+                                        ctx->style.panel.background, 4.0f,
+                                        Elevation::Z::Flyout);
+    Color borderColor = FluentColors::BorderDark;
+    borderColor.a = 0.7f;
+    ctx->renderer.DrawRect(menuPos, Vec2(visualWidth, visualHeight), borderColor, 4.0f);
+  }
+
+  // Clip del contenido del menú a la altura visual
+  ctx->renderer.PushClipRect(menuPos, Vec2(visualWidth, visualHeight));
+
+  // Marcar que estamos dentro de un context menu (bloquear input en widgets de fondo)
+  ctx->insideContextMenu = true;
+
+  // Iniciar layout — aplicar scroll offset
+  ctx->cursorPos = Vec2(menuPos.x, menuPos.y - state.scrollOffset);
+  ctx->lastItemPos = ctx->cursorPos;
   ctx->lastItemSize = Vec2(0.0f, 0.0f);
   BeginVertical(0.0f, std::nullopt, Vec2(0.0f, 0.0f));
 
   return true;
 }
 
+bool ContextMenuItem(const std::string &label, uint32_t iconCodepoint, bool enabled);
+
 bool ContextMenuItem(const std::string &label, bool enabled) {
+  return ContextMenuItem(label, 0u, enabled);
+}
+
+bool ContextMenuItem(const std::string &label, uint32_t iconCodepoint, bool enabled) {
   UIContext *ctx = GetContext();
   if (!ctx)
     return false;
@@ -239,10 +288,12 @@ bool ContextMenuItem(const std::string &label, bool enabled) {
   const PanelStyle &panelStyle = ctx->style.panel;
   const TextStyle &textStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
   float itemHeight = textStyle.fontSize + panelStyle.padding.y * 2.0f;
-  float itemWidth = 200.0f; // Ancho estándar para items del menú
 
   Vec2 textSize = MeasureTextCached(ctx,label, textStyle.fontSize);
-  itemWidth = std::max(itemWidth, textSize.x + panelStyle.padding.x * 2.0f);
+  float iconSize = textStyle.fontSize;
+  float iconGap = 6.0f;
+  float iconSlot = (iconCodepoint != 0u) ? (iconSize + iconGap) : 0.0f;
+  float itemWidth = textSize.x + iconSlot + panelStyle.padding.x * 2.0f + 32.0f;
 
   Vec2 itemSize(itemWidth, itemHeight);
   Vec2 itemPos = ctx->cursorPos;
@@ -259,13 +310,19 @@ bool ContextMenuItem(const std::string &label, bool enabled) {
   }
   ctx->renderer.DrawRectFilled(itemPos, itemSize, itemBg, 0.0f);
 
-  // Dibujar texto del item
-  Vec2 textPos(itemPos.x + panelStyle.padding.x,
-               itemPos.y + (itemHeight - textSize.y) * 0.5f);
   Color textColor =
       enabled ? textStyle.color
               : Color(textStyle.color.r * 0.5f, textStyle.color.g * 0.5f,
                       textStyle.color.b * 0.5f, textStyle.color.a);
+
+  if (iconCodepoint != 0u) {
+    DrawWidgetIcon(ctx, itemPos, itemSize, iconCodepoint, textColor,
+                   iconSize, panelStyle.padding.x, iconGap);
+  }
+
+  // Dibujar texto del item
+  Vec2 textPos(itemPos.x + panelStyle.padding.x + iconSlot,
+               itemPos.y + (itemHeight - textSize.y) * 0.5f);
   ctx->renderer.DrawText(textPos, label, textColor, textStyle.fontSize);
 
   AdvanceCursor(ctx, itemSize);
@@ -288,7 +345,7 @@ void ContextMenuSeparator() {
   const PanelStyle &panelStyle = ctx->style.panel;
   float separatorHeight = 1.0f;
   float separatorPadding = 4.0f;
-  float separatorWidth = 200.0f;
+  float separatorWidth = 120.0f; // minimum, will be expanded by EndContextMenu
 
   Vec2 separatorSize(separatorWidth, separatorHeight + separatorPadding * 2.0f);
   Vec2 separatorPos = ctx->cursorPos;
@@ -314,50 +371,103 @@ void EndContextMenu() {
     return;
   auto it = ctx->contextMenuStates.find(ctx->activeContextMenuId);
   if (it == ctx->contextMenuStates.end() || !it->second.open) {
-    if (!ctx->layoutStack.empty()) {
+    ctx->insideContextMenu = false;
+    // Pop the context menu's vertical layout if it was pushed
+    if (ctx->layoutStack.size() > it->second.savedLayoutStackSize) {
       EndVertical(false);
     }
+    // Restaurar estado del padre
+    ctx->cursorPos = it->second.savedCursorPos;
+    ctx->lastItemPos = it->second.savedLastItemPos;
+    ctx->lastItemSize = it->second.savedLastItemSize;
+    // Restaurar clip stack
+    ctx->renderer.FlushBatch();
+    while(!ctx->renderer.GetClipStack().empty()) {
+        ctx->renderer.PopClipRect();
+    }
+    for (const auto& rect : it->second.savedClipStack) {
+        ctx->renderer.PushClipRect(Vec2((float)rect.x, (float)rect.y),
+                                   Vec2((float)rect.width, (float)rect.height));
+    }
+    it->second.savedClipStack.clear();
     return;
   }
 
   auto &state = it->second;
 
-  // Calcular el tamaño total del menú basado en los items
-  Vec2 menuSize(200.0f, ctx->cursorPos.y - state.position.y);
-  if (menuSize.y < 10.0f) {
-    menuSize.y = 10.0f; // Tamaño mínimo
-  }
-  state.size = menuSize;
+  // Calcular el tamaño total del contenido (incluyendo scroll offset para obtener el tamaño real)
+  float fullContentHeight = ctx->cursorPos.y - (state.position.y - state.scrollOffset);
+  if (fullContentHeight < 10.0f) fullContentHeight = 10.0f;
 
-  // Cerrar el layout primero
+  // Get content width from layout stack before closing it
+  float contentWidth = 120.0f; // minimum
   if (!ctx->layoutStack.empty()) {
+    contentWidth = std::max(contentWidth, ctx->layoutStack.back().contentSize.x);
     EndVertical(false);
   }
 
-  // Dibujar el contenedor del menú con elevation (fondo)
-  // Nota: Los items ya se dibujaron arriba, así que dibujamos el contenedor
-  // como fondo Para evitar esto en el futuro, podríamos dibujar el contenedor
-  // primero en BeginContextMenu pero por ahora, guardamos el estado de
-  // renderizado y lo aplicamos aquí
-  ctx->renderer.PushClipRect(state.position, menuSize);
+  // Guardar tamaño de contenido real y tamaño visual
+  state.contentSize = Vec2(contentWidth, fullContentHeight);
+  Vec2 viewport = ctx->renderer.GetViewportSize();
+  float menuPadding = 8.0f;
+  float maxHeight = viewport.y - state.position.y - menuPadding;
+  float visualHeight = std::min(fullContentHeight, maxHeight);
+  state.size = Vec2(contentWidth, visualHeight);
 
-  // Dibujar fondo del menú
-  ctx->renderer.DrawRectWithElevation(state.position, menuSize,
-                                      ctx->style.panel.background, 4.0f, 8.0f);
-  // Borde más visible para el menú contextual - usar color Fluent que no rompa
-  // el estilo
-  Color borderColor = FluentColors::BorderDark;
-  borderColor.a = 0.7f; // Opacidad moderada para mantener el estilo Fluent
-  ctx->renderer.DrawRect(state.position, menuSize, borderColor, 4.0f);
-
+  // Pop el clip rect del menú
   ctx->renderer.PopClipRect();
 
-  // Restaurar cursor
-  ctx->cursorPos = state.position + Vec2(0.0f, menuSize.y);
+  // Dibujar scrollbar si el contenido excede la altura visual
+  if (fullContentHeight > visualHeight && visualHeight > 20.0f) {
+    float scrollbarWidth = 4.0f;
+    float scrollbarX = state.position.x + contentWidth - scrollbarWidth - 2.0f;
+    float scrollRatio = visualHeight / fullContentHeight;
+    float thumbHeight = std::max(20.0f, visualHeight * scrollRatio);
+    float maxScroll = fullContentHeight - visualHeight;
+    float scrollProgress = maxScroll > 0.0f ? state.scrollOffset / maxScroll : 0.0f;
+    float thumbY = state.position.y + scrollProgress * (visualHeight - thumbHeight);
+
+    bool darkMenu = ctx->style.isDarkTheme;
+    Color scrollbarBg = darkMenu ? Color(1.0f, 1.0f, 1.0f, 0.1f)
+                                 : Color(0.0f, 0.0f, 0.0f, 0.08f);
+    ctx->renderer.DrawRectFilled(Vec2(scrollbarX, state.position.y),
+                                 Vec2(scrollbarWidth, visualHeight), scrollbarBg, 2.0f);
+    Color scrollbarThumb = darkMenu ? Color(1.0f, 1.0f, 1.0f, 0.3f)
+                                    : Color(0.0f, 0.0f, 0.0f, 0.28f);
+    ctx->renderer.DrawRectFilled(Vec2(scrollbarX, thumbY),
+                                 Vec2(scrollbarWidth, thumbHeight), scrollbarThumb, 2.0f);
+  }
+
+  // Restaurar flag de context menu
+  ctx->insideContextMenu = false;
+
+  // RESTAURAR estado del padre: cursor, lastItem, y clipping
+  ctx->cursorPos = state.savedCursorPos;
+  ctx->lastItemPos = state.savedLastItemPos;
+  ctx->lastItemSize = state.savedLastItemSize;
+
+  // Restaurar clip stack original
+  ctx->renderer.FlushBatch();
+  while(!ctx->renderer.GetClipStack().empty()) {
+      ctx->renderer.PopClipRect();
+  }
+  for (const auto& rect : state.savedClipStack) {
+      ctx->renderer.PushClipRect(Vec2((float)rect.x, (float)rect.y),
+                                 Vec2((float)rect.width, (float)rect.height));
+  }
+  state.savedClipStack.clear();
 }
+
+bool BeginModal(const std::string &id, const std::string &title, uint32_t iconCodepoint,
+                bool *open, const Vec2 &size);
 
 bool BeginModal(const std::string &id, const std::string &title, bool *open,
                 const Vec2 &size) {
+  return BeginModal(id, title, 0u, open, size);
+}
+
+bool BeginModal(const std::string &id, const std::string &title, uint32_t iconCodepoint,
+                bool *open, const Vec2 &size) {
   UIContext *ctx = GetContext();
   if (!ctx)
     return false;
@@ -368,6 +478,11 @@ bool BeginModal(const std::string &id, const std::string &title, bool *open,
   // Si open es nullptr o está en false, no mostrar el modal
   if (!open || !*open) {
     state.open = false;
+    // Liberar el bloqueo global de input si este era el modal activo.
+    if (ctx->activeModalId == modalId) {
+      ctx->activeModalId = 0;
+      ctx->insideModal = false;
+    }
     return false;
   }
 
@@ -400,6 +515,11 @@ bool BeginModal(const std::string &id, const std::string &title, bool *open,
   }
 
   state.open = *open;
+
+  // Modal activo: captura el input. Bloquea el fondo (vía IsMouseOver) mientras
+  // su propio contenido queda exento con insideModal=true.
+  ctx->activeModalId = modalId;
+  ctx->insideModal = true;
 
   // Push modal ID to stack so EndModal knows which modal to close
   ctx->modalStack.push_back(modalId);
@@ -465,7 +585,7 @@ bool BeginModal(const std::string &id, const std::string &title, bool *open,
   // 2. Dibujar la elevación y el fondo con estilo (con bordes redondeados)
   ctx->renderer.DrawRectWithElevation(state.position, state.size,
                                       modalBg,
-                                      panelStyle.cornerRadius, 16.0f);
+                                      panelStyle.cornerRadius, Elevation::Z::Dialog);
 
   // Dibujar título con el color de cabecera del tema
   Vec2 titleBgPos = state.position;
@@ -520,8 +640,16 @@ bool BeginModal(const std::string &id, const std::string &title, bool *open,
     state.open = false;
   }
 
-  // Dibujar texto del título
-  Vec2 titleTextPos(state.position.x + panelStyle.padding.x,
+  // Dibujar texto del título (con icono opcional al inicio)
+  float titleIconSize = panelStyle.headerText.fontSize;
+  float titleIconGap = 6.0f;
+  float titleIconSlot = (iconCodepoint != 0u) ? (titleIconSize + titleIconGap) : 0.0f;
+  if (iconCodepoint != 0u) {
+    DrawWidgetIcon(ctx, state.position, Vec2(state.size.x, titleHeight),
+                   iconCodepoint, panelStyle.headerText.color, titleIconSize,
+                   panelStyle.padding.x, titleIconGap);
+  }
+  Vec2 titleTextPos(state.position.x + panelStyle.padding.x + titleIconSlot,
                     state.position.y +
                         (titleHeight - panelStyle.headerText.fontSize) * 0.5f);
   ctx->renderer.DrawText(titleTextPos, title, panelStyle.headerText.color,
@@ -564,6 +692,10 @@ void EndModal() {
     modalId = ctx->modalStack.back();
     ctx->modalStack.pop_back();
   }
+
+  // Fin del contenido del modal: el resto de widgets de fondo vuelve a estar
+  // bloqueado (activeModalId sigue activo hasta que el modal se cierre).
+  ctx->insideModal = false;
 
   // Measure content size before closing layout
   Vec2 measuredContent{0.0f, 0.0f};
