@@ -176,6 +176,7 @@ namespace FluentUI {
     void Renderer::BeginFrame(const Color& clearColor) {
         if (backend) backend->BeginFrame(clearColor);
         quadVertices.clear(); quadIndices.clear(); lineVertices.clear();
+        sdfInstances.clear();
         for (int i = 0; i < (int)RenderLayer::Count; ++i) {
             layerBatches[i].clear();
         }
@@ -219,7 +220,11 @@ namespace FluentUI {
                         backend->PushClipRect(batch.clipRect.x, batch.clipRect.y, batch.clipRect.width, batch.clipRect.height);
                     }
 
-                    if (batch.isLines) {
+                    if (batch.isSDF) {
+                        const float* reveal = (batch.reveal[2] > 0.0f) ? batch.reveal : nullptr;
+                        backend->DrawSDFInstances(batch.instances.data(), batch.instances.size(),
+                                                  batch.projection, reveal);
+                    } else if (batch.isLines) {
                         backend->DrawLines(batch.vertices.data(), batch.vertices.size(), batch.lineWidth, batch.projection);
                     } else {
                         backend->DrawBatch(batch.type, batch.vertices.data(), batch.vertices.size(),
@@ -260,14 +265,15 @@ namespace FluentUI {
 
     // Issue 1: EnsureBatchState — only flush when state actually changes
     void Renderer::EnsureBatchState(ShaderType shader, void* texture, const Color& color) {
-        if (!quadVertices.empty()) {
-            if (currentBatchShader != shader || currentBatchTexture != texture ||
-                currentBatchTextColor.r != color.r || currentBatchTextColor.g != color.g ||
-                currentBatchTextColor.b != color.b || currentBatchTextColor.a != color.a) {
-                FlushBatch(currentBatchShader, currentBatchTexture, currentBatchTextColor);
-                // Perf Phase C: Count state changes
-                if (perfCounters.stateChanges) (*perfCounters.stateChanges)++;
-            }
+        bool changed = currentBatchShader != shader || currentBatchTexture != texture ||
+                       currentBatchTextColor.r != color.r || currentBatchTextColor.g != color.g ||
+                       currentBatchTextColor.b != color.b || currentBatchTextColor.a != color.a;
+        // Flush pending content of the OUTGOING state (quads or SDF instances) before
+        // switching, so the draw order between SDF rects and Basic/MSDF quads is kept.
+        if (changed && (!quadVertices.empty() || !sdfInstances.empty())) {
+            FlushBatch(currentBatchShader, currentBatchTexture, currentBatchTextColor);
+            // Perf Phase C: Count state changes
+            if (perfCounters.stateChanges) (*perfCounters.stateChanges)++;
         }
         currentBatchShader = shader;
         currentBatchTexture = texture;
@@ -280,7 +286,7 @@ namespace FluentUI {
 
     void Renderer::FlushBatch(ShaderType type, void* texture, const Color& textColor) {
         if (!backend) return;
-        if (quadVertices.empty() && lineVertices.empty()) return;
+        if (quadVertices.empty() && lineVertices.empty() && sdfInstances.empty()) return;
 
         // Perf Phase C: Count flushes
         if (perfCounters.flushCount) (*perfCounters.flushCount)++;
@@ -294,7 +300,7 @@ namespace FluentUI {
             bool merged = false;
             if (!batches.empty()) {
                 auto& last = batches.back();
-                if (!last.isLines && last.type == type && last.texture == texture &&
+                if (!last.isLines && !last.isSDF && last.type == type && last.texture == texture &&
                     last.textColor.r == textColor.r && last.textColor.g == textColor.g &&
                     last.textColor.b == textColor.b && last.textColor.a == textColor.a) {
                     bool clipMatch = false;
@@ -340,6 +346,51 @@ namespace FluentUI {
             }
             quadVertices.clear();
             quadIndices.clear();
+        }
+
+        if (!sdfInstances.empty()) {
+            auto& batches = layerBatches[(int)currentLayer];
+            bool merged = false;
+            if (!batches.empty()) {
+                auto& last = batches.back();
+                if (last.isSDF) {
+                    bool clipMatch = false;
+                    if (!clipStack.empty() && last.hasClip) {
+                        clipMatch = (last.clipRect.x == clipStack.back().x &&
+                                     last.clipRect.y == clipStack.back().y &&
+                                     last.clipRect.width == clipStack.back().width &&
+                                     last.clipRect.height == clipStack.back().height);
+                    } else if (clipStack.empty() && !last.hasClip) {
+                        clipMatch = true;
+                    }
+                    if (clipMatch) {
+                        last.instances.insert(last.instances.end(),
+                                              sdfInstances.begin(), sdfInstances.end());
+                        merged = true;
+                        if (perfCounters.batchMerges) (*perfCounters.batchMerges)++;
+                    }
+                }
+            }
+
+            if (!merged) {
+                RenderBatch batch;
+                batch.type = ShaderType::SDFRect;
+                batch.isSDF = true;
+                batch.instances = std::move(sdfInstances);
+                batch.texture = nullptr;
+                memcpy(batch.projection, projection, 16 * sizeof(float));
+                batch.reveal[0] = revealCursor[0];
+                batch.reveal[1] = revealCursor[1];
+                batch.reveal[2] = revealCursor[2];
+                if (!clipStack.empty()) {
+                    batch.clipRect = clipStack.back();
+                    batch.hasClip = true;
+                } else {
+                    batch.hasClip = false;
+                }
+                batches.push_back(std::move(batch));
+            }
+            sdfInstances.clear();
         }
 
         if (!lineVertices.empty()) {
@@ -405,127 +456,43 @@ namespace FluentUI {
         quadIndices.push_back(b+4); quadIndices.push_back(b+3); quadIndices.push_back(b+7);
     }
 
+    // Brief 02: outline-only rounded rect via one SDF instance. Semantics match the
+    // previous StrokePolyline implementation (contour only, no fill); the border band
+    // is rendered inside the rect bounds by the SDF shader.
     void Renderer::DrawRect(const Vec2& pos, const Vec2& size, const Color& color, float cornerRadius) {
-        float lineWidth = 1.0f;
-        if (cornerRadius < 0.5f) {
-            // Sharp rect outline as a closed 4-point polyline (one stroke = no corner micro-jumps).
-            Vec2 corners[4] = {
-                pos,
-                {pos.x + size.x, pos.y},
-                {pos.x + size.x, pos.y + size.y},
-                {pos.x, pos.y + size.y}
-            };
-            StrokePolyline(corners, 4, true, color, lineWidth);
-        } else {
-            // Rounded outline as a single closed stroke — miter joins eliminate the
-            // per-segment alpha seams the previous DrawLine-per-segment version had.
-            float cr = std::min(cornerRadius, std::min(size.x, size.y) * 0.5f);
-            float cx_left = pos.x + cr; float cx_right = pos.x + size.x - cr;
-            float cy_top = pos.y + cr; float cy_bot = pos.y + size.y - cr;
-            constexpr int PTS = CORNER_POINTS * 4;
-            Vec2 points[PTS];
-            int pi = 0;
-            for (int i = 0; i < CORNER_POINTS; ++i)
-                points[pi++] = {cx_right + cr * sinTable[i], cy_top - cr * cosTable[i]};
-            for (int i = 0; i < CORNER_POINTS; ++i)
-                points[pi++] = {cx_right + cr * cosTable[i], cy_bot + cr * sinTable[i]};
-            for (int i = 0; i < CORNER_POINTS; ++i)
-                points[pi++] = {cx_left - cr * sinTable[i], cy_bot + cr * cosTable[i]};
-            for (int i = 0; i < CORNER_POINTS; ++i)
-                points[pi++] = {cx_left - cr * cosTable[i], cy_top - cr * sinTable[i]};
-            StrokePolyline(points, PTS, true, color, lineWidth);
-        }
+        if (size.x <= 0.0f || size.y <= 0.0f) return;
+        EnsureBatchState(ShaderType::SDFRect, nullptr, Color(1,1,1,1));
+        if (sdfInstances.size() >= MAX_SDF_INSTANCES) FlushBatch();
+
+        SDFInstance s{};
+        s.cx = pos.x + size.x * 0.5f; s.cy = pos.y + size.y * 0.5f;
+        s.hx = size.x * 0.5f;         s.hy = size.y * 0.5f;
+        s.radius = std::clamp(cornerRadius, 0.0f, std::min(s.hx, s.hy));
+        s.borderWidth = std::max(1.0f, dpiScale); // 1 physical px outline
+        s.softness = std::max(1.0f, dpiScale);
+        s.mode = 0.0f;
+        s.fillA = 0.0f; // transparent fill → outline only
+        s.borderR = color.r; s.borderG = color.g; s.borderB = color.b; s.borderA = color.a;
+        sdfInstances.push_back(s);
     }
 
     void Renderer::DrawRectFilled(const Vec2& pos, const Vec2& size, const Color& color, float cornerRadius) {
-        // Issue 1: Ensure Basic batch state
-        EnsureBatchState(ShaderType::Basic, nullptr, Color(1,1,1,1));
+        if (size.x <= 0.0f || size.y <= 0.0f) return;
+        // Brief 02: every filled rect (sharp or rounded) is one SDF instance — unifies
+        // the path and enables reveal/acrylic later. AA is resolved analytically at 1
+        // physical px in the fragment shader.
+        EnsureBatchState(ShaderType::SDFRect, nullptr, Color(1,1,1,1));
+        if (sdfInstances.size() >= MAX_SDF_INSTANCES) FlushBatch();
 
-        if (cornerRadius < 0.5f) {
-            // AA fringe: 4 inner corners (alpha=color.a) + 4 outer corners offset diagonally
-            // by 1px (alpha=0). Diagonal offset gives 1px perpendicular distance to each edge.
-            const float AA_FRINGE = std::max(1.0f, dpiScale); // Phase A4: 1 physical pixel
-            if (quadVertices.size() + 8 > MAX_QUAD_VERTICES) FlushBatch();
-            unsigned int b = static_cast<unsigned int>(quadVertices.size());
-            float x0 = pos.x, y0 = pos.y;
-            float x1 = pos.x + size.x, y1 = pos.y + size.y;
-            // Inner: 0=TL, 1=TR, 2=BR, 3=BL
-            quadVertices.push_back({x0, y0, color.r, color.g, color.b, color.a, 0, 0});
-            quadVertices.push_back({x1, y0, color.r, color.g, color.b, color.a, 0, 0});
-            quadVertices.push_back({x1, y1, color.r, color.g, color.b, color.a, 0, 0});
-            quadVertices.push_back({x0, y1, color.r, color.g, color.b, color.a, 0, 0});
-            // Outer (alpha=0): 4=TL, 5=TR, 6=BR, 7=BL
-            quadVertices.push_back({x0 - AA_FRINGE, y0 - AA_FRINGE, color.r, color.g, color.b, 0.0f, 0, 0});
-            quadVertices.push_back({x1 + AA_FRINGE, y0 - AA_FRINGE, color.r, color.g, color.b, 0.0f, 0, 0});
-            quadVertices.push_back({x1 + AA_FRINGE, y1 + AA_FRINGE, color.r, color.g, color.b, 0.0f, 0, 0});
-            quadVertices.push_back({x0 - AA_FRINGE, y1 + AA_FRINGE, color.r, color.g, color.b, 0.0f, 0, 0});
-            // Inner body
-            quadIndices.push_back(b+0); quadIndices.push_back(b+1); quadIndices.push_back(b+2);
-            quadIndices.push_back(b+0); quadIndices.push_back(b+2); quadIndices.push_back(b+3);
-            // Top fringe
-            quadIndices.push_back(b+4); quadIndices.push_back(b+5); quadIndices.push_back(b+1);
-            quadIndices.push_back(b+4); quadIndices.push_back(b+1); quadIndices.push_back(b+0);
-            // Right fringe
-            quadIndices.push_back(b+1); quadIndices.push_back(b+5); quadIndices.push_back(b+6);
-            quadIndices.push_back(b+1); quadIndices.push_back(b+6); quadIndices.push_back(b+2);
-            // Bottom fringe
-            quadIndices.push_back(b+3); quadIndices.push_back(b+2); quadIndices.push_back(b+6);
-            quadIndices.push_back(b+3); quadIndices.push_back(b+6); quadIndices.push_back(b+7);
-            // Left fringe
-            quadIndices.push_back(b+4); quadIndices.push_back(b+0); quadIndices.push_back(b+3);
-            quadIndices.push_back(b+4); quadIndices.push_back(b+3); quadIndices.push_back(b+7);
-        } else {
-            // Perf 3.1: Use pre-computed trig tables instead of cos/sin per vertex
-            float cr = std::min(cornerRadius, std::min(size.x, size.y) * 0.5f);
-            float cx_left = pos.x + cr; float cx_right = pos.x + size.x - cr;
-            float cy_top = pos.y + cr; float cy_bot = pos.y + size.y - cr;
-            constexpr int PERIM_SIZE = CORNER_POINTS * 4; // 36 points
-            Vec2 perim[PERIM_SIZE];
-            Vec2 normals[PERIM_SIZE]; // unit outward normal at each perimeter point (for AA fringe)
-            int pi = 0;
-            for (int i = 0; i < CORNER_POINTS; ++i) {
-                normals[pi] = {sinTable[i], -cosTable[i]};
-                perim[pi++]  = {cx_right + cr * sinTable[i], cy_top - cr * cosTable[i]};
-            }
-            for (int i = 0; i < CORNER_POINTS; ++i) {
-                normals[pi] = {cosTable[i], sinTable[i]};
-                perim[pi++]  = {cx_right + cr * cosTable[i], cy_bot + cr * sinTable[i]};
-            }
-            for (int i = 0; i < CORNER_POINTS; ++i) {
-                normals[pi] = {-sinTable[i], cosTable[i]};
-                perim[pi++]  = {cx_left - cr * sinTable[i], cy_bot + cr * cosTable[i]};
-            }
-            for (int i = 0; i < CORNER_POINTS; ++i) {
-                normals[pi] = {-cosTable[i], -sinTable[i]};
-                perim[pi++]  = {cx_left - cr * cosTable[i], cy_top - cr * sinTable[i]};
-            }
-            // AA fringe: 1px outer ring with alpha=0 — linear interpolation across the
-            // fringe quads gives a smooth 1-pixel falloff at the rounded edge.
-            const float AA_FRINGE = std::max(1.0f, dpiScale); // Phase A4: 1 physical pixel
-            if (quadVertices.size() + 1 + 2 * PERIM_SIZE > MAX_QUAD_VERTICES) FlushBatch();
-            unsigned int centerIdx = static_cast<unsigned int>(quadVertices.size());
-            quadVertices.push_back({pos.x + size.x * 0.5f, pos.y + size.y * 0.5f, color.r, color.g, color.b, color.a, 0, 0});
-            for (int i = 0; i < PERIM_SIZE; ++i)
-                quadVertices.push_back({perim[i].x, perim[i].y, color.r, color.g, color.b, color.a, 0, 0});
-            for (int i = 0; i < PERIM_SIZE; ++i)
-                quadVertices.push_back({perim[i].x + normals[i].x * AA_FRINGE, perim[i].y + normals[i].y * AA_FRINGE, color.r, color.g, color.b, 0.0f, 0, 0});
-            unsigned int innerBase = centerIdx + 1;
-            unsigned int outerBase = centerIdx + 1 + PERIM_SIZE;
-            for (int i = 0; i < PERIM_SIZE; ++i) {
-                unsigned int next = static_cast<unsigned int>((i + 1) % PERIM_SIZE);
-                // Inner fan triangle
-                quadIndices.push_back(centerIdx);
-                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
-                quadIndices.push_back(innerBase + next);
-                // Fringe quad (2 triangles): inner_i → inner_next → outer_next → outer_i
-                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
-                quadIndices.push_back(innerBase + next);
-                quadIndices.push_back(outerBase + next);
-                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
-                quadIndices.push_back(outerBase + next);
-                quadIndices.push_back(outerBase + static_cast<unsigned int>(i));
-            }
-        }
+        SDFInstance s{};
+        s.cx = pos.x + size.x * 0.5f; s.cy = pos.y + size.y * 0.5f;
+        s.hx = size.x * 0.5f;         s.hy = size.y * 0.5f;
+        s.radius = std::clamp(cornerRadius, 0.0f, std::min(s.hx, s.hy));
+        s.borderWidth = 0.0f;
+        s.softness = std::max(1.0f, dpiScale);
+        s.mode = 0.0f;
+        s.fillR = color.r; s.fillG = color.g; s.fillB = color.b; s.fillA = color.a;
+        sdfInstances.push_back(s);
     }
 
     void Renderer::DrawRectWithElevation(const Vec2& pos, const Vec2& size, const Color& color, float cornerRadius, float elevation) {
@@ -598,6 +565,8 @@ namespace FluentUI {
     }
 
     // Issue 15: Helper that calculates perimeter once and generates geometry N times
+    // TODO(brief06): retirar — unico uso restante del tesselado de rounded-rect
+    // (cosTable/sinTable). DrawRectAcrylic, su unico llamador, pasa a SDF en brief 06.
     void Renderer::DrawMultipleFilledRoundedRects(const Vec2& pos, const Vec2& size, float cornerRadius,
                                                    const Color* colors, int count) {
         // Perf 3.1: Use pre-computed trig tables
