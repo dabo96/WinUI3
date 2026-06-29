@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <unordered_map>
 
 namespace FluentUI {
 
@@ -17,6 +18,7 @@ namespace FluentUI {
 struct UIContext;
 class DockSpace;
 class RenderBackend;
+enum class DockPosition; // defined in DockSystem.h
 
 /// Application configuration passed to FluentApp constructor.
 struct AppConfig {
@@ -61,11 +63,16 @@ public:
 private:
     friend class FluentApp; // Only FluentApp can construct
 
+    // brief 09 Fase 1: backend-agnostic. The window owns a UIContext created with
+    // CreateStandaloneContext(window, parentCtx) so it SHARES the parent's GPU
+    // device / GL context and resource pool (brief 08). No own GL context.
     AppWindow(const std::string& title, int width, int height,
-              SDL_Window* parentWindow, SDL_GLContext parentGLContext);
+              SDL_Window* parentWindow, SDL_GLContext parentGLContext,
+              UIContext* parentCtx);
 
-    // Process one frame (called by FluentApp in the main loop)
-    // Switches GL context, renders, and restores parent context.
+    // Process one frame (called by FluentApp in the main loop). Sets this context
+    // current, builds + renders the panel, and presents via the backend. For GL it
+    // restores the parent context afterwards (parentGLContext may be null on Vulkan).
     void processFrame(float dt, SDL_Window* parentWindow, SDL_GLContext parentGLContext);
 
     // Route an SDL event to this window's input system
@@ -75,12 +82,17 @@ private:
     void updateDPIScale();
 
     SDL_Window* window_ = nullptr;
-    SDL_GLContext glContext_ = nullptr;  // Own GL context
-    RenderBackend* backend_ = nullptr;   // Own backend (for cleanup)
+    RenderBackend* backend_ = nullptr;   // Own backend (for cleanup); shares parent device
     UIContext* ctx_ = nullptr;
+    // brief 09: the SHARED GL context (parent's) this window renders with. Stored
+    // only so GL resource cleanup can be made current at destruction. Null on Vulkan.
+    SDL_GLContext sharedGLContext_ = nullptr;
     bool open_ = true;
     std::function<void(UIBuilder&)> rootBuilder_;
     std::string panelId_; // Phase E5: set when hosting a detached dock panel
+    // brief 09 Fase 3: custom-titlebar drag state for re-dock detection.
+    bool titleDragging_ = false;
+    int  titleDragDX_ = 0, titleDragDY_ = 0; // cursor offset from window origin
 };
 
 /// Main application class. Owns the SDL window, GL context, and UIContext.
@@ -203,6 +215,19 @@ public:
     void setOnPanelDragOut(std::function<void(const std::string& panelId,
                                               int screenX, int screenY)> cb);
 
+    // brief 09 Fase 2: register the build callback for a dockable panel by id, so
+    // auto-detach can host it in a floating window without the user re-supplying it.
+    // Pass the SAME builder you use with UIBuilder::dockPanel(panelId, ...).
+    void registerPanelBuilder(const std::string& panelId,
+                              std::function<void(UIBuilder&)> builder);
+
+    // brief 09 Fase 2/3: turn on the full drag-out → floating window → re-dock flow.
+    // Requires the panel builders to be registered via registerPanelBuilder(). When
+    // a docked panel is dragged outside the main window it spawns a floating
+    // AppWindow; dragging that window's titlebar back over a main-window dock zone
+    // re-docks it and destroys the floating window.
+    void enableAutoDetach(bool enable = true);
+
     /// Phase E5: enumerate currently-detached viewports (for serialization).
     std::vector<ViewportInfo> getViewports() const;
 
@@ -231,6 +256,13 @@ private:
     float computeDelta();
     void updateDPIScale();
 
+    // brief 09 Fase 2: spawn a floating window hosting `panelId` using the
+    // registered builder; removes it from the main dock tree. Used by auto-detach.
+    AppWindow* autoDetachPanel(const std::string& panelId, int screenX, int screenY);
+    // brief 09 Fase 3: while a floating panel window's titlebar is dragged over a
+    // main-window dock zone, preview it; on release re-dock and destroy the window.
+    void updateFloatingRedock();
+
     // Get the SDL window ID for an event (works for mouse, key, window events)
     static SDL_WindowID getEventWindowID(const SDL_Event& e);
 
@@ -258,6 +290,17 @@ private:
 
     // Phase E: Drag-out detection callback
     std::function<void(const std::string&, int, int)> onPanelDragOut_;
+
+    // brief 09 Fase 2: panel id → build callback registry (for auto-detach).
+    std::unordered_map<std::string, std::function<void(UIBuilder&)>> panelBuilders_;
+    bool autoDetach_ = false;
+
+    // brief 09 Fase 3: live re-dock state (a floating panel window being dragged
+    // by its titlebar over a main-window dock zone).
+    AppWindow*  redockWin_ = nullptr;     // floating window currently hovering a zone
+    DockPosition redockZone_{};           // hovered zone (Float = none)
+    std::string redockTargetId_;          // panel the zone belongs to
+    bool        redockActive_ = false;    // a zone is currently hovered
 
     // Phase E5: viewports loaded from layout file, awaiting restoreViewports().
     std::vector<ViewportInfo> pendingViewports_;
