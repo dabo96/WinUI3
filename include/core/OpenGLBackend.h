@@ -17,7 +17,19 @@ public:
     void Shutdown() override;
     void BeginFrame(const Color& clearColor) override;
     void EndFrame() override;
+    void Present() override;
     void SetViewport(int width, int height) override;
+
+    // brief 08 Part A: expose the SDL_GLContext so a secondary window's backend
+    // can reuse the SAME context (resources are then shared GL-side).
+    SDL_GLContext GetGLContext() const { return glContext; }
+
+    // brief 08 Part A: mark this backend as driving a secondary OS-window that
+    // shares the main context. In that mode BeginFrame makes the window current
+    // and clears its default framebuffer (it is a real window, not an engine
+    // overlay), and Present swaps it. ownsGLContext stays false so the shared
+    // context is never destroyed by this backend.
+    void SetSecondaryWindowMode(bool v) { secondaryWindow = v; }
 
     void PushClipRect(int x, int y, int width, int height) override;
     void PopClipRect() override;
@@ -60,6 +72,11 @@ private:
     SDL_Window* window = nullptr;
     SDL_GLContext glContext = nullptr;
     bool ownsGLContext = true;  // false when using an external context
+    // brief 08 Part A: true when this backend renders a secondary OS-window that
+    // shares the main GL context. Distinguishes "embedded in an engine context"
+    // (ownsGLContext==false, no clear, save/restore engine state) from "our own
+    // secondary window on a shared context" (clear + present, no save/restore).
+    bool secondaryWindow = false;
     GLuint shaderProgram = 0;
     GLuint textShaderProgram = 0;
     GLuint msdfShaderProgram = 0;

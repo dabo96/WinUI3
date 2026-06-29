@@ -36,6 +36,13 @@ public:
 
     void SetFrameCommandBuffer(void* cmdBuffer) override;
 
+    // brief 08 Part B: publish this backend's device-owner handles so a secondary
+    // window can create a swapchain over the SAME device. Fills instance/
+    // physicalDevice/device/graphicsQueue/queueFamilyIndex/colorFormat/sampleCount
+    // and sets out->ownSwapchain = true (pass it straight as existingContext to a
+    // new backend's Init). Returns false if this backend has no device yet.
+    bool GetSharedContext(VulkanSharedContext* out) const;
+
     void PushClipRect(int x, int y, int width, int height) override;
     void PopClipRect() override;
 
@@ -101,6 +108,9 @@ private:
     // ── Mode / shared state ────────────────────────────────────────────
     bool ownsDevice = false;       // standalone created instance+device
     bool sharedMode = false;       // record onto an external command buffer
+    // brief 08 Part B: secondary window on a shared device — owns its surface/
+    // swapchain/render pass/sync and presents, but NOT the device/instance.
+    bool ownSwapchainOnSharedDevice = false;
     SDL_Window* window = nullptr;
 
     VkInstance       instance       = VK_NULL_HANDLE;
@@ -264,8 +274,9 @@ private:
 
     // ── Internal helpers ───────────────────────────────────────────────
     bool CreateInstanceAndDevice();             // standalone only
+    bool CreateSurfaceForWindow();              // standalone + shared-device window
     bool PickPhysicalDevice();                  // standalone only
-    bool CreateSwapchain();                     // standalone only
+    bool CreateSwapchain();                     // standalone + shared-device window
     void DestroySwapchain();
     void RecreateSwapchain();
     bool CreateStandaloneRenderPass();

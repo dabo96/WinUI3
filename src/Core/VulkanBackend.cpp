@@ -69,6 +69,49 @@ bool VulkanBackend::Init(void* windowHandle, void* existingContext) {
     window = static_cast<SDL_Window*>(windowHandle);
 
     if (existingContext) {
+        auto* shared0 = static_cast<VulkanSharedContext*>(existingContext);
+        if (shared0->ownSwapchain) {
+            // ── Shared-device, own-swapchain mode (brief 08 Part B) ──
+            // Secondary OS-window: reuse the main UI backend's device/instance/
+            // queue, but create our OWN surface/swapchain/render pass/sync and
+            // present. We do NOT own the device — never destroy it.
+            if (!shared0->instance || !shared0->physicalDevice || !shared0->device ||
+                !shared0->graphicsQueue) {
+                Log(LogLevel::Error, "Vulkan: shared-device window missing required handles "
+                    "(instance/physicalDevice/device/graphicsQueue)");
+                return false;
+            }
+            ownsDevice = false;
+            sharedMode = false;
+            ownSwapchainOnSharedDevice = true;
+            useDynamicRendering = false; // we render into our own swapchain render pass
+            instance         = reinterpret_cast<VkInstance>(shared0->instance);
+            physicalDevice   = reinterpret_cast<VkPhysicalDevice>(shared0->physicalDevice);
+            device           = reinterpret_cast<VkDevice>(shared0->device);
+            graphicsQueue    = reinterpret_cast<VkQueue>(shared0->graphicsQueue);
+            queueFamilyIndex = shared0->queueFamilyIndex;
+            wideLinesSupported = false; // can't assume the owner enabled the feature
+
+            VKDBG("Vulkan: SHARED-DEVICE window mode (own swapchain on shared device)");
+            if (!CreateSurfaceForWindow()) { Shutdown(); return false; }
+            // The shared graphics queue family must be able to present to our surface.
+            VkBool32 canPresent = VK_FALSE;
+            vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, queueFamilyIndex, surface, &canPresent);
+            if (!canPresent) {
+                Log(LogLevel::Error, "Vulkan: shared queue family %u cannot present to the "
+                    "secondary window surface", queueFamilyIndex);
+                Shutdown(); return false;
+            }
+            if (!CreateSwapchain())              { Shutdown(); return false; } // + render pass + framebuffers
+            if (!CreateShaderModules())          { Shutdown(); return false; }
+            if (!CreatePipelines())              { Shutdown(); return false; }
+            if (!CreateDynamicBuffers())         { Shutdown(); return false; }
+            if (!CreateSamplerAndDescriptorInfra()) { Shutdown(); return false; }
+            if (!CreateSyncAndCommands())        { Shutdown(); return false; } // command + upload pools, frame sync
+            Log(LogLevel::Info, "Vulkan backend initialized (shared device, own swapchain)");
+            return true;
+        }
+
         // ── Shared mode: reuse the engine's Vulkan objects ──
         auto* shared = static_cast<VulkanSharedContext*>(existingContext);
         const bool dyn = shared->dynamicRendering;
@@ -221,25 +264,7 @@ bool VulkanBackend::CreateInstanceAndDevice() {
     VK_FAIL(vkCreateInstance(&ici, nullptr, &instance), "create instance");
     VKDBG(useSdlSurface ? "  instance ok (SDL surface path)" : "  instance ok (native Win32 path)");
 
-    if (useSdlSurface) {
-        if (!SDL_Vulkan_CreateSurface(window, instance, nullptr, &surface)) {
-            Log(LogLevel::Error, "Vulkan: SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
-            return false;
-        }
-    } else {
-#if defined(_WIN32)
-        HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(
-            SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
-        if (!hwnd) {
-            Log(LogLevel::Error, "Vulkan: could not obtain HWND for native surface");
-            return false;
-        }
-        VkWin32SurfaceCreateInfoKHR wci{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
-        wci.hinstance = GetModuleHandle(nullptr);
-        wci.hwnd = hwnd;
-        VK_FAIL(vkCreateWin32SurfaceKHR(instance, &wci, nullptr, &surface), "create Win32 surface");
-#endif
-    }
+    if (!CreateSurfaceForWindow()) return false;
 
     VKDBG("  surface ok");
     if (!PickPhysicalDevice()) return false;
@@ -269,6 +294,43 @@ bool VulkanBackend::CreateInstanceAndDevice() {
     vkGetDeviceQueue(device, queueFamilyIndex, 0, &graphicsQueue);
     VKDBG("  device + queue ok");
     return true;
+}
+
+// Create a VkSurfaceKHR for `window` against the (own or shared) instance. Mirrors
+// the surface mechanism choice used at instance creation: SDL when SDL has Vulkan
+// support, otherwise the native Win32 path. Used by both the standalone device
+// path and the shared-device secondary-window path (brief 08 Part B).
+bool VulkanBackend::CreateSurfaceForWindow() {
+    bool useSdlSurface = false;
+    if (SDL_Vulkan_LoadLibrary(nullptr)) {
+        uint32_t sdlExtCount = 0;
+        const char* const* sdlExts = SDL_Vulkan_GetInstanceExtensions(&sdlExtCount);
+        if (sdlExts && sdlExtCount > 0) useSdlSurface = true;
+    }
+
+    if (useSdlSurface) {
+        if (!SDL_Vulkan_CreateSurface(window, instance, nullptr, &surface)) {
+            Log(LogLevel::Error, "Vulkan: SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
+            return false;
+        }
+        return true;
+    }
+#if defined(_WIN32)
+    HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(
+        SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+    if (!hwnd) {
+        Log(LogLevel::Error, "Vulkan: could not obtain HWND for native surface");
+        return false;
+    }
+    VkWin32SurfaceCreateInfoKHR wci{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
+    wci.hinstance = GetModuleHandle(nullptr);
+    wci.hwnd = hwnd;
+    VK_FAIL(vkCreateWin32SurfaceKHR(instance, &wci, nullptr, &surface), "create Win32 surface");
+    return true;
+#else
+    Log(LogLevel::Error, "Vulkan: no surface mechanism available for window");
+    return false;
+#endif
 }
 
 bool VulkanBackend::PickPhysicalDevice() {
@@ -1155,6 +1217,22 @@ void VulkanBackend::SetFrameCommandBuffer(void* cmdBuffer) {
     externalCmd = reinterpret_cast<VkCommandBuffer>(cmdBuffer);
 }
 
+bool VulkanBackend::GetSharedContext(VulkanSharedContext* out) const {
+    if (!out || device == VK_NULL_HANDLE) return false;
+    out->instance         = instance;
+    out->physicalDevice   = physicalDevice;
+    out->device           = device;
+    out->graphicsQueue    = graphicsQueue;
+    out->queueFamilyIndex = queueFamilyIndex;
+    out->colorFormat      = static_cast<uint32_t>(colorFormat);
+    out->sampleCount      = static_cast<uint32_t>(sampleCount);
+    out->renderPass       = 0;
+    out->dynamicRendering = false;
+    // Mark it as a request for a secondary window with its own swapchain.
+    out->ownSwapchain     = true;
+    return true;
+}
+
 void VulkanBackend::SetFullViewportAndScissor() {
     if (!currentCmd) return;
     // When rendering to an offscreen RT, use its dimensions; the same
@@ -1945,8 +2023,10 @@ void VulkanBackend::Shutdown() {
     destroyShader(msdfFrag); destroyShader(imageFrag);
     destroyShader(sdfVertModule); destroyShader(sdfFrag);
 
-    // Standalone-owned objects.
-    if (ownsDevice) {
+    // Window-owned objects: present in standalone AND in the shared-device,
+    // own-swapchain secondary-window mode. Destroyed without touching the device.
+    const bool ownsWindowResources = ownsDevice || ownSwapchainOnSharedDevice;
+    if (ownsWindowResources) {
         DestroySwapchain();
         for (int i = 0; i < kFramesInFlight; ++i) {
             if (frames[i].imageAvailable) vkDestroySemaphore(device, frames[i].imageAvailable, nullptr);
@@ -1960,12 +2040,19 @@ void VulkanBackend::Shutdown() {
     renderPass = VK_NULL_HANDLE;
     ownsRenderPass = false;
 
+    // Our own surface (standalone or secondary window) — uses the instance, which
+    // is shared in the secondary-window case, so destroy it before nulling handles.
+    if (ownsWindowResources && surface) {
+        vkDestroySurfaceKHR(instance, surface, nullptr);
+        surface = VK_NULL_HANDLE;
+    }
+
     if (ownsDevice) {
         if (device)   { vkDestroyDevice(device, nullptr); device = VK_NULL_HANDLE; }
-        if (surface)  { vkDestroySurfaceKHR(instance, surface, nullptr); surface = VK_NULL_HANDLE; }
         if (instance) { vkDestroyInstance(instance, nullptr); instance = VK_NULL_HANDLE; }
     } else {
-        device = VK_NULL_HANDLE; instance = VK_NULL_HANDLE; // borrowed, don't destroy
+        // Borrowed device/instance — don't destroy. (Surface, if any, already freed.)
+        device = VK_NULL_HANDLE; instance = VK_NULL_HANDLE;
     }
 }
 

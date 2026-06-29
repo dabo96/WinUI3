@@ -89,6 +89,16 @@ struct VulkanSharedContext {
     bool     dynamicRendering = false;
     uint32_t depthFormat     = 0;       // VkFormat of depth attachment (0 = none)
     uint32_t stencilFormat   = 0;       // VkFormat of stencil attachment (0 = none)
+
+    // brief 08 Part B (multi-window): when true the backend treats this as a
+    // SECONDARY OS-WINDOW on a shared device — it creates its OWN surface,
+    // swapchain, render pass, per-frame sync and PRESENTS, instead of recording
+    // onto an engine-supplied command buffer. Only instance/physicalDevice/
+    // device/graphicsQueue/queueFamilyIndex are required in this mode; renderPass/
+    // colorFormat are ignored (the backend derives them from its own surface).
+    // The device/instance are NOT owned and never destroyed by this backend.
+    // Populate it from the main UI backend via VulkanBackend::GetSharedContext().
+    bool     ownSwapchain    = false;
 };
 
 struct RenderVertex {
@@ -111,6 +121,12 @@ public:
     virtual void BeginFrame(const Color& clearColor) = 0;
     virtual void EndFrame() = 0;
     virtual void SetViewport(int width, int height) = 0;
+
+    // Present this backend's window for the frame (brief 08/09: backend-agnostic
+    // multi-window present). OpenGL swaps the window's buffers; Vulkan already
+    // presented inside EndFrame (standalone / own-swapchain modes) and the
+    // engine-shared mode lets the engine present, so it is a no-op there.
+    virtual void Present() {}
 
     // --- External frame command buffer (Vulkan shared mode) ---
     // Supply the command buffer the engine is currently recording into. The

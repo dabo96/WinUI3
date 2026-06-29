@@ -15,8 +15,10 @@ namespace FluentUI {
 // ===================== AppWindow (Secondary Windows) =====================
 
 AppWindow::AppWindow(const std::string& title, int width, int height,
-                     SDL_Window* parentWindow, SDL_GLContext parentGLContext) {
-    // Create the SDL window
+                     SDL_Window* parentWindow, SDL_GLContext parentGLContext,
+                     UIContext* parentCtx) {
+    // brief 09 Fase 1: create the OS window. (FluentApp is GL today, so the window
+    // is created GL-capable. A Vulkan FluentApp would create it with SDL_WINDOW_VULKAN.)
     window_ = SDL_CreateWindow(title.c_str(), width, height,
                                 SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     if (!window_) {
@@ -24,69 +26,60 @@ AppWindow::AppWindow(const std::string& title, int width, int height,
         return;
     }
 
-    // Save the current global context so we can restore it after
+    // Save the current global context so we can restore it after.
     UIContext* savedGlobalCtx = GetContext();
 
-    // IMPORTANT: Set share flag BEFORE CreateStandaloneContext calls
-    // OpenGLBackend::Init -> SDL_GL_CreateContext, so the new GL context
-    // shares resources (textures, buffers) with the parent.
-    SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
-
-    // Create standalone context (this creates its own OpenGLBackend + GL context)
-    // It will change the current GL context as a side effect.
-    ctx_ = CreateStandaloneContext(window_, &backend_);
+    // brief 08/09: share the parent's GPU device / GL context + resource pool.
+    // (GL: reuses the SAME SDL_GLContext; Vulkan: surface+swapchain over the shared
+    // device.) CreateStandaloneContext makes the new context current as a side effect.
+    ctx_ = CreateStandaloneContext(window_, parentCtx, &backend_);
     if (!ctx_) {
-        Log(LogLevel::Error, "AppWindow: Failed to create standalone context");
+        Log(LogLevel::Error, "AppWindow: Failed to create shared context");
         SDL_DestroyWindow(window_);
         window_ = nullptr;
         SetCurrentContext(savedGlobalCtx);
-        SDL_GL_MakeCurrent(parentWindow, parentGLContext);
+        if (parentGLContext) SDL_GL_MakeCurrent(parentWindow, parentGLContext);
         return;
     }
 
-    // Grab the GL context that was created by CreateStandaloneContext -> OpenGLBackend::Init
-    glContext_ = SDL_GL_GetCurrentContext();
+    // Remember the shared GL context (parent's) for GL resource cleanup later.
+    // Null on Vulkan (SDL_GL_GetCurrentContext returns null without a GL context).
+    sharedGLContext_ = SDL_GL_GetCurrentContext();
 
-    // Sync viewport
     ctx_->renderer.SetViewport(width, height);
-
     SDL_StartTextInput(window_);
     open_ = true;
-
-    // Initialize DPI for this window's display
     updateDPIScale();
 
-    // Reset the share attribute for future contexts
-    SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 0);
-
-    // CRITICAL: Restore the parent window's GL context and global context
-    // so the main window can continue rendering normally
-    SDL_GL_MakeCurrent(parentWindow, parentGLContext);
+    // Restore the parent window's GL context and global context so the main window
+    // keeps rendering normally.
+    if (parentGLContext) SDL_GL_MakeCurrent(parentWindow, parentGLContext);
     SetCurrentContext(savedGlobalCtx);
 }
 
 AppWindow::~AppWindow() {
-    // Make this window's GL context current so GL resource cleanup works
-    if (window_ && glContext_) {
-        SDL_GL_MakeCurrent(window_, glContext_);
+    // brief 09: this window shares the parent's GL context (it does NOT own one).
+    // Make that shared context current on THIS window so GL resource cleanup (the
+    // window's own atlas textures, buffers) targets the right context. On Vulkan
+    // sharedGLContext_ is null and DeleteTexture drains the device itself.
+    if (window_ && sharedGLContext_) {
+        SDL_GL_MakeCurrent(window_, sharedGLContext_);
     }
 
-    // Destroy context (renderer first, then backend) while GL context is current
     if (ctx_) {
+        // Frees the backend (its swapchain/surface on Vulkan; nothing device-wide).
+        // Never frees the shared resource pool (owned by the main context).
         DestroyStandaloneContext(ctx_, backend_);
         ctx_ = nullptr;
         backend_ = nullptr;
     } else if (backend_) {
-        // Edge case: backend exists without context (partial init failure)
         backend_->Shutdown();
         delete backend_;
         backend_ = nullptr;
     }
 
-    if (glContext_) {
-        SDL_GL_DestroyContext(glContext_);
-        glContext_ = nullptr;
-    }
+    // We never created a GL context, so we never destroy one.
+    sharedGLContext_ = nullptr;
 
     if (window_) {
         SDL_StopTextInput(window_);
@@ -128,34 +121,29 @@ void AppWindow::updateDPIScale() {
 }
 
 void AppWindow::processFrame(float dt, SDL_Window* parentWindow, SDL_GLContext parentGLContext) {
-    if (!open_ || !ctx_ || !window_ || !glContext_) return;
+    if (!open_ || !ctx_ || !window_) return;
 
-    // Switch to this window's GL context
-    SDL_GL_MakeCurrent(window_, glContext_);
-
-    // Set this context as the active global context
+    // brief 09 Fase 1: backend-agnostic. Make this context active; the backend
+    // routes GL to this window inside BeginFrame (GL secondary-window mode) or uses
+    // its own swapchain (Vulkan). No raw GL here.
     UIContext* savedCtx = GetContext();
     SetCurrentContext(ctx_);
 
-    // Update input
     ctx_->input.Update(window_);
 
-    // Begin frame
     NewFrame(dt);
 
-    // Build UI via lambda
     if (rootBuilder_) {
         UIBuilder builder(ctx_);
         rootBuilder_(builder);
     }
 
-    // Render
     RenderDeferredDropdowns();
     Render();
-    SDL_GL_SwapWindow(window_);
+    ctx_->renderer.Present(); // GL: SwapWindow(window_); Vulkan: presented in EndFrame
 
-    // Restore parent window's GL context and global context
-    SDL_GL_MakeCurrent(parentWindow, parentGLContext);
+    // Restore the parent's GL context + global context (GL only; null on Vulkan).
+    if (parentGLContext) SDL_GL_MakeCurrent(parentWindow, parentGLContext);
     SetCurrentContext(savedCtx);
 }
 
@@ -475,9 +463,24 @@ void FluentApp::run() {
             builder.debugOverlay();
         }
 
+        // brief 09 Fase 3: draw the re-dock preview on the main window when a
+        // floating panel window hovers one of its dock zones.
+        if (autoDetach_ && redockActive_ && redockWin_) {
+            Rect tb = redockTargetId_.empty() ? ctx_->dockSpace.GetAvailableArea()
+                                              : ctx_->dockSpace.GetPanelBounds(redockTargetId_);
+            Rect preview = GetDockZonePreviewRect(tb, redockZone_);
+            ctx_->renderer.SetLayer(RenderLayer::Overlay);
+            ctx_->renderer.DrawRectFilled(preview.pos, preview.size, Color(0.2f, 0.4f, 0.9f, 0.25f), 4.0f);
+            ctx_->renderer.DrawRect(preview.pos, preview.size, Color(0.3f, 0.5f, 1.0f, 0.6f), 4.0f);
+            ctx_->renderer.SetLayer(RenderLayer::Default);
+        }
+
         RenderDeferredDropdowns();
         Render();
         SDL_GL_SwapWindow(window_);
+
+        // brief 09 Fase 3: update re-dock candidate / perform re-dock on release.
+        updateFloatingRedock();
 
         // Process secondary windows
         for (auto it = secondaryWindows_.begin(); it != secondaryWindows_.end(); ) {
@@ -636,7 +639,7 @@ AppWindow* FluentApp::createWindow(const std::string& title, int width, int heig
     SDL_GL_MakeCurrent(window_, mainGLContext_);
     SetCurrentContext(ctx_);
 
-    std::unique_ptr<AppWindow> win(new AppWindow(title, width, height, window_, mainGLContext_));
+    std::unique_ptr<AppWindow> win(new AppWindow(title, width, height, window_, mainGLContext_, ctx_));
     if (!win->window()) return nullptr;
 
     // Double-check main GL context is current after window creation
@@ -678,6 +681,152 @@ AppWindow* FluentApp::detachPanelToWindow(const std::string& panelId,
 void FluentApp::setOnPanelDragOut(std::function<void(const std::string&, int, int)> cb) {
     onPanelDragOut_ = std::move(cb);
     if (ctx_) ctx_->dockDrag.onPanelDragOut = onPanelDragOut_;
+}
+
+// brief 09 Fase 2 — panel builder registry + auto-detach orchestration.
+
+void FluentApp::registerPanelBuilder(const std::string& panelId,
+                                     std::function<void(UIBuilder&)> builder) {
+    panelBuilders_[panelId] = std::move(builder);
+}
+
+AppWindow* FluentApp::autoDetachPanel(const std::string& panelId, int screenX, int screenY) {
+    auto it = panelBuilders_.find(panelId);
+    if (it == panelBuilders_.end()) {
+        Log(LogLevel::Warning, "autoDetachPanel: no builder registered for panel '%s' — "
+            "call registerPanelBuilder() first", panelId.c_str());
+        return nullptr;
+    }
+    // Size: keep the panel's docked size if known, else a sensible default.
+    Rect bounds = ctx_ ? ctx_->dockSpace.GetPanelBounds(panelId) : Rect{};
+    int w = bounds.size.x > 32 ? static_cast<int>(bounds.size.x) : 480;
+    int h = bounds.size.y > 32 ? static_cast<int>(bounds.size.y) : 360;
+    // Place the window so the (custom) titlebar sits under the cursor.
+    int x = screenX - 24;
+    int y = screenY - 12;
+
+    std::function<void(UIBuilder&)> content = it->second;
+
+    AppWindow* win = detachPanelToWindow(panelId, /*placeholder*/ content, x, y, w, h);
+    if (!win) return nullptr;
+
+    // Wrap the content with a draggable custom titlebar so the floating window can
+    // be moved and dropped back onto a dock zone (re-dock handled in the main loop).
+    AppWindow* rawWin = win;
+    std::string pid = panelId;
+    win->root([rawWin, pid, content](UIBuilder& ui) {
+        UIContext* c = rawWin->context();
+        if (!c) return;
+        const float vw = c->renderer.GetViewportSize().x;
+        const float titleH = 28.0f;
+
+        // Titlebar background + label.
+        c->renderer.DrawRectFilled({0.0f, 0.0f}, {vw, titleH},
+                                   c->style.panel.headerBackground);
+        c->renderer.DrawText({8.0f, 6.0f}, pid, c->style.panel.headerText.color,
+                             c->style.panel.headerText.fontSize);
+
+        // Titlebar drag → move the OS window following the global mouse and flag the
+        // drag so the main loop can test re-dock zones.
+        const float mx = c->input.MouseX(), my = c->input.MouseY();
+        const bool overTitle = (my >= 0.0f && my <= titleH && mx >= 0.0f && mx <= vw);
+        const bool pressed = c->input.IsMousePressed(0);
+        const bool down = c->input.IsMouseDown(0);
+        if (overTitle && pressed && rawWin->window_) {
+            float gx = 0, gy = 0; SDL_GetGlobalMouseState(&gx, &gy);
+            int wx = 0, wy = 0; SDL_GetWindowPosition(rawWin->window_, &wx, &wy);
+            rawWin->titleDragging_ = true;
+            rawWin->titleDragDX_ = static_cast<int>(gx) - wx;
+            rawWin->titleDragDY_ = static_cast<int>(gy) - wy;
+            c->desiredCursor = UIContext::CursorType::Hand;
+        }
+        if (rawWin->titleDragging_ && down && rawWin->window_) {
+            float gx = 0, gy = 0; SDL_GetGlobalMouseState(&gx, &gy);
+            SDL_SetWindowPosition(rawWin->window_,
+                                  static_cast<int>(gx) - rawWin->titleDragDX_,
+                                  static_cast<int>(gy) - rawWin->titleDragDY_);
+            c->desiredCursor = UIContext::CursorType::Hand;
+        }
+        if (!down) rawWin->titleDragging_ = false;
+
+        // Content below the titlebar.
+        c->cursorPos = {8.0f, titleH + 6.0f};
+        if (content) content(ui);
+    });
+    return win;
+}
+
+void FluentApp::enableAutoDetach(bool enable) {
+    autoDetach_ = enable;
+    if (!enable) {
+        setOnPanelDragOut(nullptr);
+        return;
+    }
+    // Wire the drag-out callback to spawn a floating window from the registry.
+    setOnPanelDragOut([this](const std::string& panelId, int sx, int sy) {
+        autoDetachPanel(panelId, sx, sy);
+    });
+}
+
+void FluentApp::updateFloatingRedock() {
+    if (!autoDetach_ || !ctx_ || !window_) return;
+
+    // Find a floating panel window currently being titlebar-dragged.
+    AppWindow* dragging = nullptr;
+    for (auto& w : secondaryWindows_) {
+        if (w && w->open_ && !w->panelId_.empty() && w->titleDragging_) {
+            dragging = w.get();
+            break;
+        }
+    }
+
+    if (dragging) {
+        float gx = 0, gy = 0; SDL_GetGlobalMouseState(&gx, &gy);
+        int mwx = 0, mwy = 0; SDL_GetWindowPosition(window_, &mwx, &mwy);
+        int mww = 0, mwh = 0; SDL_GetWindowSize(window_, &mww, &mwh);
+        const float lx = gx - mwx, ly = gy - mwy;
+
+        redockWin_ = dragging;
+        redockActive_ = false;
+        redockZone_ = DockPosition::Float;
+        redockTargetId_.clear();
+
+        const bool insideMain = (lx >= 0 && ly >= 0 && lx <= mww && ly <= mwh);
+        if (insideMain) {
+            auto panels = ctx_->dockSpace.GetDockedPanels();
+            for (auto& pid : panels) {
+                if (pid == dragging->panelId_) continue;
+                Rect b = ctx_->dockSpace.GetPanelBounds(pid);
+                DockPosition z = HitTestDockZones(b, lx, ly);
+                if (z != DockPosition::Float) {
+                    redockZone_ = z;
+                    redockTargetId_ = pid;
+                    redockActive_ = true;
+                    break;
+                }
+            }
+            // Empty dock space: any drop inside re-docks as the root panel.
+            if (!redockActive_ && panels.empty()) {
+                redockZone_ = DockPosition::Center;
+                redockActive_ = true;
+            }
+        }
+        return;
+    }
+
+    // Not dragging this frame: if we had an active zone candidate, the user just
+    // released over it → re-dock and destroy the floating window. (Skip if the
+    // window was closed via its X in the meantime.)
+    if (redockWin_ && redockActive_ && redockWin_->open_) {
+        std::string pid = redockWin_->panelId_;
+        ctx_->dockSpace.DockPanel(pid, redockZone_, redockTargetId_);
+        Rect area = ctx_->dockSpace.GetAvailableArea();
+        if (area.size.x > 0 && area.size.y > 0) ctx_->dockSpace.ComputeLayout(area);
+        // Re-registering a builder is already done; the panel now renders in-dock.
+        redockWin_->close(); // erased by the main loop's cleanup pass
+    }
+    redockWin_ = nullptr;
+    redockActive_ = false;
 }
 
 std::vector<ViewportInfo> FluentApp::getViewports() const {
