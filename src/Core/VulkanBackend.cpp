@@ -486,7 +486,10 @@ bool VulkanBackend::CreateShaderModules() {
     textFrag   = MakeShaderModule(ShadersVK::Text_Frag,  ShadersVK::Text_FragSize);
     msdfFrag   = MakeShaderModule(ShadersVK::MSDF_Frag,  ShadersVK::MSDF_FragSize);
     imageFrag  = MakeShaderModule(ShadersVK::Image_Frag, ShadersVK::Image_FragSize);
-    return vertModule && basicFrag && textFrag && msdfFrag && imageFrag;
+    sdfVertModule = MakeShaderModule(ShadersVK::SDFRect_Vert, ShadersVK::SDFRect_VertSize);
+    sdfFrag       = MakeShaderModule(ShadersVK::SDFRect_Frag, ShadersVK::SDFRect_FragSize);
+    return vertModule && basicFrag && textFrag && msdfFrag && imageFrag &&
+           sdfVertModule && sdfFrag;
 }
 
 bool VulkanBackend::CreatePipelines() {
@@ -523,7 +526,8 @@ bool VulkanBackend::CreatePipelines() {
     pipeMSDF  = MakePipeline(msdfFrag,  layoutTex,   VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, false);
     pipeImage = MakePipeline(imageFrag, layoutTex,   VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, false);
     pipeLines = MakePipeline(basicFrag, layoutNoTex, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, wideLinesSupported);
-    return pipeBasic && pipeText && pipeMSDF && pipeImage && pipeLines;
+    pipeSDF   = MakeSDFPipeline(); // SDF uses layoutNoTex (no texture, push constants only)
+    return pipeBasic && pipeText && pipeMSDF && pipeImage && pipeLines && pipeSDF;
 }
 
 VkPipeline VulkanBackend::MakePipeline(VkShaderModule frag, VkPipelineLayout layout,
@@ -634,6 +638,117 @@ VkPipeline VulkanBackend::MakePipeline(VkShaderModule frag, VkPipelineLayout lay
     return pipe;
 }
 
+// Instanced SDF pipeline (brief 01). Two vertex bindings: binding 0 = per-vertex
+// unit quad (vec2); binding 1 = per-instance SDFInstance. Uses layoutNoTex.
+VkPipeline VulkanBackend::MakeSDFPipeline() {
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = sdfVertModule;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = sdfFrag;
+    stages[1].pName = "main";
+
+    VkVertexInputBindingDescription binds[2]{};
+    binds[0].binding = 0;
+    binds[0].stride = sizeof(float) * 2;          // aQuad
+    binds[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    binds[1].binding = 1;
+    binds[1].stride = sizeof(SDFInstance);
+    binds[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+
+    VkVertexInputAttributeDescription attrs[7]{};
+    attrs[0] = {0, 0, VK_FORMAT_R32G32_SFLOAT,       0};
+    attrs[1] = {1, 1, VK_FORMAT_R32G32_SFLOAT,       offsetof(SDFInstance, cx)};
+    attrs[2] = {2, 1, VK_FORMAT_R32G32_SFLOAT,       offsetof(SDFInstance, hx)};
+    attrs[3] = {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(SDFInstance, radius)};
+    attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(SDFInstance, fillR)};
+    attrs[5] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(SDFInstance, borderR)};
+    attrs[6] = {6, 1, VK_FORMAT_R32_SFLOAT,          offsetof(SDFInstance, revealIntensity)};
+
+    VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    vi.vertexBindingDescriptionCount = 2;
+    vi.pVertexBindingDescriptions = binds;
+    vi.vertexAttributeDescriptionCount = 7;
+    vi.pVertexAttributeDescriptions = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    vp.viewportCount = 1;
+    vp.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    rs.cullMode = VK_CULL_MODE_NONE;
+    rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rs.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    ms.rasterizationSamples = sampleCount;
+
+    VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    ds.depthTestEnable = VK_FALSE;
+    ds.depthWriteEnable = VK_FALSE;
+
+    VkPipelineColorBlendAttachmentState cba{};
+    cba.blendEnable = VK_TRUE;
+    cba.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    cba.colorBlendOp = VK_BLEND_OP_ADD;
+    cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    cba.alphaBlendOp = VK_BLEND_OP_ADD;
+    cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    cb.attachmentCount = 1;
+    cb.pAttachments = &cba;
+
+    VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynci{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dynci.dynamicStateCount = 2;
+    dynci.pDynamicStates = dynStates;
+
+    VkGraphicsPipelineCreateInfo gpci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    gpci.stageCount = 2;
+    gpci.pStages = stages;
+    gpci.pVertexInputState = &vi;
+    gpci.pInputAssemblyState = &ia;
+    gpci.pViewportState = &vp;
+    gpci.pRasterizationState = &rs;
+    gpci.pMultisampleState = &ms;
+    gpci.pDepthStencilState = &ds;
+    gpci.pColorBlendState = &cb;
+    gpci.pDynamicState = &dynci;
+    gpci.layout = layoutNoTex;
+    gpci.subpass = 0;
+
+    VkPipelineRenderingCreateInfo prci{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+    VkFormat colorFmt = colorFormat;
+    if (useDynamicRendering) {
+        prci.colorAttachmentCount    = 1;
+        prci.pColorAttachmentFormats = &colorFmt;
+        prci.depthAttachmentFormat   = depthFormat;
+        prci.stencilAttachmentFormat = stencilFormat;
+        gpci.pNext = &prci;
+        gpci.renderPass = VK_NULL_HANDLE;
+    } else {
+        gpci.renderPass = renderPass;
+    }
+
+    VkPipeline pipe = VK_NULL_HANDLE;
+    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &gpci, nullptr, &pipe) != VK_SUCCESS) {
+        Log(LogLevel::Error, "Vulkan: failed to create SDF graphics pipeline");
+        return VK_NULL_HANDLE;
+    }
+    return pipe;
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Buffers / memory
 // ───────────────────────────────────────────────────────────────────────────
@@ -676,6 +791,26 @@ bool VulkanBackend::CreateDynamicBuffers() {
                           ring[i].ebo, ring[i].eboMem)) return false;
         VK_FAIL(vkMapMemory(device, ring[i].vboMem, 0, kVertexBytesPerSlot, 0, &ring[i].vboMapped), "map vbo");
         VK_FAIL(vkMapMemory(device, ring[i].eboMem, 0, kIndexBytesPerSlot, 0, &ring[i].eboMapped), "map ebo");
+    }
+
+    // Static unit-quad geometry for the SDF pipeline (brief 01). Host-visible and
+    // filled once; tiny so the upload cost is negligible.
+    {
+        const float quadVerts[8] = {
+            -1.0f, -1.0f,   1.0f, -1.0f,   1.0f, 1.0f,   -1.0f, 1.0f
+        };
+        const uint32_t quadIdx[6] = { 0, 1, 2, 0, 2, 3 };
+        if (!CreateBuffer(sizeof(quadVerts), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, hostProps,
+                          sdfQuadVbo, sdfQuadVboMem)) return false;
+        if (!CreateBuffer(sizeof(quadIdx), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, hostProps,
+                          sdfQuadIbo, sdfQuadIboMem)) return false;
+        void* p = nullptr;
+        VK_FAIL(vkMapMemory(device, sdfQuadVboMem, 0, sizeof(quadVerts), 0, &p), "map sdf quad vbo");
+        std::memcpy(p, quadVerts, sizeof(quadVerts));
+        vkUnmapMemory(device, sdfQuadVboMem);
+        VK_FAIL(vkMapMemory(device, sdfQuadIboMem, 0, sizeof(quadIdx), 0, &p), "map sdf quad ibo");
+        std::memcpy(p, quadIdx, sizeof(quadIdx));
+        vkUnmapMemory(device, sdfQuadIboMem);
     }
     return true;
 }
@@ -1169,6 +1304,53 @@ void VulkanBackend::DrawLines(const RenderVertex* vertices, size_t vertexCount,
                projectionMatrix, Color(1, 1, 1, 1), /*isLines=*/true, width);
 }
 
+void VulkanBackend::DrawSDFInstances(const SDFInstance* instances, size_t count,
+                                     const float* projectionMatrix,
+                                     const float* revealCursor) {
+    if (!currentCmd || count == 0 || !instances) return;
+    DynBuffer& rb = ring[currentRing];
+
+    const VkDeviceSize bytes = count * sizeof(SDFInstance);
+    if (rb.vboOffset + bytes > kVertexBytesPerSlot) {
+        if (!ringOverflowWarned) {
+            Log(LogLevel::Warning, "Vulkan: vertex ring slot overflow — dropping SDF draws this frame");
+            ringOverflowWarned = true;
+        }
+        return;
+    }
+    const VkDeviceSize instLocal = rb.vboOffset;
+
+    if (srgbTarget) {
+        // Linearize the instance fill/border colors so the GPU's sRGB write-encode
+        // reproduces the authored color (parity with the vertex-color path).
+        scratchInstances.assign(instances, instances + count);
+        for (auto& s : scratchInstances) {
+            s.fillR = SrgbToLinear(s.fillR); s.fillG = SrgbToLinear(s.fillG); s.fillB = SrgbToLinear(s.fillB);
+            s.borderR = SrgbToLinear(s.borderR); s.borderG = SrgbToLinear(s.borderG); s.borderB = SrgbToLinear(s.borderB);
+        }
+        std::memcpy(static_cast<char*>(rb.vboMapped) + instLocal, scratchInstances.data(), bytes);
+    } else {
+        std::memcpy(static_cast<char*>(rb.vboMapped) + instLocal, instances, bytes);
+    }
+    rb.vboOffset = AlignUp(rb.vboOffset + bytes, 16);
+
+    vkCmdBindPipeline(currentCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeSDF);
+
+    PushConstants pc{};
+    std::memcpy(pc.projection, projectionMatrix, sizeof(pc.projection));
+    pc.pxRange = 4.0f;
+    if (revealCursor) { pc.reveal[0] = revealCursor[0]; pc.reveal[1] = revealCursor[1]; pc.reveal[2] = revealCursor[2]; }
+    vkCmdPushConstants(currentCmd, layoutNoTex, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(pc), &pc);
+
+    // Binding 0: static quad. Binding 1: per-instance data in the ring buffer.
+    VkBuffer vbos[2] = { sdfQuadVbo, rb.vbo };
+    VkDeviceSize offs[2] = { 0, instLocal };
+    vkCmdBindVertexBuffers(currentCmd, 0, 2, vbos, offs);
+    vkCmdBindIndexBuffer(currentCmd, sdfQuadIbo, 0, VK_INDEX_TYPE_UINT32);
+    vkCmdDrawIndexed(currentCmd, 6, static_cast<uint32_t>(count), 0, 0, 0);
+}
+
 void VulkanBackend::RecordDraw(ShaderType type, const RenderVertex* vertices, size_t vertexCount,
                                const unsigned int* indices, size_t indexCount,
                                void* textureHandle, const float* projectionMatrix,
@@ -1308,9 +1490,14 @@ void VulkanBackend::Shutdown() {
         ring[i] = DynBuffer{};
     }
 
+    if (sdfQuadVbo) { vkDestroyBuffer(device, sdfQuadVbo, nullptr); sdfQuadVbo = VK_NULL_HANDLE; }
+    if (sdfQuadVboMem) { vkFreeMemory(device, sdfQuadVboMem, nullptr); sdfQuadVboMem = VK_NULL_HANDLE; }
+    if (sdfQuadIbo) { vkDestroyBuffer(device, sdfQuadIbo, nullptr); sdfQuadIbo = VK_NULL_HANDLE; }
+    if (sdfQuadIboMem) { vkFreeMemory(device, sdfQuadIboMem, nullptr); sdfQuadIboMem = VK_NULL_HANDLE; }
+
     auto destroyPipe = [&](VkPipeline& p){ if (p) { vkDestroyPipeline(device, p, nullptr); p = VK_NULL_HANDLE; } };
     destroyPipe(pipeBasic); destroyPipe(pipeText); destroyPipe(pipeMSDF);
-    destroyPipe(pipeImage); destroyPipe(pipeLines);
+    destroyPipe(pipeImage); destroyPipe(pipeLines); destroyPipe(pipeSDF);
     if (layoutNoTex) { vkDestroyPipelineLayout(device, layoutNoTex, nullptr); layoutNoTex = VK_NULL_HANDLE; }
     if (layoutTex)   { vkDestroyPipelineLayout(device, layoutTex, nullptr);   layoutTex = VK_NULL_HANDLE; }
     if (texSetLayout){ vkDestroyDescriptorSetLayout(device, texSetLayout, nullptr); texSetLayout = VK_NULL_HANDLE; }
@@ -1318,6 +1505,7 @@ void VulkanBackend::Shutdown() {
     auto destroyShader = [&](VkShaderModule& m){ if (m) { vkDestroyShaderModule(device, m, nullptr); m = VK_NULL_HANDLE; } };
     destroyShader(vertModule); destroyShader(basicFrag); destroyShader(textFrag);
     destroyShader(msdfFrag); destroyShader(imageFrag);
+    destroyShader(sdfVertModule); destroyShader(sdfFrag);
 
     // Standalone-owned objects.
     if (ownsDevice) {

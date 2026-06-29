@@ -41,6 +41,11 @@ public:
     bool hasClip = false;
     float lineWidth = 1.0f;
     bool isLines = false;
+    // SDF instanced batch (brief 02). When isSDF, `instances` holds the rounded-rect
+    // instances and `reveal` carries the per-frame reveal cursor {x,y,radius} (brief 04).
+    bool isSDF = false;
+    std::vector<SDFInstance> instances;
+    float reveal[3] = {0.0f, 0.0f, 0.0f};
   };
 
   Renderer() = default;
@@ -162,6 +167,17 @@ public:
   void SetDPIScale(float scale) { dpiScale = std::max(0.5f, std::min(4.0f, scale)); }
   float GetDPIScale() const { return dpiScale; }
 
+  // Reveal highlight (brief 04). Set once per frame (e.g. from the mouse position):
+  // SDF rects whose revealIntensity>0 light up their edge by proximity to the cursor.
+  // radius<=0 disables the effect for the frame.
+  void SetRevealCursor(const Vec2& pos, float radius) {
+    revealCursor[0] = pos.x; revealCursor[1] = pos.y; revealCursor[2] = radius;
+  }
+  // Set the reveal intensity (0..1) applied to the NEXT SDF rect emitted by
+  // DrawRectFilled/DrawRect. Consumed (reset to 0) after that single rect, so a
+  // widget marks each surface it wants to react to the cursor.
+  void SetNextRevealIntensity(float intensity) { nextRevealIntensity = intensity; }
+
   // Phase C6 (eyedropper): read a single pixel from the framebuffer.
   Color ReadPixel(int x, int y);
 
@@ -252,6 +268,7 @@ private:
   bool EnsureDynamicMSDFAtlasSpace(int glyphWidth, int glyphHeight, int& outX, int& outY);
 
   // Issue 15: Helper for acrylic multi-fill optimization
+  // TODO(brief06): retirar — solo lo usa DrawRectAcrylic, que el brief 06 reescribe a SDF.
   void DrawMultipleFilledRoundedRects(const Vec2& pos, const Vec2& size, float cornerRadius,
                                        const Color* colors, int count);
 
@@ -267,12 +284,23 @@ private:
   std::vector<RenderVertex> lineVertices;
   float lineBatchWidth = 1.0f;
 
+  // SDF instance accumulator (brief 02). Flushed alongside the quad/line batches,
+  // preserving draw order via EnsureBatchState/FlushBatch.
+  std::vector<SDFInstance> sdfInstances;
+  static constexpr size_t MAX_SDF_INSTANCES = 4096;
+  // Reveal cursor for the frame {x, y, radius} (brief 04). radius<=0 disables.
+  float revealCursor[3] = {0.0f, 0.0f, 0.0f};
+  // Per-rect reveal intensity, consumed by the next DrawRectFilled/DrawRect.
+  float nextRevealIntensity = 0.0f;
+
   // Optimización: límites de batch para evitar reallocaciones grandes
   static constexpr size_t MAX_QUAD_VERTICES = 10000; // ~2500 quads
   static constexpr size_t MAX_QUAD_INDICES = 15000;  // 6 indices por quad
   static constexpr size_t MAX_LINE_VERTICES = 5000;  // ~2500 líneas
 
   // Perf 3.1: Pre-computed trig lookup table for rounded rects (8 segments per corner)
+  // TODO(brief06): retirar cosTable/sinTable cuando DrawMultipleFilledRoundedRects (su
+  // ultimo uso, via DrawRectAcrylic) pase a SDF en el brief 06.
   static constexpr int CORNER_SEGMENTS = 8;
   static constexpr int CORNER_POINTS = CORNER_SEGMENTS + 1; // 9 points per quarter
   float cosTable[CORNER_POINTS];

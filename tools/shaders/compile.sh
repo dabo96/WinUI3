@@ -20,11 +20,13 @@ OUT="$DIR/../../include/core/EmbeddedShadersVulkan.h"
 
 compile() { "$GLSLC" -O "$1" -o "$2" -mfmt=c; }
 
-compile ui.vert    ui.vert.spv.txt
-compile basic.frag basic.frag.spv.txt
-compile text.frag  text.frag.spv.txt
-compile msdf.frag  msdf.frag.spv.txt
-compile image.frag image.frag.spv.txt
+compile ui.vert       ui.vert.spv.txt
+compile basic.frag    basic.frag.spv.txt
+compile text.frag     text.frag.spv.txt
+compile msdf.frag     msdf.frag.spv.txt
+compile image.frag    image.frag.spv.txt
+compile sdf_rect.vert sdf_rect.vert.spv.txt
+compile sdf_rect.frag sdf_rect.frag.spv.txt
 
 {
 cat <<'HDR'
@@ -51,11 +53,13 @@ emit() {
   echo ""
 }
 
-emit UI_Vert    ui.vert.spv.txt
-emit Basic_Frag basic.frag.spv.txt
-emit Text_Frag  text.frag.spv.txt
-emit MSDF_Frag  msdf.frag.spv.txt
-emit Image_Frag image.frag.spv.txt
+emit UI_Vert      ui.vert.spv.txt
+emit Basic_Frag   basic.frag.spv.txt
+emit Text_Frag    text.frag.spv.txt
+emit MSDF_Frag    msdf.frag.spv.txt
+emit Image_Frag   image.frag.spv.txt
+emit SDFRect_Vert sdf_rect.vert.spv.txt
+emit SDFRect_Frag sdf_rect.frag.spv.txt
 
 cat <<'FTR'
 } // namespace ShadersVK

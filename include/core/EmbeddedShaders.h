@@ -149,5 +149,119 @@ void main() {
 }
 )";
 
+// --- SDF Rounded-Rect Shaders (instanced; fill + border) ---
+// A unit quad (location 0) is instanced per widget; per-instance attributes carry
+// the rounded box parameters. The fragment shader resolves the shape analytically
+// (no tessellation). mode==1 (shadow) is added in brief 03; reveal in brief 04.
+
+const char* const SDFRectVertexShader = R"(
+#version 450 core
+layout (location = 0) in vec2 aQuad;     // unit quad in [-1,1]
+layout (location = 1) in vec2 iCenter;   // rect center (px)
+layout (location = 2) in vec2 iHalf;     // half-size (px)
+layout (location = 3) in vec4 iParams;   // radius, borderW(/blur), softness, mode
+layout (location = 4) in vec4 iFill;     // fill rgba
+layout (location = 5) in vec4 iBorder;   // border rgba
+layout (location = 6) in float iReveal;  // reveal intensity (brief 04)
+
+uniform mat4 uProjection;
+
+out vec2 vLocal;
+flat out vec2 vHalf;
+flat out float vRadius;
+flat out float vBorderW;
+flat out float vSoft;
+flat out float vMode;
+flat out vec4 vFill;
+flat out vec4 vBorder;
+flat out vec2 vCenter;   // for reveal world-space reconstruction (brief 04)
+flat out float vReveal;
+
+void main() {
+    // Expand the quad to cover border + AA (and, for shadow mode, the penumbra:
+    // iParams.y holds borderWidth for fills and blur for shadows — same field).
+    float pad = iParams.y + iParams.z + 2.0;
+    vec2 local = aQuad * (iHalf + vec2(pad));
+    vLocal   = local;
+    vHalf    = iHalf;
+    vRadius  = iParams.x;
+    vBorderW = iParams.y;
+    vSoft    = iParams.z;
+    vMode    = iParams.w;
+    vFill    = iFill;
+    vBorder  = iBorder;
+    vCenter  = iCenter;
+    vReveal  = iReveal;
+    gl_Position = uProjection * vec4(iCenter + local, 0.0, 1.0);
+}
+)";
+
+const char* const SDFRectFragmentShader = R"(
+#version 450 core
+in vec2 vLocal;
+flat in vec2 vHalf;
+flat in float vRadius;
+flat in float vBorderW;
+flat in float vSoft;
+flat in float vMode;
+flat in vec4 vFill;
+flat in vec4 vBorder;
+flat in vec2 vCenter;
+flat in float vReveal;
+
+uniform vec3 uReveal; // cursorX, cursorY, revealRadius (px). z<=0 disables (brief 04)
+
+out vec4 FragColor;
+
+float sdRoundBox(vec2 p, vec2 b, float r) {
+    vec2 q = abs(p) - b + vec2(r);
+    return min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0))) - r;
+}
+
+void main() {
+    float d = sdRoundBox(vLocal, vHalf, vRadius);
+
+    // mode == 1: drop shadow (brief 03). vBorderW aliases the penumbra (blur, px).
+    // Exponential falloff: peak at the element edge (d=0), fading outward with a
+    // soft tail. Inside the element (d<0) the fill covers it, so only d>0 matters.
+    if (vMode > 0.5) {
+        float blur = vBorderW;
+        float t = clamp(d / max(blur, 0.5), 0.0, 1.0);
+        float falloff = exp(-3.0 * t);
+        float sa = vFill.a * falloff;
+        if (sa < 0.002) discard;
+        FragColor = vec4(vFill.rgb, sa);
+        return;
+    }
+
+    float aa = max(vSoft, fwidth(d));
+    float fillCov = 1.0 - smoothstep(-aa, aa, d);
+    vec3  rgb = vFill.rgb;
+    float a   = vFill.a * fillCov;
+    if (vBorderW > 0.0) {
+        float inner = 1.0 - smoothstep(-aa, aa, d + vBorderW);
+        float borderCov = clamp(fillCov - inner, 0.0, 1.0);
+        rgb = mix(rgb, vBorder.rgb, borderCov);
+        a   = max(a, vBorder.a * borderCov);
+    }
+
+    // Reveal highlight (brief 04): the edge lights up by proximity to the cursor.
+    if (vReveal > 0.0 && uReveal.z > 0.0) {
+        vec2 fragWorld = vCenter + vLocal;
+        float dCursor = length(fragWorld - uReveal.xy);
+        float prox = 1.0 - clamp(dCursor / uReveal.z, 0.0, 1.0);
+        prox = prox * prox;                                   // soft curve
+        float edge = (1.0 - smoothstep(-aa, aa, d)) - (1.0 - smoothstep(-aa, aa, d + 1.5));
+        edge = clamp(edge, 0.0, 1.0);                          // ~1.5px edge band
+        float revealA = prox * vReveal * edge;
+        rgb = mix(rgb, vec3(1.0), revealA);
+        a   = max(a, revealA * 0.9);
+    }
+
+    if (a < 0.002) discard;
+    FragColor = vec4(rgb, a);
+}
+)";
+
 } // namespace Shaders
 } // namespace FluentUI

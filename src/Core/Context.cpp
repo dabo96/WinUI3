@@ -297,6 +297,11 @@ namespace FluentUI {
         g_ctx->widgetTree.UpdateAnimations(deltaTime);
 
         g_ctx->renderer.BeginFrame(g_ctx->style.backgroundColor);
+        // Reveal highlight (brief 04): feed the cursor position for this frame so SDF
+        // rects with revealIntensity>0 light up their edge by proximity. Default radius
+        // 120 logical px scaled by DPI.
+        g_ctx->renderer.SetRevealCursor(
+            Vec2(g_ctx->input.MouseX(), g_ctx->input.MouseY()), 120.0f * g_ctx->dpiScale);
         g_ctx->scrollConsumedThisFrame = false;
         g_ctx->mouseOverAnyWidgetLastFrame = g_ctx->mouseOverAnyWidget;
         g_ctx->mouseOverAnyWidget = false;

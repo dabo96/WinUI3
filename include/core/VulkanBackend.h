@@ -50,6 +50,9 @@ public:
                    const Color& textColor = {1, 1, 1, 1}) override;
     void DrawLines(const RenderVertex* vertices, size_t vertexCount,
                    float width, const float* projectionMatrix) override;
+    void DrawSDFInstances(const SDFInstance* instances, size_t count,
+                          const float* projectionMatrix,
+                          const float* revealCursor = nullptr) override;
 
 private:
     // ── Configuration ──────────────────────────────────────────────────
@@ -58,11 +61,14 @@ private:
     static constexpr VkDeviceSize kVertexBytesPerSlot = 4u * 1024 * 1024; // 4 MB
     static constexpr VkDeviceSize kIndexBytesPerSlot  = 1u * 1024 * 1024; // 1 MB
 
-    // 84 bytes — fits the 128-byte guaranteed push-constant range.
+    // 96 bytes — fits the 128-byte guaranteed push-constant range.
+    // reveal[3] = {cursorX, cursorY, revealRadius} (logical px) for the SDF reveal
+    // highlight (brief 04); scalar-packed in the shader to match this C layout.
     struct PushConstants {
         float projection[16];
         float textColor[4];
         float pxRange;
+        float reveal[3];
     };
 
     // ── Mode / shared state ────────────────────────────────────────────
@@ -117,6 +123,8 @@ private:
     VkShaderModule textFrag    = VK_NULL_HANDLE;
     VkShaderModule msdfFrag    = VK_NULL_HANDLE;
     VkShaderModule imageFrag   = VK_NULL_HANDLE;
+    VkShaderModule sdfVertModule = VK_NULL_HANDLE; // SDF needs its own instanced vertex input
+    VkShaderModule sdfFrag       = VK_NULL_HANDLE;
 
     VkDescriptorSetLayout texSetLayout = VK_NULL_HANDLE;
     VkPipelineLayout layoutNoTex = VK_NULL_HANDLE; // Basic, Lines
@@ -127,6 +135,15 @@ private:
     VkPipeline pipeMSDF  = VK_NULL_HANDLE;
     VkPipeline pipeImage = VK_NULL_HANDLE;
     VkPipeline pipeLines = VK_NULL_HANDLE;
+    VkPipeline pipeSDF   = VK_NULL_HANDLE; // instanced SDF rounded rect (brief 01)
+
+    // Static unit-quad geometry for the SDF pipeline (binding 0 + index buffer).
+    VkBuffer       sdfQuadVbo    = VK_NULL_HANDLE;
+    VkDeviceMemory sdfQuadVboMem = VK_NULL_HANDLE;
+    VkBuffer       sdfQuadIbo    = VK_NULL_HANDLE;
+    VkDeviceMemory sdfQuadIboMem = VK_NULL_HANDLE;
+    // Reusable scratch for sRGB-target linearization of instance colors.
+    std::vector<SDFInstance> scratchInstances;
 
     // ── Dynamic vertex/index buffers (ring) ────────────────────────────
     struct DynBuffer {
@@ -199,6 +216,7 @@ private:
     VkShaderModule MakeShaderModule(const uint32_t* code, size_t bytes);
     VkPipeline MakePipeline(VkShaderModule frag, VkPipelineLayout layout,
                             VkPrimitiveTopology topology, bool dynamicLineWidth);
+    VkPipeline MakeSDFPipeline(); // dedicated instanced vertex input (brief 01)
     uint32_t FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props) const;
     bool CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                       VkMemoryPropertyFlags props, VkBuffer& buf, VkDeviceMemory& mem);
