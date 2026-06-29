@@ -246,6 +246,15 @@ void OpenGLBackend::Shutdown() {
     if (sdfQuadEBO) { glDeleteBuffers(1, &sdfQuadEBO); sdfQuadEBO = 0; }
     if (sdfInstanceVBO) { glDeleteBuffers(1, &sdfInstanceVBO); sdfInstanceVBO = 0; }
 
+    // Acrylic / Mica resources (brief 06)
+    DestroyBlurChain();
+    if (kawaseDownProgram) { glDeleteProgram(kawaseDownProgram); kawaseDownProgram = 0; }
+    if (kawaseUpProgram) { glDeleteProgram(kawaseUpProgram); kawaseUpProgram = 0; }
+    if (acrylicCompositeProgram) { glDeleteProgram(acrylicCompositeProgram); acrylicCompositeProgram = 0; }
+    if (blurVao) { glDeleteVertexArrays(1, &blurVao); blurVao = 0; }
+    if (blurVbo) { glDeleteBuffers(1, &blurVbo); blurVbo = 0; }
+    acrylicResourcesReady = false;
+
     if (glContext && ownsGLContext) {
         SDL_GL_DestroyContext(glContext);
     }
@@ -828,6 +837,226 @@ void OpenGLBackend::RestoreState() {
     vaoIsBound = (savedState.boundVAO != 0);
 
     savedState.saved = false;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Acrylic / Mica backdrop (brief 06)
+// ───────────────────────────────────────────────────────────────────────────
+
+void OpenGLBackend::EnsureAcrylicResources() {
+    if (acrylicResourcesReady) return;
+    kawaseDownProgram = CreateShaderProgram(Shaders::BlurVertexShader, Shaders::KawaseDownFragment);
+    kawaseUpProgram   = CreateShaderProgram(Shaders::BlurVertexShader, Shaders::KawaseUpFragment);
+    acrylicCompositeProgram = CreateShaderProgram(Shaders::AcrylicCompositeVertexShader,
+                                                  Shaders::AcrylicCompositeFragmentShader);
+
+    uKawaseDownTex       = glGetUniformLocation(kawaseDownProgram, "uTex");
+    uKawaseDownHalfpixel = glGetUniformLocation(kawaseDownProgram, "uHalfpixel");
+    uKawaseUpTex         = glGetUniformLocation(kawaseUpProgram, "uTex");
+    uKawaseUpHalfpixel   = glGetUniformLocation(kawaseUpProgram, "uHalfpixel");
+
+    uCmpProjection   = glGetUniformLocation(acrylicCompositeProgram, "uProjection");
+    uCmpCenter       = glGetUniformLocation(acrylicCompositeProgram, "uCenter");
+    uCmpHalf         = glGetUniformLocation(acrylicCompositeProgram, "uHalf");
+    uCmpSoft         = glGetUniformLocation(acrylicCompositeProgram, "uSoft");
+    uCmpBlur         = glGetUniformLocation(acrylicCompositeProgram, "uBlur");
+    uCmpNoise        = glGetUniformLocation(acrylicCompositeProgram, "uNoiseTex");
+    uCmpScreenSize   = glGetUniformLocation(acrylicCompositeProgram, "uScreenSize");
+    uCmpRadius       = glGetUniformLocation(acrylicCompositeProgram, "uRadius");
+    uCmpTint         = glGetUniformLocation(acrylicCompositeProgram, "uTint");
+    uCmpTintOpacity  = glGetUniformLocation(acrylicCompositeProgram, "uTintOpacity");
+    uCmpLumOpacity   = glGetUniformLocation(acrylicCompositeProgram, "uLuminosityOpacity");
+    uCmpNoiseAmount  = glGetUniformLocation(acrylicCompositeProgram, "uNoiseAmount");
+
+    // Fullscreen quad (pos.xy, uv.xy) for the blur passes — triangle strip.
+    static const float quad[16] = {
+        -1.f, -1.f, 0.f, 0.f,
+         1.f, -1.f, 1.f, 0.f,
+        -1.f,  1.f, 0.f, 1.f,
+         1.f,  1.f, 1.f, 1.f,
+    };
+    glGenVertexArrays(1, &blurVao);
+    glGenBuffers(1, &blurVbo);
+    glBindVertexArray(blurVao);
+    glBindBuffer(GL_ARRAY_BUFFER, blurVbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    glBindVertexArray(0);
+
+    acrylicResourcesReady = true;
+}
+
+static GLuint MakeColorRT(int w, int h, GLuint& outFbo) {
+    GLuint tex = 0, fbo = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    outFbo = fbo;
+    return tex;
+}
+
+void OpenGLBackend::DestroyBlurChain() {
+    for (auto& lv : blurChain) {
+        if (lv.fbo) glDeleteFramebuffers(1, &lv.fbo);
+        if (lv.tex) glDeleteTextures(1, &lv.tex);
+    }
+    blurChain.clear();
+    if (micaCache.fbo) { glDeleteFramebuffers(1, &micaCache.fbo); micaCache.fbo = 0; }
+    if (micaCache.tex) { glDeleteTextures(1, &micaCache.tex); micaCache.tex = 0; }
+    micaCacheValid = false;
+}
+
+void OpenGLBackend::EnsureBlurChain(int fbW, int fbH, int passes) {
+    int needLevels = passes + 1; // level 0 = 1/2 res, then halve per level
+    if (blurChainFbW == fbW && blurChainFbH == fbH &&
+        static_cast<int>(blurChain.size()) >= needLevels) {
+        return; // reuse
+    }
+    DestroyBlurChain();
+    blurChain.reserve(needLevels);
+    for (int i = 0; i < needLevels; ++i) {
+        int w = std::max(1, fbW >> (i + 1));
+        int h = std::max(1, fbH >> (i + 1));
+        BlurLevel lv; lv.w = w; lv.h = h;
+        lv.tex = MakeColorRT(w, h, lv.fbo);
+        blurChain.push_back(lv);
+    }
+    blurChainFbW = fbW; blurChainFbH = fbH;
+}
+
+void OpenGLBackend::CaptureAndBlur(int fbW, int fbH, int passes) {
+    // 1. Downscale-capture the default framebuffer into level 0 (1/2 res).
+    BlurLevel& l0 = blurChain[0];
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, l0.fbo);
+    glBlitFramebuffer(0, 0, fbW, fbH, 0, 0, l0.w, l0.h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+
+    glDisable(GL_BLEND);
+    glBindVertexArray(blurVao);
+
+    // 2. Downsample chain: level[k] -> level[k+1].
+    glUseProgram(kawaseDownProgram);
+    glUniform1i(uKawaseDownTex, 0);
+    glActiveTexture(GL_TEXTURE0);
+    for (int k = 0; k < passes; ++k) {
+        BlurLevel& src = blurChain[k];
+        BlurLevel& dst = blurChain[k + 1];
+        glBindFramebuffer(GL_FRAMEBUFFER, dst.fbo);
+        glViewport(0, 0, dst.w, dst.h);
+        glBindTexture(GL_TEXTURE_2D, src.tex);
+        glUniform2f(uKawaseDownHalfpixel, 0.5f / src.w, 0.5f / src.h);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+
+    // 3. Upsample chain: level[k] -> level[k-1].
+    glUseProgram(kawaseUpProgram);
+    glUniform1i(uKawaseUpTex, 0);
+    for (int k = passes; k >= 1; --k) {
+        BlurLevel& src = blurChain[k];
+        BlurLevel& dst = blurChain[k - 1];
+        glBindFramebuffer(GL_FRAMEBUFFER, dst.fbo);
+        glViewport(0, 0, dst.w, dst.h);
+        glBindTexture(GL_TEXTURE_2D, src.tex);
+        glUniform2f(uKawaseUpHalfpixel, 0.5f / src.w, 0.5f / src.h);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+    // Final blurred backdrop now lives in blurChain[0] (1/2 res, full screen extent).
+}
+
+void OpenGLBackend::DrawAcrylicPanel(const AcrylicParams& p, const float* projectionMatrix) {
+    if (p.w <= 0.0f || p.h <= 0.0f) return;
+    EnsureAcrylicResources();
+
+    const int fbW = std::max(1, static_cast<int>(viewportSize.x));
+    const int fbH = std::max(1, static_cast<int>(viewportSize.y));
+    int passes = std::clamp(p.blurPasses, 1, 5);
+    EnsureBlurChain(fbW, fbH, passes);
+
+    // Save scissor state (EndFrame set it for the panel's clip). Blur passes must
+    // not be scissored (they fill offscreen RTs); the composite restores it.
+    GLboolean scissorWasEnabled = glIsEnabled(GL_SCISSOR_TEST);
+    GLint scBox[4]; glGetIntegerv(GL_SCISSOR_BOX, scBox);
+    glDisable(GL_SCISSOR_TEST);
+
+    GLuint blurredTex;
+    if (p.mica && micaCacheValid && micaCache.w == fbW && micaCache.h == fbH) {
+        // Mica: reuse the cached blurred backdrop (near-static).
+        blurredTex = micaCache.tex;
+    } else {
+        CaptureAndBlur(fbW, fbH, passes);
+        blurredTex = blurChain[0].tex;
+        if (p.mica) {
+            // Cache the blurred result at full-screen-relative size for reuse.
+            if (!micaCache.tex || micaCache.w != fbW || micaCache.h != fbH) {
+                if (micaCache.fbo) glDeleteFramebuffers(1, &micaCache.fbo);
+                if (micaCache.tex) glDeleteTextures(1, &micaCache.tex);
+                micaCache.tex = MakeColorRT(blurChain[0].w, blurChain[0].h, micaCache.fbo);
+                micaCache.w = fbW; micaCache.h = fbH;
+            }
+            // Copy blurChain[0] -> micaCache via blit.
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, blurChain[0].fbo);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, micaCache.fbo);
+            glBlitFramebuffer(0, 0, blurChain[0].w, blurChain[0].h,
+                              0, 0, blurChain[0].w, blurChain[0].h,
+                              GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            blurredTex = micaCache.tex;
+            micaCacheValid = true;
+        }
+    }
+
+    // Composite onto the default framebuffer over the panel rect.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, fbW, fbH);
+    if (scissorWasEnabled) {
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(scBox[0], scBox[1], scBox[2], scBox[3]);
+    }
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glUseProgram(acrylicCompositeProgram);
+    glUniformMatrix4fv(uCmpProjection, 1, GL_FALSE, projectionMatrix);
+    glUniform2f(uCmpCenter, p.x + p.w * 0.5f, p.y + p.h * 0.5f);
+    glUniform2f(uCmpHalf, p.w * 0.5f, p.h * 0.5f);
+    glUniform1f(uCmpSoft, std::max(1.0f, p.dpiScale));
+    glUniform1f(uCmpRadius, p.cornerRadius);
+    glUniform2f(uCmpScreenSize, static_cast<float>(fbW), static_cast<float>(fbH));
+    glUniform3f(uCmpTint, p.tintR, p.tintG, p.tintB);
+    glUniform1f(uCmpTintOpacity, p.tintOpacity);
+    glUniform1f(uCmpLumOpacity, p.luminosityOpacity);
+    glUniform1f(uCmpNoiseAmount, p.noiseAmount);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, blurredTex);
+    glUniform1i(uCmpBlur, 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)(uintptr_t)p.noiseTex);
+    glUniform1i(uCmpNoise, 1);
+    glActiveTexture(GL_TEXTURE0);
+
+    glBindVertexArray(blurVao);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBindVertexArray(0);
+
+    // Invalidate our state caches — we changed program/texture/VAO/FBO behind the
+    // batch renderer's back; the next DrawBatch/DrawSDFInstances rebinds everything.
+    lastBoundProgram = 0;
+    lastBoundTexture = 0;
+    vaoIsBound = false;
+    lastBoundVBO = 0;
+    lastBoundEBO = 0;
+    projectionDirty = true;
 }
 
 // Phase C6: read a single pixel from the default framebuffer.

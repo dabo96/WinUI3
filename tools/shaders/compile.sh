@@ -27,6 +27,11 @@ compile msdf.frag     msdf.frag.spv.txt
 compile image.frag    image.frag.spv.txt
 compile sdf_rect.vert sdf_rect.vert.spv.txt
 compile sdf_rect.frag sdf_rect.frag.spv.txt
+compile blur.vert     blur.vert.spv.txt
+compile kawase_down.frag kawase_down.frag.spv.txt
+compile kawase_up.frag   kawase_up.frag.spv.txt
+compile acrylic_composite.vert acrylic_composite.vert.spv.txt
+compile acrylic_composite.frag acrylic_composite.frag.spv.txt
 
 {
 cat <<'HDR'
@@ -60,6 +65,11 @@ emit MSDF_Frag    msdf.frag.spv.txt
 emit Image_Frag   image.frag.spv.txt
 emit SDFRect_Vert sdf_rect.vert.spv.txt
 emit SDFRect_Frag sdf_rect.frag.spv.txt
+emit Blur_Vert         blur.vert.spv.txt
+emit KawaseDown_Frag   kawase_down.frag.spv.txt
+emit KawaseUp_Frag     kawase_up.frag.spv.txt
+emit AcrylicComposite_Vert acrylic_composite.vert.spv.txt
+emit AcrylicComposite_Frag acrylic_composite.frag.spv.txt
 
 cat <<'FTR'
 } // namespace ShadersVK

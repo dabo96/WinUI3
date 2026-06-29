@@ -39,6 +39,10 @@ public:
                           const float* projectionMatrix,
                           const float* revealCursor = nullptr) override;
 
+    // --- Acrylic / Mica backdrop (brief 06) ---
+    bool SupportsAcrylic() const override { return true; }
+    void DrawAcrylicPanel(const AcrylicParams& params, const float* projectionMatrix) override;
+
     // --- Render Targets / FBO (Phase 5) ---
     void* CreateRenderTarget(int width, int height) override;
     void SetRenderTarget(void* target) override;
@@ -156,6 +160,35 @@ private:
     GLuint CreateShaderProgram(const char* vertexSource, const char* fragmentSource);
     void UpdateClipScissor();
     void QueryUniforms(GLuint program, ShaderUniforms& uniforms);
+
+    // --- Acrylic / Mica backdrop (brief 06) ---
+    // Blur programs + fullscreen-quad VAO, created lazily on first acrylic use.
+    GLuint kawaseDownProgram = 0;
+    GLuint kawaseUpProgram = 0;
+    GLuint acrylicCompositeProgram = 0;
+    GLuint blurVao = 0, blurVbo = 0;
+    // Cached uniform locations.
+    GLint uKawaseDownTex = -1, uKawaseDownHalfpixel = -1;
+    GLint uKawaseUpTex = -1, uKawaseUpHalfpixel = -1;
+    GLint uCmpProjection = -1, uCmpCenter = -1, uCmpHalf = -1, uCmpSoft = -1;
+    GLint uCmpBlur = -1, uCmpNoise = -1, uCmpScreenSize = -1, uCmpRadius = -1;
+    GLint uCmpTint = -1, uCmpTintOpacity = -1, uCmpLumOpacity = -1, uCmpNoiseAmount = -1;
+    bool acrylicResourcesReady = false;
+    void EnsureAcrylicResources();
+    // A ping-pong chain of half/quarter/... resolution color targets reused across
+    // panels and frames; rebuilt when the framebuffer size changes.
+    struct BlurLevel { GLuint fbo = 0; GLuint tex = 0; int w = 0, h = 0; };
+    std::vector<BlurLevel> blurChain;     // index 0 = 1/2 res, 1 = 1/4, ...
+    BlurLevel blurCapture;                // 1/2-res capture of the backdrop
+    BlurLevel micaCache;                  // cached blurred backdrop for Mica
+    int micaCacheW = 0, micaCacheH = 0;   // fb size the Mica cache was built at
+    bool micaCacheValid = false;
+    int blurChainFbW = 0, blurChainFbH = 0;
+    void EnsureBlurChain(int fbW, int fbH, int passes);
+    void DestroyBlurChain();
+    // Capture the default framebuffer (downscaled) into `blurCapture`, then run the
+    // dual-Kawase down/up passes; the final blurred image lands in `blurChain[0]`.
+    void CaptureAndBlur(int fbW, int fbH, int passes);
 };
 
 } // namespace FluentUI

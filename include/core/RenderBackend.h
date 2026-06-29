@@ -35,6 +35,27 @@ struct SDFInstance {
     float _pad0 = 0, _pad1 = 0, _pad2 = 0; // pad to 16-byte multiple (80 bytes total)
 };
 
+// Parameters for one Acrylic/Mica backdrop panel (brief 06). The backend captures
+// the backdrop behind `rect`, blurs it (dual Kawase) and composites tint +
+// luminosity + noise, masked to the rounded rect. All coordinates are logical px
+// (top-left origin), matching the ortho projection used by DrawSDFInstances.
+struct AcrylicParams {
+    float x = 0, y = 0, w = 0, h = 0;   // panel rect (logical px)
+    float cornerRadius = 0;
+    float tintR = 0, tintG = 0, tintB = 0;
+    float tintOpacity = 0.15f;          // 0..1 tint blend over the blurred backdrop
+    float luminosityOpacity = 0.85f;    // 0..1 desaturate-to-luminosity blend
+    float noiseAmount = 0.02f;          // grain strength
+    float dpiScale = 1.0f;              // AA / pixel sizing
+    int   blurPasses = 3;               // dual-Kawase iterations (≈ blur radius)
+    int   mica = 0;                     // 0 = Acrylic (live backdrop), 1 = Mica (cheap/static)
+    // Flat fallback color (premultiplied semantics not assumed). Used by the
+    // Renderer's DrawRectAcrylicFallback when the backend can't blur.
+    float fallbackR = 0, fallbackG = 0, fallbackB = 0, fallbackA = 0;
+    // Blue-noise texture handle (created by the Renderer via CreateTexture).
+    void* noiseTex = nullptr;
+};
+
 /// Objects shared by an external Vulkan engine when FluentUI renders inside its
 /// frame (the Vulkan analogue of passing an existing GL context). Pass a pointer
 /// to a *fully populated* instance as the `existingContext` argument of
@@ -143,6 +164,17 @@ public:
     virtual void DrawSDFInstances(const SDFInstance* instances, size_t count,
                                   const float* projectionMatrix,
                                   const float* revealCursor = nullptr) = 0;
+
+    // --- Acrylic / Mica backdrop (brief 06) ---
+    // True if the backend can capture+blur+composite real acrylic. When false the
+    // Renderer falls back to DrawRectAcrylicFallback (flat tinted fills).
+    virtual bool SupportsAcrylic() const { return false; }
+    // Composite one acrylic/mica panel. Called from Renderer::EndFrame at the panel's
+    // place in draw order (so everything behind it is already on the framebuffer in
+    // GL; in Vulkan the backdrop is captured at frame start — see VulkanBackend).
+    virtual void DrawAcrylicPanel(const AcrylicParams& params, const float* projectionMatrix) {
+        (void)params; (void)projectionMatrix;
+    }
 
     // --- Render Targets / FBO (Phase 5) ---
     // Returns an opaque handle to the render target

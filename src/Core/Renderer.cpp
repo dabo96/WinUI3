@@ -103,7 +103,8 @@ namespace FluentUI {
         if (ftLibrary) { FT_Done_FreeType(ftLibrary); ftLibrary = nullptr; }
         if (fontAtlasTexture && backend) backend->DeleteTexture(fontAtlasTexture);
         if (dynamicMSDFAtlasTexture && backend) backend->DeleteTexture(dynamicMSDFAtlasTexture);
-        fontAtlasTexture = nullptr; dynamicMSDFAtlasTexture = nullptr;
+        if (blueNoiseTexture && backend) backend->DeleteTexture(blueNoiseTexture);
+        fontAtlasTexture = nullptr; dynamicMSDFAtlasTexture = nullptr; blueNoiseTexture = nullptr;
         backend = nullptr;
     }
 
@@ -223,7 +224,9 @@ namespace FluentUI {
                         backend->PushClipRect(batch.clipRect.x, batch.clipRect.y, batch.clipRect.width, batch.clipRect.height);
                     }
 
-                    if (batch.isSDF) {
+                    if (batch.isAcrylic) {
+                        backend->DrawAcrylicPanel(batch.acrylic, batch.projection);
+                    } else if (batch.isSDF) {
                         const float* reveal = (batch.reveal[2] > 0.0f) ? batch.reveal : nullptr;
                         backend->DrawSDFInstances(batch.instances.data(), batch.instances.size(),
                                                   batch.projection, reveal);
@@ -303,7 +306,7 @@ namespace FluentUI {
             bool merged = false;
             if (!batches.empty()) {
                 auto& last = batches.back();
-                if (!last.isLines && !last.isSDF && last.type == type && last.texture == texture &&
+                if (!last.isLines && !last.isSDF && !last.isAcrylic && last.type == type && last.texture == texture &&
                     last.textColor.r == textColor.r && last.textColor.g == textColor.g &&
                     last.textColor.b == textColor.b && last.textColor.a == textColor.a) {
                     bool clipMatch = false;
@@ -557,86 +560,99 @@ namespace FluentUI {
         quadIndices.push_back(baseIndex + 0); quadIndices.push_back(baseIndex + 2); quadIndices.push_back(baseIndex + 3);
     }
 
-    // Issue 15: Helper that calculates perimeter once and generates geometry N times
-    // TODO(brief06): retirar — unico uso restante del tesselado de rounded-rect
-    // (cosTable/sinTable). DrawRectAcrylic, su unico llamador, pasa a SDF en brief 06.
-    void Renderer::DrawMultipleFilledRoundedRects(const Vec2& pos, const Vec2& size, float cornerRadius,
-                                                   const Color* colors, int count) {
-        // Perf 3.1: Use pre-computed trig tables
-        float cr = std::min(cornerRadius, std::min(size.x, size.y) * 0.5f);
-        float cx_left = pos.x + cr; float cx_right = pos.x + size.x - cr;
-        float cy_top = pos.y + cr; float cy_bot = pos.y + size.y - cr;
-
-        constexpr int PERIM_SIZE = CORNER_POINTS * 4;
-        Vec2 perim[PERIM_SIZE];
-        Vec2 normals[PERIM_SIZE];
-        int pi = 0;
-        for (int i = 0; i < CORNER_POINTS; ++i) {
-            normals[pi] = {sinTable[i], -cosTable[i]};
-            perim[pi++]  = {cx_right + cr * sinTable[i], cy_top - cr * cosTable[i]};
-        }
-        for (int i = 0; i < CORNER_POINTS; ++i) {
-            normals[pi] = {cosTable[i], sinTable[i]};
-            perim[pi++]  = {cx_right + cr * cosTable[i], cy_bot + cr * sinTable[i]};
-        }
-        for (int i = 0; i < CORNER_POINTS; ++i) {
-            normals[pi] = {-sinTable[i], cosTable[i]};
-            perim[pi++]  = {cx_left - cr * sinTable[i], cy_bot + cr * cosTable[i]};
-        }
-        for (int i = 0; i < CORNER_POINTS; ++i) {
-            normals[pi] = {-cosTable[i], -sinTable[i]};
-            perim[pi++]  = {cx_left - cr * cosTable[i], cy_top - cr * sinTable[i]};
-        }
-
-        EnsureBatchState(ShaderType::Basic, nullptr, Color(1,1,1,1));
-
-        float centerX = pos.x + size.x * 0.5f;
-        float centerY = pos.y + size.y * 0.5f;
-        const float AA_FRINGE = std::max(1.0f, dpiScale); // Phase A4: 1 physical pixel
-
-        for (int c = 0; c < count; ++c) {
-            const Color& color = colors[c];
-            if (quadVertices.size() + 1 + 2 * PERIM_SIZE > MAX_QUAD_VERTICES) FlushBatch();
-            unsigned int centerIdx = static_cast<unsigned int>(quadVertices.size());
-            quadVertices.push_back({centerX, centerY, color.r, color.g, color.b, color.a, 0, 0});
-            for (int i = 0; i < PERIM_SIZE; ++i)
-                quadVertices.push_back({perim[i].x, perim[i].y, color.r, color.g, color.b, color.a, 0, 0});
-            for (int i = 0; i < PERIM_SIZE; ++i)
-                quadVertices.push_back({perim[i].x + normals[i].x * AA_FRINGE, perim[i].y + normals[i].y * AA_FRINGE, color.r, color.g, color.b, 0.0f, 0, 0});
-            unsigned int innerBase = centerIdx + 1;
-            unsigned int outerBase = centerIdx + 1 + PERIM_SIZE;
-            for (int i = 0; i < PERIM_SIZE; ++i) {
-                unsigned int next = static_cast<unsigned int>((i + 1) % PERIM_SIZE);
-                quadIndices.push_back(centerIdx);
-                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
-                quadIndices.push_back(innerBase + next);
-                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
-                quadIndices.push_back(innerBase + next);
-                quadIndices.push_back(outerBase + next);
-                quadIndices.push_back(innerBase + static_cast<unsigned int>(i));
-                quadIndices.push_back(outerBase + next);
-                quadIndices.push_back(outerBase + static_cast<unsigned int>(i));
+    // Brief 06: 64x64 R8 grain texture. Pseudo-random (hash-based) — visually a fine
+    // dither, close enough to true blue noise for the subtle acrylic grain. Created
+    // lazily so non-acrylic apps never pay for it.
+    void Renderer::EnsureBlueNoise() {
+        if (blueNoiseTexture || !backend) return;
+        unsigned char data[64 * 64];
+        for (int y = 0; y < 64; ++y) {
+            for (int x = 0; x < 64; ++x) {
+                // Cheap integer hash → byte. Decorrelated enough for grain.
+                uint32_t h = static_cast<uint32_t>(x) * 374761393u +
+                             static_cast<uint32_t>(y) * 668265263u;
+                h = (h ^ (h >> 13)) * 1274126177u;
+                data[y * 64 + x] = static_cast<unsigned char>(h >> 24);
             }
         }
+        blueNoiseTexture = backend->CreateTexture(64, 64, data, /*alphaOnly=*/true);
     }
 
-    void Renderer::DrawRectAcrylic(const Vec2& pos, const Vec2& size, const Color& tintColor, float cornerRadius, float opacity, float blurAmount) {
+    // Brief 06: record a deferred acrylic/mica op into the layer batch list (in draw
+    // order). The actual capture+blur+composite runs in EndFrame via the backend, so
+    // everything drawn behind the panel is already on the framebuffer (GL).
+    void Renderer::EmitAcrylicOp(const Vec2& pos, const Vec2& size, const Color& tintColor,
+                                 float cornerRadius, float opacity, float blurAmount, bool mica) {
+        if (size.x <= 0.0f || size.y <= 0.0f) return;
+
+        // No real-blur backend → flat fallback (keeps the panel readable everywhere).
+        if (!backend || !backend->SupportsAcrylic()) {
+            DrawRectAcrylicFallback(pos, size, tintColor, cornerRadius, opacity);
+            return;
+        }
+
+        EnsureBlueNoise();
+        FlushBatch(); // close all prior content into batches so it's behind the panel
+
+        AcrylicParams p{};
+        p.x = pos.x; p.y = pos.y; p.w = size.x; p.h = size.y;
+        p.cornerRadius = std::clamp(cornerRadius, 0.0f, std::min(size.x, size.y) * 0.5f);
+        p.tintR = tintColor.r; p.tintG = tintColor.g; p.tintB = tintColor.b;
+        p.dpiScale = dpiScale;
+        p.noiseTex = blueNoiseTexture;
+        if (mica) {
+            // Stronger tint, near-static, slightly wider blur (cheap: backend caches it).
+            p.tintOpacity = std::clamp(0.35f + 0.25f * opacity, 0.0f, 1.0f);
+            p.luminosityOpacity = 1.0f;
+            p.noiseAmount = 0.02f;
+            p.blurPasses = 4;
+            p.mica = 1;
+        } else {
+            p.tintOpacity = std::clamp(0.10f + 0.10f * opacity, 0.0f, 1.0f);
+            p.luminosityOpacity = 0.85f;
+            p.noiseAmount = 0.03f;
+            p.blurPasses = (blurAmount > 0.0f)
+                         ? std::clamp(static_cast<int>(blurAmount / 10.0f + 0.5f), 1, 5)
+                         : 3;
+            p.mica = 0;
+        }
+        // Flat fallback color (used only if the backend bails mid-frame): the tint.
+        p.fallbackR = tintColor.r; p.fallbackG = tintColor.g; p.fallbackB = tintColor.b;
+        p.fallbackA = std::clamp(opacity, 0.0f, 1.0f);
+
+        RenderBatch batch;
+        batch.isAcrylic = true;
+        batch.acrylic = p;
+        memcpy(batch.projection, cachedProjection, 16 * sizeof(float));
+        if (!clipStack.empty()) { batch.clipRect = clipStack.back(); batch.hasClip = true; }
+        else                    { batch.hasClip = false; }
+        layerBatches[(int)currentLayer].push_back(std::move(batch));
+    }
+
+    void Renderer::DrawRectAcrylic(const Vec2& pos, const Vec2& size, const Color& tintColor,
+                                   float cornerRadius, float opacity, float blurAmount) {
+        EmitAcrylicOp(pos, size, tintColor, cornerRadius, opacity, blurAmount, /*mica=*/false);
+    }
+
+    void Renderer::DrawRectMica(const Vec2& pos, const Vec2& size, const Color& tintColor,
+                                float cornerRadius, float opacity) {
+        EmitAcrylicOp(pos, size, tintColor, cornerRadius, opacity, /*blurAmount=*/0.0f, /*mica=*/true);
+    }
+
+    // Flat tinted "fake acrylic" — the pre-brief-06 look, kept as a fallback for
+    // backends that can't blur (e.g. Vulkan shared mode). Uses SDF fills (DrawRectFilled
+    // handles rounded corners analytically), so no tessellation tables are needed.
+    void Renderer::DrawRectAcrylicFallback(const Vec2& pos, const Vec2& size, const Color& tintColor,
+                                           float cornerRadius, float opacity) {
         bool isDark = (tintColor.r + tintColor.g + tintColor.b) / 3.0f < 0.5f;
         Color base = isDark ? Color(0.1f, 0.1f, 0.15f, opacity * 0.5f) : Color(0.95f, 0.95f, 0.98f, opacity * 0.4f);
         Color tint = Color(tintColor.r, tintColor.g, tintColor.b, opacity * 0.08f);
         Color acrylic = isDark ? Color(tintColor.r*0.7f+0.2f, tintColor.g*0.7f+0.2f, tintColor.b*0.7f+0.25f, opacity*0.75f)
                                : Color(tintColor.r*0.3f+0.7f, tintColor.g*0.3f+0.7f, tintColor.b*0.7f+0.72f, opacity*0.8f);
-
-        // Issue 15: For rounded corners, calculate perimeter once and draw 3 fills
-        if (cornerRadius > 0.0f) {
-            Color colors[3] = { base, tint, acrylic };
-            DrawMultipleFilledRoundedRects(pos, size, cornerRadius, colors, 3);
-            DrawRect(pos, size, isDark ? Color(1,1,1,opacity*0.15f) : Color(0,0,0,opacity*0.1f), cornerRadius);
-        } else {
-            DrawRectFilled(pos, size, base, 0.0f);
-            DrawRectFilled(pos, size, tint, 0.0f);
-            DrawRectFilled(pos, size, acrylic, 0.0f);
-        }
+        DrawRectFilled(pos, size, base, cornerRadius);
+        DrawRectFilled(pos, size, tint, cornerRadius);
+        DrawRectFilled(pos, size, acrylic, cornerRadius);
+        DrawRect(pos, size, isDark ? Color(1,1,1,opacity*0.15f) : Color(0,0,0,opacity*0.1f), cornerRadius);
     }
 
     void Renderer::DrawCircle(const Vec2& center, float radius, const Color& color, bool filled) {

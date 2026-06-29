@@ -54,6 +54,24 @@ public:
                           const float* projectionMatrix,
                           const float* revealCursor = nullptr) override;
 
+    // --- Acrylic / Mica backdrop (brief 06) ---
+    // Intentionally NOT supported yet → the Renderer uses DrawRectAcrylicFallback
+    // (flat tinted fills) on Vulkan. Real GPU blur needs to capture the backdrop,
+    // which is fundamentally incompatible with the brief-05 frame model: the main
+    // color pass is active across ALL UI draws (standalone begins the swapchain pass
+    // in BeginFrame; shared mode is inside the engine's pass), and you cannot sample
+    // an attachment while its pass is recording/active. The validated path for a
+    // follow-up is: copy the swapchain image to a persistent half-res "backdrop"
+    // image at EndFrame (after vkCmdEndRenderPass, before present, via a TRANSFER_SRC
+    // barrier + blit), then at the NEXT BeginFrame blur that stable image (dual
+    // Kawase) on a transient, fence-synced command buffer into offscreen RTs, and
+    // composite during the main pass with the (already-compiled) blur/composite
+    // pipelines — ShadersVK::Blur_Vert / KawaseDown_Frag / KawaseUp_Frag /
+    // AcrylicComposite_Vert / AcrylicComposite_Frag. This is a 1-frame-stale backdrop
+    // (fine for Acrylic/Mica) and must be checked with the validation layers, so it is
+    // deliberately deferred rather than shipped unvalidated.
+    bool SupportsAcrylic() const override { return false; }
+
     // --- Render targets / SaveState (brief 05) ---
     void* CreateRenderTarget(int width, int height) override;
     void  SetRenderTarget(void* target) override;
