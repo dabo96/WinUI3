@@ -2,6 +2,7 @@
 #include "UI/WidgetHelpers.h"
 #include "UI/Icons.h"
 #include "Theme/FluentTheme.h"
+#include "Theme/Material.h"
 #include "core/Animation.h"
 #include "core/Context.h"
 #include "core/Renderer.h"
@@ -181,18 +182,22 @@ bool BeginPanel(const std::string &id, uint32_t iconCodepoint, const Vec2 &desir
                     state.position.y + drawSize.y > 0 && state.position.y < viewportSize.y);
   
   if (isVisible) {
+    // Brief 07: the panel/card body (fill, corner, elevation) comes from a
+    // data-driven material instead of reading PanelStyle fields ad hoc. Identical
+    // result to before (z=Card, fill=panel.background, radius=panel.cornerRadius).
+    FluentMaterial panelMat = ResolvePanelMaterial(panelStyle, WidgetState::Rest);
     // Dibujo del panel
     if (!state.minimized && panelStyle.shadowOpacity > 0.0f) {
       // Sombra por elevación: un panel/card flota en z=Card. shadowOpacity del
       // tema actúa de interruptor (los temas "flat" lo ponen a 0).
       ctx->renderer.DrawElevationShadow(state.position, drawSize,
-                                        panelStyle.cornerRadius, Elevation::Z::Card);
+                                        panelMat.radius, panelMat.elevationZ);
     }
-    Color bg = panelStyle.background;
-    if (state.useAcrylic) ctx->renderer.DrawRectAcrylic(state.position, drawSize, bg, panelStyle.cornerRadius, state.acrylicOpacity);
-    else ctx->renderer.DrawRectFilled(state.position, drawSize, bg, panelStyle.cornerRadius);
-    
-    ctx->renderer.DrawRectFilled(state.position, titleSize, panelStyle.headerBackground, panelStyle.cornerRadius);
+    Color bg = panelMat.fill;
+    if (state.useAcrylic) ctx->renderer.DrawRectAcrylic(state.position, drawSize, bg, panelMat.radius, state.acrylicOpacity);
+    else ctx->renderer.DrawRectFilled(state.position, drawSize, bg, panelMat.radius);
+
+    ctx->renderer.DrawRectFilled(state.position, titleSize, panelStyle.headerBackground, panelMat.radius);
     {
       float titleIconSize = panelStyle.headerText.fontSize;
       float titleIconGap = 6.0f;

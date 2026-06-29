@@ -1,6 +1,7 @@
 #include "UI/Widgets.h"
 #include "UI/WidgetHelpers.h"
 #include "Theme/FluentTheme.h"
+#include "Theme/Material.h"
 #include "core/Animation.h"
 #include "core/Context.h"
 #include "core/Renderer.h"
@@ -268,6 +269,17 @@ bool Button(const std::string &label, uint32_t iconCodepoint, const Vec2 &size, 
     return state.normal;
   };
 
+  // Brief 07: source the button surface (fill, border, corner, elevation, reveal)
+  // from a data-driven material instead of ad-hoc maths. ResolveButtonMaterial reads
+  // the EFFECTIVE button style so push/pop style stacks still apply; the result is
+  // identical to the previous inline logic (regression-free parity). Foreground/text
+  // color is not part of the surface material and keeps coming from buttonStyle.
+  WidgetState btnState = !enabled ? WidgetState::Disabled
+                       : pressed  ? WidgetState::Pressed
+                       : hover    ? WidgetState::Hover
+                                  : WidgetState::Rest;
+  FluentMaterial btnMat = ResolveButtonMaterial(buttonStyle, btnState);
+
   // Perf 1.2: Register animation slots for GC tracking (only widgets that use animations)
   RegisterAnimSlots(buttonId);
 
@@ -278,21 +290,21 @@ bool Button(const std::string &label, uint32_t iconCodepoint, const Vec2 &size, 
 
   // Inicializar animaciones si es necesario (primera vez)
   if (!bgAnim.IsInitialized()) {
-    bgAnim.SetImmediate(getTargetColor(buttonStyle.background));
+    bgAnim.SetImmediate(btnMat.fill);
   }
   if (!fgAnim.IsInitialized()) {
     fgAnim.SetImmediate(getTargetColor(buttonStyle.foreground));
   }
   if (!borderAnim.IsInitialized()) {
-    borderAnim.SetImmediate(getTargetColor(buttonStyle.border));
+    borderAnim.SetImmediate(btnMat.border);
   }
 
-  // Actualizar objetivos de animación
-  bgAnim.SetTarget(getTargetColor(buttonStyle.background), 0.2f,
+  // Actualizar objetivos de animación (fill/border desde el material; fg via Style)
+  bgAnim.SetTarget(btnMat.fill, 0.2f,
                    Easing::EaseOutCubic);
   fgAnim.SetTarget(getTargetColor(buttonStyle.foreground), 0.2f,
                    Easing::EaseOutCubic);
-  borderAnim.SetTarget(getTargetColor(buttonStyle.border), 0.2f,
+  borderAnim.SetTarget(btnMat.border, 0.2f,
                        Easing::EaseOutCubic);
 
   // Perf 2.2: Notify context of active animations
@@ -308,32 +320,23 @@ bool Button(const std::string &label, uint32_t iconCodepoint, const Vec2 &size, 
   // Viewport culling: skip drawing if button is completely off-screen
   if (IsRectInViewport(ctx, btnPos, btnSize)) {
     if (buttonStyle.shadowOpacity > 0.0f) {
-      // Sombra por elevación (z) reactiva al estado: en REPOSO el botón es plano
-      // (z=ButtonRest=0, sin sombra) para que se vea igual en claro y oscuro; la
-      // sombra aparece al pasar el ratón (ButtonHover) y se mantiene, algo más
-      // hundida, al presionar (ButtonPressed); deshabilitado queda plano.
+      // Sombra por elevación (z) reactiva al estado, resuelta por el material
+      // (rest=plano, hover elevado, pressed algo hundido, disabled plano).
       // shadowOpacity del tema actúa de interruptor (los temas "flat" lo ponen a 0).
-      float z = !enabled ? 0.0f
-              : pressed  ? Elevation::Z::ButtonPressed
-              : hover    ? Elevation::Z::ButtonHover
-                         : Elevation::Z::ButtonRest;
-      ctx->renderer.DrawElevationShadow(btnPos, btnSize, buttonStyle.cornerRadius, z);
+      ctx->renderer.DrawElevationShadow(btnPos, btnSize, btnMat.radius, btnMat.elevationZ);
     }
 
     if (hasFocus && enabled) {
-      DrawFocusRing(ctx, btnPos, btnSize, buttonStyle.cornerRadius);
+      DrawFocusRing(ctx, btnPos, btnSize, btnMat.radius);
     }
 
     // Reveal highlight (brief 04): enabled buttons react to the nearby cursor across
-    // their whole surface (Fluent's "light follows the pointer"), not only on direct
-    // hover. The fill instance carries the edge reveal; intensity is consumed by the
-    // next DrawRect* call.
-    ctx->renderer.SetNextRevealIntensity(enabled ? 1.0f : 0.0f);
-    ctx->renderer.DrawRectFilled(btnPos, btnSize, bgColor,
-                                 buttonStyle.cornerRadius);
-    if (buttonStyle.borderWidth > 0.0f) {
-      ctx->renderer.DrawRect(btnPos, btnSize, borderColor,
-                             buttonStyle.cornerRadius);
+    // their whole surface. The material carries the intensity; consumed by the next
+    // DrawRect* call.
+    ctx->renderer.SetNextRevealIntensity(btnMat.revealIntensity);
+    ctx->renderer.DrawRectFilled(btnPos, btnSize, bgColor, btnMat.radius);
+    if (btnMat.borderWidth > 0.0f) {
+      ctx->renderer.DrawRect(btnPos, btnSize, borderColor, btnMat.radius);
     }
 
     Vec2 contentPos(btnPos.x + buttonStyle.padding.x,
