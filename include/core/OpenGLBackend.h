@@ -35,6 +35,10 @@ public:
     void DrawLines(const RenderVertex* vertices, size_t vertexCount,
                    float width, const float* projectionMatrix) override;
 
+    void DrawSDFInstances(const SDFInstance* instances, size_t count,
+                          const float* projectionMatrix,
+                          const float* revealCursor = nullptr) override;
+
     // --- Render Targets / FBO (Phase 5) ---
     void* CreateRenderTarget(int width, int height) override;
     void SetRenderTarget(void* target) override;
@@ -56,7 +60,12 @@ private:
     GLuint textShaderProgram = 0;
     GLuint msdfShaderProgram = 0;
     GLuint imageShaderProgram = 0;
+    GLuint sdfRectProgram = 0;
     GLuint vao = 0, vbo = 0, ebo = 0;
+    // SDF instanced pipeline (brief 01): dedicated VAO with a static unit quad +
+    // a dynamic per-instance buffer.
+    GLuint sdfVao = 0, sdfQuadVBO = 0, sdfQuadEBO = 0, sdfInstanceVBO = 0;
+    size_t sdfInstanceCapacity = 0;
     Vec2 viewportSize = {800.0f, 600.0f};
 
     // Issue 3: Cached uniform locations
@@ -65,11 +74,13 @@ private:
         GLint textColor = -1;
         GLint pxRange = -1;
         GLint texture = -1;
+        GLint reveal = -1; // uReveal (SDF reveal cursor, brief 04)
     };
     ShaderUniforms basicUniforms;
     ShaderUniforms textUniforms;
     ShaderUniforms msdfUniforms;
     ShaderUniforms imageUniforms;
+    ShaderUniforms sdfRectUniforms;
 
     // Issue 2: Pre-allocated VBO/EBO capacity
     size_t vboCapacity = 0;

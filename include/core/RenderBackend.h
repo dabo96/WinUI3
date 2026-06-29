@@ -12,7 +12,27 @@ enum class ShaderType {
     Basic,      // Simple quads/lines
     Text,       // Bitmap text (Red channel only)
     MSDF,       // Multi-channel Signed Distance Field text
-    Image       // Textured quad (full RGBA sampling with tint)
+    Image,      // Textured quad (full RGBA sampling with tint)
+    SDFRect     // Instanced signed-distance-field rounded rect (fill/border/shadow/reveal)
+};
+
+// Per-widget instance for the SDF rounded-rect pipeline (briefs 01-04). One quad
+// is instanced per entry; the fragment shader resolves the rounded box analytically.
+// Layout is std140-friendly (contiguous floats) and identical on GL and Vulkan;
+// attribute offsets are taken via offsetof so the struct is the single source of
+// truth. See 00_INDEX.md.
+struct SDFInstance {
+    float cx = 0, cy = 0;            // rect center (logical px)
+    float hx = 0, hy = 0;            // half-size (px), border/AA excluded
+    float radius = 0;               // corner radius (px)
+    float borderWidth = 0;          // border thickness (px); reused as blur when mode==1
+    float softness = 1;             // AA width (px); typically max(1, dpiScale)
+    float mode = 0;                 // 0=fill+border, 1=shadow (brief 03), 2=acrylic-mask (brief 06)
+    float fillR = 0, fillG = 0, fillB = 0, fillA = 0;
+    float borderR = 0, borderG = 0, borderB = 0, borderA = 0;
+    // Reveal highlight (brief 04). 0 = no effect.
+    float revealIntensity = 0;
+    float _pad0 = 0, _pad1 = 0, _pad2 = 0; // pad to 16-byte multiple (80 bytes total)
 };
 
 /// Objects shared by an external Vulkan engine when FluentUI renders inside its
@@ -113,6 +133,16 @@ public:
     // Special case for lines because of line width
     virtual void DrawLines(const RenderVertex* vertices, size_t vertexCount,
                            float width, const float* projectionMatrix) = 0;
+
+    // Draw N rounded-rect SDF instances in a single instanced draw call. The unit
+    // quad ([-1,-1]..[1,1], 6 indices) is provided internally by the backend; the
+    // caller only supplies the per-widget instances. projectionMatrix is the same
+    // ortho matrix used by DrawBatch.
+    //   revealCursor: optional pointer to vec3 {cursorX, cursorY, revealRadius} in
+    //   logical px (brief 04). Pass nullptr (or radius<=0) to disable the reveal.
+    virtual void DrawSDFInstances(const SDFInstance* instances, size_t count,
+                                  const float* projectionMatrix,
+                                  const float* revealCursor = nullptr) = 0;
 
     // --- Render Targets / FBO (Phase 5) ---
     // Returns an opaque handle to the render target

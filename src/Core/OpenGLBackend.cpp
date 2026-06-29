@@ -16,6 +16,7 @@ void OpenGLBackend::QueryUniforms(GLuint program, ShaderUniforms& uniforms) {
     uniforms.textColor = glGetUniformLocation(program, "uTextColor");
     uniforms.pxRange = glGetUniformLocation(program, "pxRange");
     uniforms.texture = glGetUniformLocation(program, "uTexture");
+    uniforms.reveal = glGetUniformLocation(program, "uReveal");
 }
 
 bool OpenGLBackend::Init(void* windowHandle, void* existingGLContext) {
@@ -56,12 +57,14 @@ bool OpenGLBackend::Init(void* windowHandle, void* existingGLContext) {
     textShaderProgram = CreateShaderProgram(Shaders::TextVertexShader, Shaders::TextFragmentShader);
     msdfShaderProgram = CreateShaderProgram(Shaders::MSDFVertexShader, Shaders::MSDFFragmentShader);
     imageShaderProgram = CreateShaderProgram(Shaders::ImageVertexShader, Shaders::ImageFragmentShader);
+    sdfRectProgram = CreateShaderProgram(Shaders::SDFRectVertexShader, Shaders::SDFRectFragmentShader);
 
     // Issue 3: Cache uniform locations once after shader creation
     QueryUniforms(shaderProgram, basicUniforms);
     QueryUniforms(textShaderProgram, textUniforms);
     QueryUniforms(msdfShaderProgram, msdfUniforms);
     QueryUniforms(imageShaderProgram, imageUniforms);
+    QueryUniforms(sdfRectProgram, sdfRectUniforms);
 
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
@@ -89,6 +92,57 @@ bool OpenGLBackend::Init(void* windowHandle, void* existingGLContext) {
 
     glBindVertexArray(0);
     vaoIsBound = false;
+
+    // --- SDF instanced pipeline (brief 01) ---
+    // Dedicated VAO: attribute 0 is the static unit quad (divisor 0); attributes
+    // 1..6 are per-instance SDFInstance fields (divisor 1).
+    {
+        static const float quadVerts[8] = {
+            -1.0f, -1.0f,   1.0f, -1.0f,   1.0f, 1.0f,   -1.0f, 1.0f
+        };
+        static const unsigned int quadIdx[6] = { 0, 1, 2, 0, 2, 3 };
+
+        glGenVertexArrays(1, &sdfVao);
+        glGenBuffers(1, &sdfQuadVBO);
+        glGenBuffers(1, &sdfQuadEBO);
+        glGenBuffers(1, &sdfInstanceVBO);
+
+        glBindVertexArray(sdfVao);
+
+        glBindBuffer(GL_ARRAY_BUFFER, sdfQuadVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(quadVerts), quadVerts, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        glVertexAttribDivisor(0, 0);
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sdfQuadEBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(quadIdx), quadIdx, GL_STATIC_DRAW);
+
+        glBindBuffer(GL_ARRAY_BUFFER, sdfInstanceVBO);
+        sdfInstanceCapacity = 256 * sizeof(SDFInstance);
+        glBufferData(GL_ARRAY_BUFFER, sdfInstanceCapacity, nullptr, GL_DYNAMIC_DRAW);
+        const GLsizei stride = sizeof(SDFInstance);
+        // loc 1: iCenter (cx,cy)
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(SDFInstance, cx));
+        glEnableVertexAttribArray(1); glVertexAttribDivisor(1, 1);
+        // loc 2: iHalf (hx,hy)
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(SDFInstance, hx));
+        glEnableVertexAttribArray(2); glVertexAttribDivisor(2, 1);
+        // loc 3: iParams (radius,borderWidth,softness,mode)
+        glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(SDFInstance, radius));
+        glEnableVertexAttribArray(3); glVertexAttribDivisor(3, 1);
+        // loc 4: iFill (rgba)
+        glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(SDFInstance, fillR));
+        glEnableVertexAttribArray(4); glVertexAttribDivisor(4, 1);
+        // loc 5: iBorder (rgba)
+        glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(SDFInstance, borderR));
+        glEnableVertexAttribArray(5); glVertexAttribDivisor(5, 1);
+        // loc 6: iReveal (revealIntensity) — brief 04
+        glVertexAttribPointer(6, 1, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(SDFInstance, revealIntensity));
+        glEnableVertexAttribArray(6); glVertexAttribDivisor(6, 1);
+
+        glBindVertexArray(0);
+    }
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -183,9 +237,14 @@ void OpenGLBackend::Shutdown() {
     if (textShaderProgram) { glDeleteProgram(textShaderProgram); textShaderProgram = 0; }
     if (msdfShaderProgram) { glDeleteProgram(msdfShaderProgram); msdfShaderProgram = 0; }
     if (imageShaderProgram) { glDeleteProgram(imageShaderProgram); imageShaderProgram = 0; }
+    if (sdfRectProgram) { glDeleteProgram(sdfRectProgram); sdfRectProgram = 0; }
     if (vao) { glDeleteVertexArrays(1, &vao); vao = 0; }
     if (vbo) { glDeleteBuffers(1, &vbo); vbo = 0; }
     if (ebo) { glDeleteBuffers(1, &ebo); ebo = 0; }
+    if (sdfVao) { glDeleteVertexArrays(1, &sdfVao); sdfVao = 0; }
+    if (sdfQuadVBO) { glDeleteBuffers(1, &sdfQuadVBO); sdfQuadVBO = 0; }
+    if (sdfQuadEBO) { glDeleteBuffers(1, &sdfQuadEBO); sdfQuadEBO = 0; }
+    if (sdfInstanceVBO) { glDeleteBuffers(1, &sdfInstanceVBO); sdfInstanceVBO = 0; }
 
     if (glContext && ownsGLContext) {
         SDL_GL_DestroyContext(glContext);
@@ -558,6 +617,56 @@ void OpenGLBackend::DrawLines(const RenderVertex* vertices, size_t vertexCount,
 
     glLineWidth(1.0f);
     // Issue 4: Don't unbind VAO/program
+}
+
+void OpenGLBackend::DrawSDFInstances(const SDFInstance* instances, size_t count,
+                                     const float* projectionMatrix,
+                                     const float* revealCursor) {
+    if (count == 0 || !instances) return;
+
+    // Bind the SDF program (respect the program cache).
+    if (lastBoundProgram != sdfRectProgram) {
+        glUseProgram(sdfRectProgram);
+        lastBoundProgram = sdfRectProgram;
+        projectionDirty = true; // force projection re-upload after a program switch
+    }
+
+    // Upload projection (reuse the projectionDirty cache pattern).
+    if (sdfRectUniforms.projection != -1) {
+        if (projectionDirty || std::memcmp(lastProjection, projectionMatrix, 16 * sizeof(float)) != 0) {
+            glUniformMatrix4fv(sdfRectUniforms.projection, 1, GL_FALSE, projectionMatrix);
+            std::memcpy(lastProjection, projectionMatrix, 16 * sizeof(float));
+            projectionDirty = false;
+        }
+    }
+
+    // Reveal cursor (brief 04). Uploaded per draw; cheap and the value can change
+    // each frame. {0,0,0} (radius 0) disables the effect in the shader.
+    if (sdfRectUniforms.reveal != -1) {
+        if (revealCursor) glUniform3f(sdfRectUniforms.reveal, revealCursor[0], revealCursor[1], revealCursor[2]);
+        else              glUniform3f(sdfRectUniforms.reveal, 0.0f, 0.0f, 0.0f);
+    }
+
+    // The SDF VAO carries its own quad/instance buffer bindings; binding it sets the
+    // current ARRAY_BUFFER/ELEMENT_ARRAY_BUFFER, so invalidate the quad-path caches.
+    glBindVertexArray(sdfVao);
+    vaoIsBound = false;       // quad path must rebind its own VAO afterwards
+    lastBoundVBO = 0;
+    lastBoundEBO = 0;
+
+    // Stream the instances into the dynamic instance buffer.
+    size_t needed = count * sizeof(SDFInstance);
+    glBindBuffer(GL_ARRAY_BUFFER, sdfInstanceVBO);
+    if (needed > sdfInstanceCapacity) {
+        sdfInstanceCapacity = needed * 2;
+        glBufferData(GL_ARRAY_BUFFER, sdfInstanceCapacity, nullptr, GL_DYNAMIC_DRAW);
+    }
+    glBufferSubData(GL_ARRAY_BUFFER, 0, needed, instances);
+
+    glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0, static_cast<GLsizei>(count));
+
+    // Leave the default quad VAO unbound; the next DrawBatch rebinds `vao`.
+    glBindVertexArray(0);
 }
 
 GLuint OpenGLBackend::CompileShader(GLenum type, const char* source) {
