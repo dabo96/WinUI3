@@ -46,6 +46,10 @@ public:
     bool isSDF = false;
     std::vector<SDFInstance> instances;
     float reveal[3] = {0.0f, 0.0f, 0.0f};
+    // Acrylic/Mica deferred op (brief 06). Recorded in draw order; executed in
+    // EndFrame so the backend can capture+blur the backdrop drawn before it.
+    bool isAcrylic = false;
+    AcrylicParams acrylic;
   };
 
   Renderer() = default;
@@ -95,8 +99,17 @@ public:
   void DrawRectGradient(const Vec2 &pos, const Vec2 &size,
                         const Color &topLeft, const Color &topRight,
                         const Color &bottomLeft, const Color &bottomRight);
+  // Acrylic material (brief 06): captures the backdrop behind the panel, blurs it
+  // (dual Kawase) and composites tint + luminosity + noise, masked to the rounded
+  // rect. Real GPU blur when the backend SupportsAcrylic(); otherwise a flat tinted
+  // fallback (DrawRectAcrylicFallback). Use for flyouts / dialogs (live backdrop).
   void DrawRectAcrylic(const Vec2 &pos, const Vec2 &size, const Color &tintColor,
                        float cornerRadius = 0.0f, float opacity = 0.8f, float blurAmount = 0.0f);
+  // Mica material (brief 06): a cheaper, near-static variant — backdrop is blurred
+  // once and reused (refreshed on resize), with a stronger tint. Use for window
+  // backgrounds / sidebars.
+  void DrawRectMica(const Vec2 &pos, const Vec2 &size, const Color &tintColor,
+                    float cornerRadius = 0.0f, float opacity = 0.8f);
   void DrawLine(const Vec2 &start, const Vec2 &end, const Color &color,
                 float width = 1.0f);
   void DrawCircle(const Vec2 &center, float radius, const Color &color,
@@ -267,10 +280,17 @@ private:
   bool EnsureAtlasSpace(int glyphWidth, int glyphHeight, int& outX, int& outY);
   bool EnsureDynamicMSDFAtlasSpace(int glyphWidth, int glyphHeight, int& outX, int& outY);
 
-  // Issue 15: Helper for acrylic multi-fill optimization
-  // TODO(brief06): retirar — solo lo usa DrawRectAcrylic, que el brief 06 reescribe a SDF.
-  void DrawMultipleFilledRoundedRects(const Vec2& pos, const Vec2& size, float cornerRadius,
-                                       const Color* colors, int count);
+  // Brief 06: flat tinted fallback for Acrylic/Mica when the backend cannot blur
+  // (e.g. Vulkan shared mode, or no render targets). This is the old "fake acrylic"
+  // look: a few stacked translucent SDF fills + a hairline border.
+  void DrawRectAcrylicFallback(const Vec2& pos, const Vec2& size, const Color& tintColor,
+                               float cornerRadius, float opacity);
+  // Brief 06: build the AcrylicParams and record a deferred acrylic/mica op.
+  void EmitAcrylicOp(const Vec2& pos, const Vec2& size, const Color& tintColor,
+                     float cornerRadius, float opacity, float blurAmount, bool mica);
+  // Blue-noise grain texture (64x64, R8). Lazily created on first acrylic use.
+  void* blueNoiseTexture = nullptr;
+  void EnsureBlueNoise();
 
   // Phase A1: Path state and fan-with-fringe emitter (Basic shader, untextured)
   std::vector<Vec2> pathPoints;
@@ -298,9 +318,10 @@ private:
   static constexpr size_t MAX_QUAD_INDICES = 15000;  // 6 indices por quad
   static constexpr size_t MAX_LINE_VERTICES = 5000;  // ~2500 líneas
 
-  // Perf 3.1: Pre-computed trig lookup table for rounded rects (8 segments per corner)
-  // TODO(brief06): retirar cosTable/sinTable cuando DrawMultipleFilledRoundedRects (su
-  // ultimo uso, via DrawRectAcrylic) pase a SDF en el brief 06.
+  // Perf 3.1: Pre-computed trig lookup table for rounded rects (8 segments per corner).
+  // NOTE(brief06): kept — still used by DrawImage (rounded image corners) and
+  // PathArcToFast. DrawMultipleFilledRoundedRects (the old acrylic tessellator) was
+  // removed, but these tables have other live users so they stay.
   static constexpr int CORNER_SEGMENTS = 8;
   static constexpr int CORNER_POINTS = CORNER_SEGMENTS + 1; // 9 points per quarter
   float cosTable[CORNER_POINTS];

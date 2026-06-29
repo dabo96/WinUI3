@@ -26,6 +26,7 @@ add_library(FluentUI
     Demo/DemoWindow.cpp
     Demo/StyleEditor.cpp
     Demo/ItemPicker.cpp
-    Theme/FluentTheme.cpp)
+    Theme/FluentTheme.cpp
+    Theme/Material.cpp)
 
 # Include dirs are set in the parent CMakeLists.txt via BUILD_INTERFACE/INSTALL_INTERFACE
