@@ -2,6 +2,7 @@
 #include "core/Renderer.h"
 #include "core/OpenGLBackend.h"
 #include "core/VulkanBackend.h"
+#include "core/SharedResourcePool.h"
 #include "Theme/FluentTheme.h"
 
 namespace FluentUI {
@@ -99,10 +100,19 @@ namespace FluentUI {
             return nullptr;
         }
 
-        if (!g_ctx->renderer.Init(g_backend)) {
+        g_ctx->backend = g_backend;
+
+        // brief 08 Part C: the main context owns the per-device shared resource
+        // pool. It is injected into the Renderer (which becomes the device-owner
+        // and publishes its atlas handles) and reused by every secondary window.
+        g_ctx->sharedResources = new SharedResourcePool();
+        g_ctx->ownsSharedResources = true;
+
+        if (!g_ctx->renderer.Init(g_backend, g_ctx->sharedResources)) {
             Log(LogLevel::Error, "Failed to initialize Renderer");
             g_backend->Shutdown();
             delete g_backend;
+            delete g_ctx->sharedResources;
             delete g_ctx;
             g_backend = nullptr;
             g_ctx = nullptr;
@@ -134,10 +144,16 @@ namespace FluentUI {
             Log(LogLevel::Error, "RegisterExternalTexture: no active backend (call CreateContext first)");
             return nullptr;
         }
-        return g_backend->RegisterExternalTexture(nativeView, sampler, layout);
+        void* h = g_backend->RegisterExternalTexture(nativeView, sampler, layout);
+        // brief 08 Part C: track in the shared pool — the underlying image lives on
+        // the shared device/GL-context, so it is drawable from any window.
+        if (h && g_ctx && g_ctx->sharedResources) g_ctx->sharedResources->RegisterSharedTexture(h);
+        return h;
     }
 
     void DestroyExternalTexture(void* handle) {
+        if (g_ctx && g_ctx->sharedResources && handle)
+            g_ctx->sharedResources->UnregisterSharedTexture(handle);
         if (g_backend && handle) g_backend->DeleteTexture(handle);
     }
 
@@ -174,9 +190,81 @@ namespace FluentUI {
         InitCursors(ctx);
         ctx->initialized = true;
 
+        ctx->backend = backend;
+
         // Return the backend pointer so the caller can clean it up later
         if (outBackend) *outBackend = backend;
 
+        return ctx;
+    }
+
+    UIContext* CreateStandaloneContext(SDL_Window* window, UIContext* shareFrom,
+                                       RenderBackend** outBackend) {
+        if (!window) {
+            Log(LogLevel::Error, "Window handle is NULL");
+            return nullptr;
+        }
+        // No parent to share from → fall back to a fully isolated context.
+        if (!shareFrom || !shareFrom->backend) {
+            return CreateStandaloneContext(window, outBackend);
+        }
+
+        // Build the backend-specific "existing context" handle from the parent.
+        void* existing = nullptr;
+        VulkanSharedContext vkShared{}; // must outlive backend->Init below
+        if (g_preferredBackend == RenderBackendType::OpenGL) {
+            auto* gl = static_cast<OpenGLBackend*>(shareFrom->backend);
+            existing = gl->GetGLContext(); // reuse the SAME GL context → shared resources
+            if (!existing) {
+                Log(LogLevel::Warning, "CreateStandaloneContext(share): parent GL context is null; "
+                    "creating an isolated context");
+                return CreateStandaloneContext(window, outBackend);
+            }
+        } else { // Vulkan
+            auto* vk = static_cast<VulkanBackend*>(shareFrom->backend);
+            if (!vk->GetSharedContext(&vkShared)) {
+                Log(LogLevel::Warning, "CreateStandaloneContext(share): parent Vulkan device "
+                    "unavailable; creating an isolated context");
+                return CreateStandaloneContext(window, outBackend);
+            }
+            existing = &vkShared; // shared device + own swapchain (ownSwapchain=true)
+        }
+
+        auto* ctx = new UIContext();
+        ctx->window = window;
+
+        auto* backend = CreateBackendInstance();
+        if (!backend->Init(window, existing)) {
+            Log(LogLevel::Error, "Failed to initialize shared render backend for secondary window");
+            delete backend;
+            delete ctx;
+            return nullptr;
+        }
+        ctx->backend = backend;
+
+        // brief 08 Part A: route GL to this OS-window each frame and clear/present
+        // its own framebuffer (it shares the parent's GL context).
+        if (g_preferredBackend == RenderBackendType::OpenGL) {
+            static_cast<OpenGLBackend*>(backend)->SetSecondaryWindowMode(true);
+        }
+
+        // brief 08 Part C: reference the parent's shared resource pool (not owned).
+        ctx->sharedResources = shareFrom->sharedResources;
+        ctx->ownsSharedResources = false;
+
+        if (!ctx->renderer.Init(backend, ctx->sharedResources)) {
+            Log(LogLevel::Error, "Failed to initialize Renderer for shared secondary window");
+            backend->Shutdown();
+            delete backend;
+            delete ctx;
+            return nullptr;
+        }
+
+        ctx->style = GetDarkFluentStyle();
+        InitCursors(ctx);
+        ctx->initialized = true;
+
+        if (outBackend) *outBackend = backend;
         return ctx;
     }
 
@@ -200,6 +288,12 @@ namespace FluentUI {
             delete g_backend;
             g_backend = nullptr;
         }
+        // brief 08 Part C: free the shared resource pool last (owned by the main
+        // context). Secondary windows must already be destroyed by this point.
+        if (g_ctx->ownsSharedResources && g_ctx->sharedResources) {
+            delete g_ctx->sharedResources;
+        }
+        g_ctx->sharedResources = nullptr;
         delete g_ctx;
         g_ctx = nullptr;
     }

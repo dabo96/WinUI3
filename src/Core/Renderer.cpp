@@ -1,5 +1,6 @@
 #include "core/Renderer.h"
 #include "core/Context.h"
+#include "core/SharedResourcePool.h"
 #include "core/Elevation.h"
 #include "Theme/Style.h"
 #include <SDL3/SDL.h>
@@ -94,6 +95,19 @@ namespace FluentUI {
     Renderer::~Renderer() { Shutdown(); }
 
     void Renderer::Shutdown() {
+        // brief 08 Part C: detach from the shared pool. If we were the device-owner,
+        // clear the published handles (they are about to be freed below). The pool
+        // object itself is owned and freed by the main context, not here.
+        if (sharedPool) {
+            if (sharedPool->originRenderer == this) {
+                sharedPool->originRenderer = nullptr;
+                sharedPool->fontAtlasTexture = nullptr;
+                sharedPool->dynamicMSDFAtlasTexture = nullptr;
+                sharedPool->msdf = nullptr;
+            }
+            if (sharedPool->refCount > 0) sharedPool->refCount--;
+            sharedPool = nullptr;
+        }
         // Destroy font objects first while backend is still valid
         fontManager.Shutdown();
         msdfFont.reset();
@@ -120,6 +134,24 @@ namespace FluentUI {
             sinTable[i] = std::sin(a);
         }
         trigTablesInitialized = true;
+    }
+
+    bool Renderer::Init(RenderBackend* backend, SharedResourcePool* pool) {
+        sharedPool = pool;
+        bool ok = Init(backend);
+        if (ok && sharedPool) {
+            // brief 08 Part C: the first Renderer bound to a pool becomes the
+            // device-owner and publishes its atlas handles so secondary windows
+            // (same GL context / Vulkan device) can reference the same GPU memory.
+            if (!sharedPool->originRenderer) {
+                sharedPool->originRenderer = this;
+                sharedPool->fontAtlasTexture = fontAtlasTexture;
+                sharedPool->dynamicMSDFAtlasTexture = dynamicMSDFAtlasTexture;
+                sharedPool->msdf = msdfFont.get();
+            }
+            sharedPool->refCount++;
+        }
+        return ok;
     }
 
     bool Renderer::Init(RenderBackend* backend) {

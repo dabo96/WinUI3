@@ -17,6 +17,9 @@
 
 namespace FluentUI {
 
+class RenderBackend;
+struct SharedResourcePool;
+
 // Logging system
 enum class LogLevel { Debug, Info, Warning, Error };
 
@@ -196,6 +199,14 @@ struct UIContext {
   Style style;
   SDL_Window *window =
       nullptr; // Referencia a la ventana para obtener posición del mouse
+
+  // brief 08: the render backend this context renders with (so multi-window code
+  // can extract the shared GL context / Vulkan shared device from a parent ctx).
+  RenderBackend *backend = nullptr;
+  // brief 08 Part C: per-device shared resource pool. The main context owns it;
+  // secondary windows reference it (not owned). null when not shared.
+  SharedResourcePool *sharedResources = nullptr;
+  bool ownsSharedResources = false; // true only for the device-owner context
 
   // Sistema de callbacks y eventos
   using WidgetCallback = std::function<void()>;
@@ -818,7 +829,16 @@ void SetCurrentContext(UIContext* ctx);
 // Create a standalone context (not the global singleton) for secondary windows
 // outBackend receives the created backend pointer (for cleanup)
 UIContext* CreateStandaloneContext(SDL_Window* window, RenderBackend** outBackend = nullptr);
-// Destroy a standalone context (does not touch the global singleton)
+// brief 08: create a secondary-window context that SHARES the GPU device and
+// resource pool of `shareFrom` (the main context). In OpenGL it reuses the same
+// SDL_GLContext; in Vulkan it creates only a surface/swapchain over shareFrom's
+// device. The font atlas/MSDF/textures are not duplicated. `shareFrom` must be a
+// live context created by CreateContext(). Falls back to an isolated context if
+// shareFrom is null or its backend can't be shared.
+UIContext* CreateStandaloneContext(SDL_Window* window, UIContext* shareFrom,
+                                   RenderBackend** outBackend = nullptr);
+// Destroy a standalone context (does not touch the global singleton). Frees the
+// backend but never the shared resource pool (owned by the main context).
 void DestroyStandaloneContext(UIContext* ctx, RenderBackend* backend);
 
 void NewFrame(float deltaTime = 0.016f);

@@ -254,8 +254,22 @@ void OpenGLBackend::Shutdown() {
 }
 
 void OpenGLBackend::BeginFrame(const Color& clearColor) {
-    // When using an external GL context, save the engine's state so we can restore it after UI rendering
-    if (!ownsGLContext) {
+    // brief 08 Part A: a secondary window shares the main GL context but is a real
+    // OS-window we drive. Route GL to it before recording this frame. (Single
+    // window / engine-embedded cases keep the context the caller already made
+    // current.)
+    if (secondaryWindow && window && glContext) {
+        SDL_GL_MakeCurrent(window, glContext);
+    }
+
+    // "present" = we own this window's default framebuffer (own context, or our
+    // own secondary window on a shared context). Only the engine-embedded case
+    // (external context, NOT a secondary window) must preserve engine GL state.
+    const bool present = ownsGLContext || secondaryWindow;
+
+    // When embedded in an external engine context, save its state so we can
+    // restore it after UI rendering.
+    if (!present) {
         SaveState();
     }
 
@@ -266,9 +280,9 @@ void OpenGLBackend::BeginFrame(const Color& clearColor) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // Only clear the framebuffer when we own the context;
-    // with an external context the engine already rendered its scene
-    if (ownsGLContext) {
+    // Clear when we drive the framebuffer; with an external engine context the
+    // engine already rendered its scene and we only overlay the UI.
+    if (present) {
         glClearColor(clearColor.r, clearColor.g, clearColor.b, clearColor.a);
         glClear(GL_COLOR_BUFFER_BIT);
     }
@@ -302,10 +316,17 @@ void OpenGLBackend::EndFrame() {
         bufferFences[currentBufferRegion] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     }
 
-    // When using an external GL context, restore the engine's GL state
-    if (!ownsGLContext) {
+    // When embedded in an external engine context (not our own secondary window),
+    // restore the engine's GL state.
+    if (!ownsGLContext && !secondaryWindow) {
         RestoreState();
     }
+}
+
+void OpenGLBackend::Present() {
+    // Swap this window's buffers. Used by the backend-agnostic multi-window path
+    // (brief 09 AppWindow). The main FluentApp loop still swaps directly.
+    if (window) SDL_GL_SwapWindow(window);
 }
 
 void OpenGLBackend::SetViewport(int width, int height) {

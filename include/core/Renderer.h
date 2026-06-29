@@ -16,6 +16,8 @@
 
 namespace FluentUI {
 
+struct SharedResourcePool;
+
 enum class RenderLayer {
   Default = 0,
   Overlay = 1,
@@ -65,9 +67,24 @@ public:
   PerfCounters perfCounters;
 
   bool Init(RenderBackend* backend);
+  // brief 08 Part C: multi-window init. `pool` is the per-device shared resource
+  // pool. When the pool has no origin yet, this Renderer becomes the device-owner
+  // and publishes its atlas handles into the pool; otherwise it is a secondary
+  // window sharing the same device/GL-context and references the pool.
+  bool Init(RenderBackend* backend, SharedResourcePool* pool);
   void BeginFrame(const Color& clearColor = Color(0.13f, 0.13f, 0.13f, 1.0f));
   void EndFrame();
+  // Present this window's frame (backend-agnostic; brief 08/09 multi-window).
+  void Present() { if (backend) backend->Present(); }
   void Shutdown();
+
+  // Access the underlying backend (multi-window plumbing: shared GL context /
+  // Vulkan shared device extraction). Null before Init.
+  RenderBackend* GetBackend() const { return backend; }
+
+  // The per-device shared resource pool this Renderer is bound to (or null when
+  // standalone). Set by Init(backend, pool).
+  SharedResourcePool* GetSharedPool() const { return sharedPool; }
 
   // Gestión de capas
   void SetLayer(RenderLayer layer) { currentLayer = layer; }
@@ -186,6 +203,8 @@ public:
 
 private:
   RenderBackend* backend = nullptr;
+  // brief 08 Part C: shared per-device resource pool (null = standalone).
+  SharedResourcePool* sharedPool = nullptr;
   Vec2 viewportSize = {800.0f, 600.0f};
   RenderLayer currentLayer = RenderLayer::Default;
   // Phase A4: DPI scale used to size the AA fringe (1 physical pixel always).
