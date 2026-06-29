@@ -177,6 +177,7 @@ namespace FluentUI {
         if (backend) backend->BeginFrame(clearColor);
         quadVertices.clear(); quadIndices.clear(); lineVertices.clear();
         sdfInstances.clear();
+        nextRevealIntensity = 0.0f;
         for (int i = 0; i < (int)RenderLayer::Count; ++i) {
             layerBatches[i].clear();
         }
@@ -212,8 +213,10 @@ namespace FluentUI {
                     // Perf Phase C: Count batches, draw calls, vertices
                     if (perfCounters.batchCount) (*perfCounters.batchCount)++;
                     if (perfCounters.drawCalls) (*perfCounters.drawCalls)++;
-                    if (perfCounters.vertexCount) (*perfCounters.vertexCount) += static_cast<uint32_t>(batch.vertices.size());
-                    if (perfCounters.indexCount) (*perfCounters.indexCount) += static_cast<uint32_t>(batch.indices.size());
+                    if (perfCounters.vertexCount) (*perfCounters.vertexCount) +=
+                        static_cast<uint32_t>(batch.isSDF ? batch.instances.size() * 4 : batch.vertices.size());
+                    if (perfCounters.indexCount) (*perfCounters.indexCount) +=
+                        static_cast<uint32_t>(batch.isSDF ? batch.instances.size() * 6 : batch.indices.size());
 
                     // Restaurar clipping del batch
                     if (batch.hasClip) {
@@ -473,6 +476,7 @@ namespace FluentUI {
         s.mode = 0.0f;
         s.fillA = 0.0f; // transparent fill → outline only
         s.borderR = color.r; s.borderG = color.g; s.borderB = color.b; s.borderA = color.a;
+        s.revealIntensity = nextRevealIntensity; nextRevealIntensity = 0.0f;
         sdfInstances.push_back(s);
     }
 
@@ -492,6 +496,7 @@ namespace FluentUI {
         s.softness = std::max(1.0f, dpiScale);
         s.mode = 0.0f;
         s.fillR = color.r; s.fillG = color.g; s.fillB = color.b; s.fillA = color.a;
+        s.revealIntensity = nextRevealIntensity; nextRevealIntensity = 0.0f;
         sdfInstances.push_back(s);
     }
 

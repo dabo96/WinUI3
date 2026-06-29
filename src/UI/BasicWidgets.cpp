@@ -324,6 +324,11 @@ bool Button(const std::string &label, uint32_t iconCodepoint, const Vec2 &size, 
       DrawFocusRing(ctx, btnPos, btnSize, buttonStyle.cornerRadius);
     }
 
+    // Reveal highlight (brief 04): enabled buttons react to the nearby cursor across
+    // their whole surface (Fluent's "light follows the pointer"), not only on direct
+    // hover. The fill instance carries the edge reveal; intensity is consumed by the
+    // next DrawRect* call.
+    ctx->renderer.SetNextRevealIntensity(enabled ? 1.0f : 0.0f);
     ctx->renderer.DrawRectFilled(btnPos, btnSize, bgColor,
                                  buttonStyle.cornerRadius);
     if (buttonStyle.borderWidth > 0.0f) {

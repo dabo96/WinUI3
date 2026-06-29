@@ -53,6 +53,21 @@ void main() {
         rgb = mix(rgb, vBorder.rgb, borderCov);
         a   = max(a, vBorder.a * borderCov);
     }
+
+    // Reveal highlight (brief 04): edge lights up by proximity to the cursor.
+    if (vReveal > 0.0 && pc.revealRadius > 0.0) {
+        vec2 cursor = vec2(pc.revealX, pc.revealY);
+        vec2 fragWorld = vCenter + vLocal;
+        float dCursor = length(fragWorld - cursor);
+        float prox = 1.0 - clamp(dCursor / pc.revealRadius, 0.0, 1.0);
+        prox = prox * prox;
+        float edge = (1.0 - smoothstep(-aa, aa, d)) - (1.0 - smoothstep(-aa, aa, d + 1.5));
+        edge = clamp(edge, 0.0, 1.0);
+        float revealA = prox * vReveal * edge;
+        rgb = mix(rgb, vec3(1.0), revealA);
+        a   = max(a, revealA * 0.9);
+    }
+
     if (a < 0.002) discard;
     FragColor = vec4(rgb, a);
 }

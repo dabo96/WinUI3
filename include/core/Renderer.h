@@ -167,6 +167,17 @@ public:
   void SetDPIScale(float scale) { dpiScale = std::max(0.5f, std::min(4.0f, scale)); }
   float GetDPIScale() const { return dpiScale; }
 
+  // Reveal highlight (brief 04). Set once per frame (e.g. from the mouse position):
+  // SDF rects whose revealIntensity>0 light up their edge by proximity to the cursor.
+  // radius<=0 disables the effect for the frame.
+  void SetRevealCursor(const Vec2& pos, float radius) {
+    revealCursor[0] = pos.x; revealCursor[1] = pos.y; revealCursor[2] = radius;
+  }
+  // Set the reveal intensity (0..1) applied to the NEXT SDF rect emitted by
+  // DrawRectFilled/DrawRect. Consumed (reset to 0) after that single rect, so a
+  // widget marks each surface it wants to react to the cursor.
+  void SetNextRevealIntensity(float intensity) { nextRevealIntensity = intensity; }
+
   // Phase C6 (eyedropper): read a single pixel from the framebuffer.
   Color ReadPixel(int x, int y);
 
@@ -279,6 +290,8 @@ private:
   static constexpr size_t MAX_SDF_INSTANCES = 4096;
   // Reveal cursor for the frame {x, y, radius} (brief 04). radius<=0 disables.
   float revealCursor[3] = {0.0f, 0.0f, 0.0f};
+  // Per-rect reveal intensity, consumed by the next DrawRectFilled/DrawRect.
+  float nextRevealIntensity = 0.0f;
 
   // Optimización: límites de batch para evitar reallocaciones grandes
   static constexpr size_t MAX_QUAD_VERTICES = 10000; // ~2500 quads
