@@ -802,6 +802,37 @@ void VulkanBackend::TransitionImageLayout(VkCommandBuffer cmd, VkImage image,
         b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         srcStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
         dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    } else if (newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+        // → render-target write (dynamic rendering offscreen pass). oldLayout is
+        // UNDEFINED (fresh / contents discarded) or SHADER_READ_ONLY (re-bound).
+        b.srcAccessMask = (oldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                              ? VK_ACCESS_SHADER_READ_BIT : 0;
+        b.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                          VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+        srcStage = (oldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                       ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+                       : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dstStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL &&
+               newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        // Offscreen render done → make it samplable.
+        b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        srcStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL &&
+               newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+        // CopyTexture source.
+        b.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        srcStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL &&
+               newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        b.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     } else { // UNDEFINED -> SHADER_READ_ONLY (empty atlas)
         b.srcAccessMask = 0;
         b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
@@ -991,8 +1022,13 @@ void VulkanBackend::SetFrameCommandBuffer(void* cmdBuffer) {
 
 void VulkanBackend::SetFullViewportAndScissor() {
     if (!currentCmd) return;
-    const float w = static_cast<float>(sharedMode ? logicalViewport.width  : swapExtent.width);
-    const float h = static_cast<float>(sharedMode ? logicalViewport.height : swapExtent.height);
+    // When rendering to an offscreen RT, use its dimensions; the same
+    // negative-height Y-flip convention keeps the GL ortho matrix valid and makes
+    // the RT sample upright (UV (0,0) = top-left) exactly like the main target.
+    const float w = static_cast<float>(currentRT ? currentRT->width
+                                                 : (sharedMode ? logicalViewport.width  : swapExtent.width));
+    const float h = static_cast<float>(currentRT ? currentRT->height
+                                                 : (sharedMode ? logicalViewport.height : swapExtent.height));
     // Negative-height viewport flips Y so the GL ortho matrix works unchanged.
     VkViewport vp{0.0f, h, w, -h, 0.0f, 1.0f};
     vkCmdSetViewport(currentCmd, 0, 1, &vp);
@@ -1002,14 +1038,19 @@ void VulkanBackend::SetFullViewportAndScissor() {
 
 void VulkanBackend::ApplyScissor() {
     if (!currentCmd) return;
-    // Framebuffer size in physical pixels.
-    const int fbW = static_cast<int>(sharedMode ? logicalViewport.width  : swapExtent.width);
-    const int fbH = static_cast<int>(sharedMode ? logicalViewport.height : swapExtent.height);
+    // Framebuffer size in physical pixels (RT pixels when an offscreen target is active).
+    const int fbW = static_cast<int>(currentRT ? currentRT->width
+                                               : (sharedMode ? logicalViewport.width  : swapExtent.width));
+    const int fbH = static_cast<int>(currentRT ? currentRT->height
+                                               : (sharedMode ? logicalViewport.height : swapExtent.height));
     // Clip rects arrive in *logical* coordinates (same space as the ortho matrix).
-    // The geometry is stretched to the physical framebuffer by the viewport, so the
-    // scissor must scale logical → physical too, or it won't line up on HiDPI.
-    const float sx = (logicalViewport.width  > 0) ? static_cast<float>(fbW) / logicalViewport.width  : 1.0f;
-    const float sy = (logicalViewport.height > 0) ? static_cast<float>(fbH) / logicalViewport.height : 1.0f;
+    // For the main target the geometry is stretched to the physical framebuffer by
+    // the viewport, so the scissor must scale logical → physical too (HiDPI). For an
+    // RT the caller drives the projection in RT-pixel space, so the mapping is 1:1.
+    const float sx = currentRT ? 1.0f
+                   : ((logicalViewport.width  > 0) ? static_cast<float>(fbW) / logicalViewport.width  : 1.0f);
+    const float sy = currentRT ? 1.0f
+                   : ((logicalViewport.height > 0) ? static_cast<float>(fbH) / logicalViewport.height : 1.0f);
     VkRect2D sc;
     if (clipStack.empty()) {
         sc = {{0, 0}, {static_cast<uint32_t>(fbW), static_cast<uint32_t>(fbH)}};
@@ -1095,6 +1136,14 @@ void VulkanBackend::BeginFrame(const Color& clearColor) {
 }
 
 void VulkanBackend::EndFrame() {
+    // Safety net: if the caller left an offscreen RT bound, end its pass and flush
+    // the offscreen command buffer so we never finish the frame mid-RT (which would
+    // leak the transient buffer and leave currentCmd pointing at it).
+    if (currentRT || offscreenCmd != VK_NULL_HANDLE) {
+        SetRenderTarget(nullptr);
+    }
+    stateStack.clear();
+
     if (sharedMode) {
         // The engine ends its render pass, submits, and presents.
         currentCmd = VK_NULL_HANDLE;
@@ -1261,6 +1310,384 @@ void VulkanBackend::RecordDraw(ShaderType type, const RenderVertex* vertices, si
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Render targets / SaveState / RestoreState (brief 05)
+// ───────────────────────────────────────────────────────────────────────────
+//
+// Shared-mode strategy (also used standalone for symmetry):
+//   In BOTH modes the *main* color target's render pass is active across all UI
+//   draws — standalone begins the swapchain pass in BeginFrame; in shared mode the
+//   engine is already inside its own pass when it calls us. Beginning a nested
+//   render pass on that command buffer is illegal (validation error), and ending
+//   the engine's pass is not ours to do. So offscreen RT passes are recorded on a
+//   PRIVATE transient command buffer (offscreenCmd, allocated from uploadPool) and
+//   submitted with a fence-synced wait when control returns to the main target.
+//   This guarantees: (a) no nested/foreign pass on the main buffer, and (b) the RT
+//   image is fully written and transitioned to SHADER_READ_ONLY_OPTIMAL before the
+//   main pass samples it. The main buffer (mainCmd) is simply paused while we draw
+//   into the RT and resumed afterwards.
+//
+//   Caveat (documented): re-binding an RT clears it (loadOp = CLEAR). Draw all the
+//   content you need for a target in a single SetRenderTarget(rt) ... draw ...
+//   SetRenderTarget(prev) span. This matches blur ping-pong usage (each pass fully
+//   overwrites its target).
+
+bool VulkanBackend::CreateOffscreenRenderPass(VkRenderTarget* rt) {
+    VkAttachmentDescription color{};
+    color.format = colorFormat;
+    color.samples = VK_SAMPLE_COUNT_1_BIT;
+    color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    // CLEAR makes prior contents irrelevant, so UNDEFINED is the cheapest valid
+    // initial layout (works for both the first use and every re-bind).
+    color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    color.finalLayout   = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkAttachmentReference colorRef{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription sub{};
+    sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.colorAttachmentCount = 1;
+    sub.pColorAttachments = &colorRef;
+
+    // External → subpass: nothing earlier in the offscreen buffer touches this
+    // image (sampling, if any, happened in a previous, already-completed submit),
+    // so TOP_OF_PIPE is sufficient. Subpass → external: publish the color write to
+    // later fragment-shader sampling.
+    VkSubpassDependency deps[2]{};
+    deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    deps[0].dstSubpass = 0;
+    deps[0].srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[0].srcAccessMask = 0;
+    deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    deps[1].srcSubpass = 0;
+    deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    VkRenderPassCreateInfo rpci{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    rpci.attachmentCount = 1;
+    rpci.pAttachments = &color;
+    rpci.subpassCount = 1;
+    rpci.pSubpasses = &sub;
+    rpci.dependencyCount = 2;
+    rpci.pDependencies = deps;
+    if (vkCreateRenderPass(device, &rpci, nullptr, &rt->pass) != VK_SUCCESS) {
+        Log(LogLevel::Error, "Vulkan: failed to create offscreen render pass");
+        return false;
+    }
+    return true;
+}
+
+VulkanBackend::VulkanTexture* VulkanBackend::CreateRTSampleTexture(VkRenderTarget* rt) {
+    auto* t = new VulkanTexture();
+    t->external = true;            // image/view are owned by the RT, freed in DestroyRenderTarget
+    t->image  = rt->image;         // kept so CopyTexture can vkCmdCopyImage on it
+    t->view   = rt->view;
+    t->width  = rt->width;
+    t->height = rt->height;
+    t->descriptor = AllocateTextureDescriptor(t->descriptorPool);
+    if (!t->descriptor) { delete t; return nullptr; }
+
+    VkDescriptorImageInfo dii{};
+    dii.sampler = sampler;
+    dii.imageView = rt->view;
+    dii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    w.dstSet = t->descriptor;
+    w.dstBinding = 0;
+    w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w.pImageInfo = &dii;
+    vkUpdateDescriptorSets(device, 1, &w, 0, nullptr);
+    // Not pushed into `textures`: its lifetime is bound to the RT.
+    return t;
+}
+
+void* VulkanBackend::CreateRenderTarget(int width, int height) {
+    if (width <= 0 || height <= 0) return nullptr;
+    auto* rt = new VkRenderTarget();
+    rt->width = width;
+    rt->height = height;
+
+    VkImageCreateInfo ici{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = colorFormat;
+    ici.extent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1};
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (vkCreateImage(device, &ici, nullptr, &rt->image) != VK_SUCCESS) {
+        Log(LogLevel::Error, "Vulkan: failed to create render target image");
+        delete rt; return nullptr;
+    }
+
+    VkMemoryRequirements req;
+    vkGetImageMemoryRequirements(device, rt->image, &req);
+    VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vkAllocateMemory(device, &mai, nullptr, &rt->memory) != VK_SUCCESS ||
+        vkBindImageMemory(device, rt->image, rt->memory, 0) != VK_SUCCESS) {
+        Log(LogLevel::Error, "Vulkan: failed to allocate/bind render target memory");
+        DestroyRenderTarget(rt); return nullptr;
+    }
+
+    VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    vci.image = rt->image;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = colorFormat;
+    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    if (vkCreateImageView(device, &vci, nullptr, &rt->view) != VK_SUCCESS) {
+        Log(LogLevel::Error, "Vulkan: failed to create render target view");
+        DestroyRenderTarget(rt); return nullptr;
+    }
+
+    if (!useDynamicRendering) {
+        if (!CreateOffscreenRenderPass(rt)) { DestroyRenderTarget(rt); return nullptr; }
+        VkFramebufferCreateInfo fci{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        fci.renderPass = rt->pass;
+        fci.attachmentCount = 1;
+        fci.pAttachments = &rt->view;
+        fci.width = static_cast<uint32_t>(width);
+        fci.height = static_cast<uint32_t>(height);
+        fci.layers = 1;
+        if (vkCreateFramebuffer(device, &fci, nullptr, &rt->framebuffer) != VK_SUCCESS) {
+            Log(LogLevel::Error, "Vulkan: failed to create render target framebuffer");
+            DestroyRenderTarget(rt); return nullptr;
+        }
+    }
+
+    rt->sampleTex = CreateRTSampleTexture(rt);
+    if (!rt->sampleTex) { DestroyRenderTarget(rt); return nullptr; }
+
+    rt->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    renderTargets.push_back(rt);
+    return rt;
+}
+
+void VulkanBackend::BeginOffscreenRecording() {
+    if (offscreenCmd != VK_NULL_HANDLE) return; // already recording offscreen
+    mainCmd = currentCmd;                        // pause the main buffer
+    VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    ai.commandPool = uploadPool;                 // transient pool
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    if (vkAllocateCommandBuffers(device, &ai, &offscreenCmd) != VK_SUCCESS) {
+        Log(LogLevel::Error, "Vulkan: failed to allocate offscreen command buffer");
+        offscreenCmd = VK_NULL_HANDLE;
+        return;
+    }
+    VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(offscreenCmd, &bi);
+    currentCmd = offscreenCmd;                    // draws now target the offscreen buffer
+}
+
+void VulkanBackend::BeginRTPass(VkRenderTarget* rt) {
+    if (offscreenCmd == VK_NULL_HANDLE) return;
+    VkClearValue clear{};
+    clear.color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+
+    if (useDynamicRendering) {
+        TransitionImageLayout(offscreenCmd, rt->image, rt->layout,
+                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        rt->layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        att.imageView = rt->view;
+        att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        att.clearValue = clear;
+
+        VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        ri.renderArea = {{0, 0}, {static_cast<uint32_t>(rt->width), static_cast<uint32_t>(rt->height)}};
+        ri.layerCount = 1;
+        ri.colorAttachmentCount = 1;
+        ri.pColorAttachments = &att;
+        vkCmdBeginRendering(offscreenCmd, &ri);
+    } else {
+        VkRenderPassBeginInfo rbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        rbi.renderPass = rt->pass;
+        rbi.framebuffer = rt->framebuffer;
+        rbi.renderArea = {{0, 0}, {static_cast<uint32_t>(rt->width), static_cast<uint32_t>(rt->height)}};
+        rbi.clearValueCount = 1;
+        rbi.pClearValues = &clear;
+        vkCmdBeginRenderPass(offscreenCmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+        // The render pass transitions the image to SHADER_READ_ONLY at the end.
+    }
+    SetFullViewportAndScissor();
+    ApplyScissor();
+}
+
+void VulkanBackend::EndRTPass() {
+    if (!currentRT || offscreenCmd == VK_NULL_HANDLE) return;
+    if (useDynamicRendering) {
+        vkCmdEndRendering(offscreenCmd);
+        TransitionImageLayout(offscreenCmd, currentRT->image,
+                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    } else {
+        vkCmdEndRenderPass(offscreenCmd); // finalLayout already SHADER_READ_ONLY
+    }
+    currentRT->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+}
+
+void VulkanBackend::FlushOffscreen() {
+    if (offscreenCmd == VK_NULL_HANDLE) return;
+    vkEndCommandBuffer(offscreenCmd);
+
+    VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &offscreenCmd;
+    // Fence-synced submit so the RT(s) are fully rendered and in SHADER_READ_ONLY
+    // before the main pass (recorded on mainCmd, submitted later) samples them.
+    // NOTE: in shared mode the queue belongs to the engine — VkQueue submission
+    // requires external synchronization (the host must not submit from another
+    // thread concurrently). Same caveat as the texture-upload path.
+    VkFence fence = VK_NULL_HANDLE;
+    VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    if (vkCreateFence(device, &fci, nullptr, &fence) == VK_SUCCESS) {
+        vkQueueSubmit(graphicsQueue, 1, &si, fence);
+        vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkDestroyFence(device, fence, nullptr);
+    } else {
+        vkQueueSubmit(graphicsQueue, 1, &si, VK_NULL_HANDLE);
+        vkQueueWaitIdle(graphicsQueue);
+    }
+    vkFreeCommandBuffers(device, uploadPool, 1, &offscreenCmd);
+    offscreenCmd = VK_NULL_HANDLE;
+    currentCmd = mainCmd;   // resume the main command buffer
+    mainCmd = VK_NULL_HANDLE;
+}
+
+void VulkanBackend::SetRenderTarget(void* target) {
+    auto* rt = static_cast<VkRenderTarget*>(target);
+    if (rt == currentRT) return;
+
+    // End the pass of the RT we are leaving (if any).
+    if (currentRT) EndRTPass();
+
+    if (rt) {
+        // Enter / switch to an offscreen RT. BeginOffscreenRecording is idempotent:
+        // when switching RT→RT we keep recording on the same offscreen buffer.
+        BeginOffscreenRecording();
+        currentRT = rt;
+        BeginRTPass(rt);
+    } else {
+        // Return to the main (swapchain/engine) target: submit the offscreen work,
+        // resume the main command buffer, restore its viewport/scissor + clip.
+        currentRT = nullptr;
+        FlushOffscreen();
+        SetFullViewportAndScissor();
+        ApplyScissor();
+    }
+}
+
+void* VulkanBackend::GetRenderTargetTexture(void* target) {
+    if (!target) return nullptr;
+    auto* rt = static_cast<VkRenderTarget*>(target);
+    // The offscreen render pass leaves the image in SHADER_READ_ONLY_OPTIMAL, which
+    // is what the sampling descriptor expects — just hand back the wrapper. If the
+    // RT was created but never rendered, transition it once so sampling is valid.
+    if (rt->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        VkCommandBuffer cmd = BeginSingleTimeCommands();
+        TransitionImageLayout(cmd, rt->image, rt->layout,
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        EndSingleTimeCommands(cmd);
+        rt->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
+    return rt->sampleTex;
+}
+
+void VulkanBackend::CopyTexture(void* src, void* dst, int width, int height) {
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    auto* s = static_cast<VulkanTexture*>(src);
+    auto* d = static_cast<VulkanTexture*>(dst);
+    if (!s->image || !d->image) {
+        Log(LogLevel::Error, "Vulkan CopyTexture: src/dst has no backing image");
+        return;
+    }
+    // Both images are assumed to be in SHADER_READ_ONLY_OPTIMAL (regular textures
+    // after upload, RT sample textures after rendering). Transition, copy, restore.
+    VkCommandBuffer cmd = BeginSingleTimeCommands();
+    TransitionImageLayout(cmd, s->image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    TransitionImageLayout(cmd, d->image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    VkImageCopy region{};
+    region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.extent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1};
+    vkCmdCopyImage(cmd, s->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   d->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    TransitionImageLayout(cmd, s->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    TransitionImageLayout(cmd, d->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    EndSingleTimeCommands(cmd);
+}
+
+void VulkanBackend::DestroyRenderTarget(VkRenderTarget* rt) {
+    if (!rt) return;
+    if (rt->sampleTex) {
+        if (rt->sampleTex->descriptor && rt->sampleTex->descriptorPool)
+            vkFreeDescriptorSets(device, rt->sampleTex->descriptorPool, 1, &rt->sampleTex->descriptor);
+        delete rt->sampleTex;
+        rt->sampleTex = nullptr;
+    }
+    if (rt->framebuffer) vkDestroyFramebuffer(device, rt->framebuffer, nullptr);
+    if (rt->pass)        vkDestroyRenderPass(device, rt->pass, nullptr);
+    if (rt->view)        vkDestroyImageView(device, rt->view, nullptr);
+    if (rt->image)       vkDestroyImage(device, rt->image, nullptr);
+    if (rt->memory)      vkFreeMemory(device, rt->memory, nullptr);
+    delete rt;
+}
+
+void VulkanBackend::DeleteRenderTarget(void* target) {
+    if (!target) return;
+    auto* rt = static_cast<VkRenderTarget*>(target);
+    // No general deferred-deletion queue exists in this backend, so (as DeleteTexture
+    // does) drain the device before freeing — guarantees no in-flight frame still
+    // samples or renders to it. Heavy but correct; RTs are rarely deleted mid-run.
+    if (device) vkDeviceWaitIdle(device);
+    if (rt == currentRT) currentRT = nullptr;
+    auto it = std::find(renderTargets.begin(), renderTargets.end(), rt);
+    if (it != renderTargets.end()) renderTargets.erase(it);
+    DestroyRenderTarget(rt);
+}
+
+void VulkanBackend::SaveState() {
+    SavedState s;
+    s.rt = currentRT;
+    s.clipStack = clipStack;
+    stateStack.push_back(std::move(s));
+}
+
+void VulkanBackend::RestoreState() {
+    if (stateStack.empty()) return;
+    SavedState s = std::move(stateStack.back());
+    stateStack.pop_back();
+    // Restore the active target. Common nesting (save main → RT work → restore main)
+    // is lossless: returning to nullptr just flushes offscreen work and resumes the
+    // untouched main pass. NOTE: restoring INTO a non-null RT re-begins its pass and
+    // therefore CLEARS it (loadOp = CLEAR) — don't rely on resuming an RT's contents.
+    if (s.rt != currentRT) SetRenderTarget(s.rt);
+    clipStack = s.clipStack;
+    SetFullViewportAndScissor();
+    ApplyScissor();
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Swapchain recreation / teardown
 // ───────────────────────────────────────────────────────────────────────────
 void VulkanBackend::DestroySwapchain() {
@@ -1283,6 +1710,17 @@ void VulkanBackend::RecreateSwapchain() {
 
 void VulkanBackend::Shutdown() {
     if (device) vkDeviceWaitIdle(device);
+
+    // Render targets (brief 05). Device is idle, so destroy directly. Free any
+    // still-open offscreen command buffer first.
+    if (offscreenCmd != VK_NULL_HANDLE && uploadPool) {
+        vkFreeCommandBuffers(device, uploadPool, 1, &offscreenCmd);
+        offscreenCmd = VK_NULL_HANDLE;
+    }
+    for (auto* rt : renderTargets) DestroyRenderTarget(rt);
+    renderTargets.clear();
+    currentRT = nullptr;
+    stateStack.clear();
 
     for (auto* t : textures) {
         if (!t->external) {

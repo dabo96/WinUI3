@@ -51,6 +51,15 @@ public:
     void DrawLines(const RenderVertex* vertices, size_t vertexCount,
                    float width, const float* projectionMatrix) override;
 
+    // --- Render targets / SaveState (brief 05) ---
+    void* CreateRenderTarget(int width, int height) override;
+    void  SetRenderTarget(void* target) override;
+    void* GetRenderTargetTexture(void* target) override;
+    void  DeleteRenderTarget(void* target) override;
+    void  CopyTexture(void* src, void* dst, int width, int height) override;
+    void  SaveState() override;
+    void  RestoreState() override;
+
 private:
     // ── Configuration ──────────────────────────────────────────────────
     static constexpr int kRingSize = 3;          // dynamic-buffer ring slots
@@ -183,6 +192,41 @@ private:
     struct ClipRect { int x, y, w, h; };
     std::vector<ClipRect> clipStack;
 
+    // ── Render targets (brief 05) ──────────────────────────────────────
+    // Offscreen color target usable as a sampled texture by the Image shader
+    // (and by brief 06's blur passes). Color image with usage
+    // COLOR_ATTACHMENT | SAMPLED | TRANSFER_SRC | TRANSFER_DST, DEVICE_LOCAL.
+    struct VkRenderTarget {
+        VkImage        image       = VK_NULL_HANDLE;
+        VkDeviceMemory memory      = VK_NULL_HANDLE;
+        VkImageView    view        = VK_NULL_HANDLE;
+        VkFramebuffer  framebuffer = VK_NULL_HANDLE; // classic render pass only
+        VkRenderPass   pass        = VK_NULL_HANDLE; // offscreen pass (classic); null w/ dynamic rendering
+        VulkanTexture* sampleTex   = nullptr;        // descriptor wrapper to draw it via Image
+        VkImageLayout  layout      = VK_IMAGE_LAYOUT_UNDEFINED;
+        int width = 0, height = 0;
+    };
+    std::vector<VkRenderTarget*> renderTargets;
+    VkRenderTarget* currentRT = nullptr;             // nullptr = swapchain/engine target
+
+    // Offscreen recording. In BOTH modes the main target's render pass stays
+    // active across UI draws (standalone begins the swapchain pass in BeginFrame;
+    // in shared mode the engine is already inside its pass). A nested render pass
+    // on that command buffer is illegal, so offscreen RT passes are recorded on a
+    // private, transient command buffer and submitted (fence-synced) when we
+    // return to the main target. `mainCmd` holds the paused main buffer.
+    VkCommandBuffer offscreenCmd = VK_NULL_HANDLE;
+    VkCommandBuffer mainCmd      = VK_NULL_HANDLE;
+
+    // SaveState/RestoreState stack (active RT + clip stack). Vulkan has no global
+    // mutable state like GL; what matters across nested passes is the active
+    // target and scissor/clip.
+    struct SavedState {
+        VkRenderTarget*       rt = nullptr;
+        std::vector<ClipRect> clipStack;
+    };
+    std::vector<SavedState> stateStack;
+
     // ── Internal helpers ───────────────────────────────────────────────
     bool CreateInstanceAndDevice();             // standalone only
     bool PickPhysicalDevice();                  // standalone only
@@ -211,6 +255,15 @@ private:
 
     void SetFullViewportAndScissor();
     void ApplyScissor();
+
+    // Render-target helpers (brief 05).
+    bool CreateOffscreenRenderPass(VkRenderTarget* rt);
+    VulkanTexture* CreateRTSampleTexture(VkRenderTarget* rt);
+    void BeginOffscreenRecording();   // lazily begin offscreenCmd, switch currentCmd
+    void BeginRTPass(VkRenderTarget* rt);
+    void EndRTPass();                 // end the active RT pass (classic/dynamic)
+    void FlushOffscreen();            // submit offscreenCmd, fence-wait, restore mainCmd
+    void DestroyRenderTarget(VkRenderTarget* rt); // assumes device idle
     void RecordDraw(ShaderType type, const RenderVertex* vertices, size_t vertexCount,
                     const unsigned int* indices, size_t indexCount,
                     void* textureHandle, const float* projectionMatrix,

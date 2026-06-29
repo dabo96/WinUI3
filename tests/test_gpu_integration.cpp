@@ -3,6 +3,7 @@
 #include "core/Context.h"
 #include "core/Renderer.h"
 #include "core/Accessibility.h"
+#include "core/VulkanBackend.h"
 #include "UI/Widgets.h"
 #include "Math/Rect.h"
 
@@ -141,6 +142,105 @@ TEST_CASE("GPU: Clip rect push/pop", "[gpu]") {
     REQUIRE(ctx->perfCounters.clipPushes > 0);
 
     DestroyContext();
+}
+
+// ============================================================================
+// Vulkan render targets (brief 05)
+// ============================================================================
+//
+// Exercises the VulkanBackend render-target path directly via the RenderBackend
+// API: create an offscreen RT, render a quad into it, return to the default
+// target, then draw the RT as an Image. Validates the full lifecycle (create →
+// set → draw → restore → sample → delete) and is meant to run under the Vulkan
+// validation layers (VK_INSTANCE_LAYERS / vkconfig) to catch layout / render-pass
+// begin-end balance errors. Skips gracefully where Vulkan is unavailable
+// (headless CI, no ICD, SDL without Vulkan support, etc.).
+
+static void OrthoTopLeft(float* m, float w, float h) {
+    // Column-major ortho, origin top-left (matches the lib's GL ortho).
+    for (int i = 0; i < 16; ++i) m[i] = 0.0f;
+    m[0]  =  2.0f / w;
+    m[5]  = -2.0f / h;
+    m[10] = -1.0f;
+    m[12] = -1.0f;
+    m[13] =  1.0f;
+    m[15] =  1.0f;
+}
+
+TEST_CASE("GPU: Vulkan render target lifecycle", "[gpu][vulkan]") {
+    using namespace FluentUI;
+
+    if (!g_sdlInitialized) {
+        if (!SDL_Init(SDL_INIT_VIDEO)) { SKIP("No SDL video"); return; }
+        g_sdlInitialized = true;
+    }
+
+    SDL_Window* vkWindow = SDL_CreateWindow("FluentUI VK RT Test", 256, 256,
+                                            SDL_WINDOW_VULKAN | SDL_WINDOW_HIDDEN);
+    if (!vkWindow) { SKIP("No Vulkan window"); return; }
+
+    VulkanBackend backend;
+    if (!backend.Init(vkWindow, nullptr)) {
+        SDL_DestroyWindow(vkWindow);
+        SKIP("Vulkan backend init failed (no ICD / headless)");
+        return;
+    }
+    backend.SetViewport(256, 256);
+
+    float proj[16];
+    OrthoTopLeft(proj, 256.0f, 256.0f);
+
+    backend.BeginFrame(Color(0, 0, 0, 1));
+
+    // 1) Create an offscreen render target.
+    void* rt = backend.CreateRenderTarget(128, 128);
+    REQUIRE(rt != nullptr);
+
+    // 2) Bind it and draw a red quad into it.
+    backend.SetRenderTarget(rt);
+    {
+        float rtProj[16];
+        OrthoTopLeft(rtProj, 128.0f, 128.0f);
+        RenderVertex v[4] = {
+            {  10.0f,  10.0f, 1, 0, 0, 1, 0, 0 },
+            { 110.0f,  10.0f, 1, 0, 0, 1, 1, 0 },
+            { 110.0f, 110.0f, 1, 0, 0, 1, 1, 1 },
+            {  10.0f, 110.0f, 1, 0, 0, 1, 0, 1 },
+        };
+        unsigned int idx[6] = { 0, 1, 2, 0, 2, 3 };
+        backend.DrawBatch(ShaderType::Basic, v, 4, idx, 6, nullptr, rtProj);
+    }
+
+    // 3) Return to the default target.
+    backend.SetRenderTarget(nullptr);
+
+    // 4) Get the RT's color texture and draw it as an Image on the main target.
+    void* rtTex = backend.GetRenderTargetTexture(rt);
+    REQUIRE(rtTex != nullptr);
+    {
+        RenderVertex v[4] = {
+            {  0.0f,   0.0f, 1, 1, 1, 1, 0, 0 },
+            { 128.0f,  0.0f, 1, 1, 1, 1, 1, 0 },
+            { 128.0f,128.0f, 1, 1, 1, 1, 1, 1 },
+            {  0.0f, 128.0f, 1, 1, 1, 1, 0, 1 },
+        };
+        unsigned int idx[6] = { 0, 1, 2, 0, 2, 3 };
+        backend.DrawBatch(ShaderType::Image, v, 4, idx, 6, rtTex, proj);
+    }
+
+    // 5) Nested SaveState/RestoreState (>= 2 levels) must not corrupt the target.
+    backend.SaveState();
+    backend.SaveState();
+    backend.RestoreState();
+    backend.RestoreState();
+
+    backend.EndFrame();
+
+    backend.DeleteRenderTarget(rt);
+    backend.Shutdown();
+    SDL_DestroyWindow(vkWindow);
+
+    SUCCEED("Vulkan render target lifecycle completed without crashing");
 }
 
 // ============================================================================
