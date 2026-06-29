@@ -511,39 +511,27 @@ namespace FluentUI {
                        Vec2(0.0f, sp.offsetY));
     }
 
+    // Brief 03: drop shadow as a SINGLE SDF instance (mode 1) with an exponential
+    // falloff in the fragment shader — replaces the previous 16-40 stacked rounded
+    // rects. Same batch/accumulator as the fill, so shadow+fill of many widgets
+    // collapse to one draw. Draw BEFORE the element's own fill.
     void Renderer::DrawRectShadow(const Vec2& pos, const Vec2& size, float cornerRadius,
                                   float blur, const Color& color, const Vec2& offset) {
         if (color.a <= 0.0f || blur <= 0.0f || size.x <= 0.0f || size.y <= 0.0f) return;
 
-        float spread = blur * dpiScale; // penumbra in physical px
-        // More layers = smoother gradient (finer, more dispersed outer tail with no
-        // visible final step); scale with the spread but cap for perf.
-        int layers = std::clamp(static_cast<int>(std::round(spread * 3.5f)), 16, 40);
+        EnsureBatchState(ShaderType::SDFRect, nullptr, Color(1,1,1,1));
+        if (sdfInstances.size() >= MAX_SDF_INSTANCES) FlushBatch();
 
-        // Per-layer alpha chosen so that, where all layers overlap (the element
-        // edge), the composited "over" alpha 1-(1-aL)^layers equals color.a.
-        float aL = 1.0f - std::pow(1.0f - color.a, 1.0f / static_cast<float>(layers));
-        Color layerColor(color.r, color.g, color.b, aL);
-
-        Vec2 base = pos + offset;
-        // Soft penumbra: every layer is a filled rounded rect expanded outward, so
-        // the element edge (inside all layers) accumulates to the peak opacity and
-        // each ring outward drops one layer of coverage → darkest at the edge,
-        // fading outward. The expansion follows a power curve with exponent > 1 so
-        // the layers bunch up NEAR the element: the opacity drops quickly just past
-        // the edge and trails off into a long, faint tail. This reads as a soft,
-        // diffuse shadow (most of it barely-there haze) rather than a uniform dark
-        // band with a hard outer edge. A higher exponent makes the outer tail even
-        // fainter and more dispersed (fades to almost nothing) while keeping the
-        // dark near-edge. Outermost (faintest) drawn first.
-        constexpr float kFalloff = 2.5f;
-        for (int i = layers; i >= 1; --i) {
-            float t = static_cast<float>(i) / static_cast<float>(layers);
-            float expand = spread * std::pow(t, kFalloff);
-            Vec2 lpos(base.x - expand, base.y - expand);
-            Vec2 lsize(size.x + expand * 2.0f, size.y + expand * 2.0f);
-            DrawRectFilled(lpos, lsize, layerColor, cornerRadius + expand);
-        }
+        SDFInstance s{};
+        Vec2 c = pos + size * 0.5f + offset; // offsetY shifts the shadow down (CPU-side)
+        s.cx = c.x; s.cy = c.y;
+        s.hx = size.x * 0.5f; s.hy = size.y * 0.5f;
+        s.radius = std::clamp(cornerRadius, 0.0f, std::min(s.hx, s.hy));
+        s.borderWidth = blur * dpiScale; // alias = penumbra in physical px
+        s.softness = std::max(1.0f, dpiScale);
+        s.mode = 1.0f;
+        s.fillR = color.r; s.fillG = color.g; s.fillB = color.b; s.fillA = color.a;
+        sdfInstances.push_back(s);
     }
 
     void Renderer::DrawRectGradient(const Vec2& pos, const Vec2& size,

@@ -30,7 +30,19 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 }
 
 void main() {
-    float d  = sdRoundBox(vLocal, vHalf, vRadius);
+    float d = sdRoundBox(vLocal, vHalf, vRadius);
+
+    // mode == 1: drop shadow (brief 03). vBorderW aliases the penumbra (blur, px).
+    if (vMode > 0.5) {
+        float blur = vBorderW;
+        float t = clamp(d / max(blur, 0.5), 0.0, 1.0);
+        float falloff = exp(-3.0 * t);
+        float sa = vFill.a * falloff;
+        if (sa < 0.002) discard;
+        FragColor = vec4(vFill.rgb, sa);
+        return;
+    }
+
     float aa = max(vSoft, fwidth(d));
     float fillCov = 1.0 - smoothstep(-aa, aa, d);
     vec3  rgb = vFill.rgb;
