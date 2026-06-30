@@ -2,6 +2,7 @@
 #include <SDL3/SDL_vulkan.h>
 #include <cmath>
 #include <cstdio>
+#include <cctype>
 
 using namespace FluentUI;
 
@@ -68,7 +69,7 @@ App::App(const char *titulo)
     m_mainTabLabels = {"Basic", "Input", "Containers", "Lists & Trees",
                        "Overlays", "Theme",
                        "Controls", "Feedback", "Collections", "Layout",
-                       "Navigation"};
+                       "Navigation", "Rich Text"};
 
     // Editable DataGrid demo data (brief 16): 6 rows x 4 logical columns.
     m_gridRows = {
@@ -102,6 +103,9 @@ App::App(const char *titulo)
 
     // Accent color names
     m_accentNames = {"Blue", "Green", "Purple", "Orange", "Pink", "Teal"};
+
+    // Rich Text tab: seed the TokenizingTextBox with a few demo chips (brief 17).
+    m_tokens = {"C++", "Vulkan", "FluentUI"};
 }
 
 App::~App() {
@@ -218,6 +222,9 @@ void App::BuildUI() {
             break;
         case 10:
             BuildNavigation();
+            break;
+        case 11:
+            BuildRichText();
             break;
         }
         EndTabView();
@@ -1388,4 +1395,142 @@ void App::BuildNavigation() {
     EndVertical();
 
     EndHorizontal();
+}
+
+// --- Tab 11: Rich Text (brief 17) -------------------------------------------
+// Showcases the rich-text / content widgets: SelectableText, HyperlinkButton,
+// AutoSuggestBox, TokenizingTextBox, PasswordBox and MarkdownView.
+// brief 18: i18n/RTL/a11y son de plataforma, no widgets de galería.
+void App::BuildRichText() {
+    BeginVertical(8.0f);
+
+    // --- SelectableText -----------------------------------------------------
+    Label("SelectableText (drag to select, Ctrl+C to copy)", std::nullopt,
+          TypographyStyle::Subtitle);
+    Spacing(4);
+    SelectableText(
+        "rt_sel",
+        "FluentUI is a lightweight immediate-mode C++ GUI library with a Fluent "
+        "Design look. This paragraph is read-only but fully selectable: press and "
+        "drag with the mouse to highlight a range, double-click to select a word, "
+        "triple-click to select the whole line, and use Ctrl+A then Ctrl+C to copy "
+        "everything to the system clipboard. The text wraps to the available width.",
+        0.0f, /*wrap=*/true);
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- HyperlinkButton ----------------------------------------------------
+    Label("HyperlinkButton", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    if (HyperlinkButton("Fluent Design documentation",
+                        "https://learn.microsoft.com/windows/apps/design/"))
+        m_statusText = "Opened Fluent Design docs";
+    if (HyperlinkButton("Anthropic", "https://www.anthropic.com/"))
+        m_statusText = "Opened anthropic.com";
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- AutoSuggestBox -----------------------------------------------------
+    Label("AutoSuggestBox (type to filter)", std::nullopt,
+          TypographyStyle::Subtitle);
+    Spacing(4);
+    auto fruitSuggestions = [](const std::string& query) {
+        static const std::vector<std::string> kFruits = {
+            "Apple", "Apricot", "Banana", "Blueberry", "Cherry", "Cranberry",
+            "Grape", "Grapefruit", "Lemon", "Lime", "Mango", "Orange", "Papaya",
+            "Peach", "Pear", "Pineapple", "Plum", "Raspberry", "Strawberry",
+            "Watermelon"};
+        std::vector<std::string> out;
+        // Case-insensitive substring filter over the demo list.
+        std::string q;
+        q.reserve(query.size());
+        for (char c : query) q += (char)std::tolower((unsigned char)c);
+        for (const auto& f : kFruits) {
+            std::string lf;
+            lf.reserve(f.size());
+            for (char c : f) lf += (char)std::tolower((unsigned char)c);
+            if (q.empty() || lf.find(q) != std::string::npos)
+                out.push_back(f);
+        }
+        return out;
+    };
+    std::string picked = AutoSuggestBox("rt_suggest", &m_autoSuggestText,
+                                        fruitSuggestions, "Search fruit...");
+    if (!picked.empty())
+        m_statusText = "Picked suggestion: " + picked;
+    Spacing(4);
+    Label(m_autoSuggestText.empty()
+              ? std::string("(nothing typed yet)")
+              : std::string("Current text: ") + m_autoSuggestText,
+          std::nullopt, TypographyStyle::Caption);
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- TokenizingTextBox --------------------------------------------------
+    Label("TokenizingTextBox / Chips (Enter or comma to add, Backspace to remove)",
+          std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    auto tagSuggestions = [](const std::string& query) {
+        static const std::vector<std::string> kTags = {
+            "C++", "Vulkan", "OpenGL", "FluentUI", "Rendering", "SDF", "Shaders",
+            "Editor", "Tooling", "ImGui", "Win32", "SDL"};
+        std::vector<std::string> out;
+        std::string q;
+        for (char c : query) q += (char)std::tolower((unsigned char)c);
+        for (const auto& t : kTags) {
+            std::string lt;
+            for (char c : t) lt += (char)std::tolower((unsigned char)c);
+            if (!q.empty() && lt.find(q) != std::string::npos)
+                out.push_back(t);
+        }
+        return out;
+    };
+    if (TokenizingTextBox("rt_tokens", &m_tokens, "Add a tag...", tagSuggestions))
+        m_statusText = "Tokens changed (" + std::to_string(m_tokens.size()) + ")";
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- PasswordBox --------------------------------------------------------
+    Label("PasswordBox (click the eye to reveal)", std::nullopt,
+          TypographyStyle::Subtitle);
+    Spacing(4);
+    if (PasswordBox("rt_password", &m_password, "Enter a password..."))
+        m_statusText = "Password length: " + std::to_string(m_password.size());
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- MarkdownView -------------------------------------------------------
+    Label("MarkdownView", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    static const std::string kMarkdown =
+        "# Markdown demo\n"
+        "\n"
+        "FluentUI ships a small **Markdown** renderer that supports a useful\n"
+        "*subset* of the syntax, including inline `code` spans.\n"
+        "\n"
+        "## Features\n"
+        "\n"
+        "- Headings (`#` .. `###`)\n"
+        "- **Bold**, *italic* and `code`\n"
+        "- Unordered lists and block quotes\n"
+        "- Links like [Fluent docs](https://learn.microsoft.com/windows/apps/design/)\n"
+        "\n"
+        "> Block quotes are rendered with an accent bar.\n"
+        "\n"
+        "---\n"
+        "\n"
+        "That horizontal rule above closes the demo.\n";
+    MarkdownView("rt_markdown", kMarkdown);
+
+    EndVertical();
 }
