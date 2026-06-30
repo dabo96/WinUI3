@@ -292,34 +292,38 @@ bool Button(const std::string &label, uint32_t iconCodepoint, const Vec2 &size, 
   // Perf 1.2: Register animation slots for GC tracking (only widgets that use animations)
   RegisterAnimSlots(buttonId);
 
-  // Obtener o crear animaciones de color
-  auto &bgAnim = ctx->colorAnimations[AnimSlot(buttonId, 0)];
-  auto &fgAnim = ctx->colorAnimations[AnimSlot(buttonId, 1)];
-  auto &borderAnim = ctx->colorAnimations[AnimSlot(buttonId, 2)];
+  // brief 10 Part C (pilot): bg/fg/border use interruptible SpringValue<Color>
+  // instead of fixed-duration tweens, so a fast hover-in/out reverses continuously
+  // without resetting a clock (no "kick"). Configure once (response 0.18s, critically
+  // damped) on first touch, then SetTarget every frame. Stored in springColors
+  // (separate from colorAnimations; brief 22 will unify). .Get() reads unchanged.
+  auto &bgAnim = ctx->springColors[AnimSlot(buttonId, 0)];
+  auto &fgAnim = ctx->springColors[AnimSlot(buttonId, 1)];
+  auto &borderAnim = ctx->springColors[AnimSlot(buttonId, 2)];
 
-  // Inicializar animaciones si es necesario (primera vez)
+  // Inicializar/configurar springs si es necesario (primera vez)
   if (!bgAnim.IsInitialized()) {
+    bgAnim.Configure(0.18f, 1.0f);
     bgAnim.SetImmediate(btnMat.fill);
   }
   if (!fgAnim.IsInitialized()) {
+    fgAnim.Configure(0.18f, 1.0f);
     fgAnim.SetImmediate(getTargetColor(buttonStyle.foreground));
   }
   if (!borderAnim.IsInitialized()) {
+    borderAnim.Configure(0.18f, 1.0f);
     borderAnim.SetImmediate(btnMat.border);
   }
 
-  // Actualizar objetivos de animación (fill/border desde el material; fg via Style)
-  bgAnim.SetTarget(btnMat.fill, 0.2f,
-                   Easing::EaseOutCubic);
-  fgAnim.SetTarget(getTargetColor(buttonStyle.foreground), 0.2f,
-                   Easing::EaseOutCubic);
-  borderAnim.SetTarget(btnMat.border, 0.2f,
-                       Easing::EaseOutCubic);
+  // Actualizar objetivos (fill/border desde el material; fg via Style)
+  bgAnim.SetTarget(btnMat.fill);
+  fgAnim.SetTarget(getTargetColor(buttonStyle.foreground));
+  borderAnim.SetTarget(btnMat.border);
 
-  // Perf 2.2: Notify context of active animations
-  if (bgAnim.IsAnimating()) ctx->NotifyColorAnimActive(AnimSlot(buttonId, 0));
-  if (fgAnim.IsAnimating()) ctx->NotifyColorAnimActive(AnimSlot(buttonId, 1));
-  if (borderAnim.IsAnimating()) ctx->NotifyColorAnimActive(AnimSlot(buttonId, 2));
+  // brief 10 Part C: keep the spring in the active list while settling.
+  if (bgAnim.IsAnimating()) ctx->NotifySpringColorActive(AnimSlot(buttonId, 0));
+  if (fgAnim.IsAnimating()) ctx->NotifySpringColorActive(AnimSlot(buttonId, 1));
+  if (borderAnim.IsAnimating()) ctx->NotifySpringColorActive(AnimSlot(buttonId, 2));
 
   // Obtener colores animados
   Color bgColor = bgAnim.Get();

@@ -406,6 +406,43 @@ namespace FluentUI {
             }
             ++i;
         }
+        // brief 10 Part C: drive the spring maps with the same swap-pop pattern as
+        // the tween maps above. Springs are removed from the active list once they
+        // settle (IsAnimating()==false).
+        for (size_t i = 0; i < g_ctx->activeSpringColorIds.size(); ) {
+            uint32_t id = g_ctx->activeSpringColorIds[i];
+            auto it = g_ctx->springColors.find(id);
+            if (it != g_ctx->springColors.end()) {
+                it->second.Update(deltaTime);
+                if (!it->second.IsAnimating()) {
+                    g_ctx->activeSpringColorIds[i] = g_ctx->activeSpringColorIds.back();
+                    g_ctx->activeSpringColorIds.pop_back();
+                    continue;
+                }
+            } else {
+                g_ctx->activeSpringColorIds[i] = g_ctx->activeSpringColorIds.back();
+                g_ctx->activeSpringColorIds.pop_back();
+                continue;
+            }
+            ++i;
+        }
+        for (size_t i = 0; i < g_ctx->activeSpringFloatIds.size(); ) {
+            uint32_t id = g_ctx->activeSpringFloatIds[i];
+            auto it = g_ctx->springFloats.find(id);
+            if (it != g_ctx->springFloats.end()) {
+                it->second.Update(deltaTime);
+                if (!it->second.IsAnimating()) {
+                    g_ctx->activeSpringFloatIds[i] = g_ctx->activeSpringFloatIds.back();
+                    g_ctx->activeSpringFloatIds.pop_back();
+                    continue;
+                }
+            } else {
+                g_ctx->activeSpringFloatIds[i] = g_ctx->activeSpringFloatIds.back();
+                g_ctx->activeSpringFloatIds.pop_back();
+                continue;
+            }
+            ++i;
+        }
         for (size_t i = 0; i < g_ctx->activeRippleIds.size(); ) {
             uint32_t id = g_ctx->activeRippleIds[i];
             auto it = g_ctx->rippleEffects.find(id);
@@ -611,6 +648,8 @@ namespace FluentUI {
                 case 10: gcMap(g_ctx->intStates); break;
                 case 11: gcMap(g_ctx->stringStates); break;
                 case 12: gcMap(g_ctx->colorPickerStates); break;
+                case 13: gcMap(g_ctx->springColors); break;  // brief 10 Part C
+                case 14: gcMap(g_ctx->springFloats); break;  // brief 10 Part C
             }
 
             g_ctx->gcMapIndex = (g_ctx->gcMapIndex + 1) % UIContext::GC_MAP_COUNT;

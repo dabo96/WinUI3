@@ -866,7 +866,9 @@ struct UIContext {
 
   // GC for state maps — Issue 11: amortized rotation
   std::unordered_map<uint32_t, uint32_t> lastSeenFrame;
-  static constexpr uint32_t GC_MAP_COUNT = 13;     // Total maps to GC
+  // brief 10 Part C: 13 -> 15 to fold springColors (case 13) and springFloats
+  // (case 14) into the amortized GC rotation.
+  static constexpr uint32_t GC_MAP_COUNT = 15;     // Total maps to GC
   static constexpr uint32_t GC_ROTATE_INTERVAL = 10; // GC one map every N frames
   uint32_t gcMapIndex = 0;                           // Current map being GC'd
 
