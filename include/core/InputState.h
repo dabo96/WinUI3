@@ -50,6 +50,16 @@ public:
   const std::vector<std::string>& DroppedFiles() const { return droppedFiles; }
   bool HasDroppedFiles() const { return !droppedFiles.empty(); }
 
+  // brief 18.7: OS drag-and-drop — text payloads and the drop position (window
+  // coordinates, same space as MouseX/MouseY). dropX/dropY are valid the frame a
+  // file/text drop arrives. osDragActive is true between DROP_BEGIN and
+  // DROP_COMPLETE so widgets can highlight a drop target during the drag.
+  const std::string& DroppedText() const { return droppedText; }
+  bool HasDroppedText() const { return !droppedText.empty(); }
+  float DropX() const { return dropX; }
+  float DropY() const { return dropY; }
+  bool OSDragActive() const { return osDragActive; }
+
   // OS clipboard helpers (platform-centralized). UTF-8 in/out.
   // Brief 18.1: reusable by TextInput/SelectableText/PasswordBox/NumberBox.
   void SetClipboardText(const std::string& utf8);  // SDL_SetClipboardText
@@ -79,5 +89,10 @@ private:
 
   // File drop state (cleared each frame in Update())
   std::vector<std::string> droppedFiles;
+  // brief 18.7: OS drag-drop extras. droppedText/dropX/dropY cleared each frame;
+  // osDragActive persists across frames (toggled by DROP_BEGIN/DROP_COMPLETE).
+  std::string droppedText;
+  float dropX = 0.0f, dropY = 0.0f;
+  bool osDragActive = false;
 };
 } // namespace FluentUI

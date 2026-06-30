@@ -891,6 +891,29 @@ struct UIContext {
   // --- DPI Scaling (Phase 4) ---
   float dpiScale = 1.0f;  // Display scale factor (1.0 = 100%, 1.5 = 150%, 2.0 = 200%)
 
+  // ======================================================================
+  // === brief 18 — OS integration (drag-drop, IME, RTL) ==================
+  // ======================================================================
+
+  // brief 18.7: OS drag-and-drop sinks. When the OS drops files or text on this
+  // window, FluentApp dispatches them here (per-window, since each context owns
+  // its own InputState). dropPos is in window coordinates (same space as the
+  // mouse / widget rects). Wire these from app code to react to dropped paths.
+  std::function<void(const std::vector<std::string>&, Vec2)> onFilesDropped;
+  std::function<void(const std::string&, Vec2)> onTextDropped;
+
+  // brief 18.4: per-field IME ownership. The text field that currently holds the
+  // caret claims IME each frame so SDL_StartTextInput/StopTextInput and the
+  // candidate-window area (SDL_SetTextInputArea) follow focus instead of being
+  // globally on. 0 = no field owns IME. See EnsureTextInputFocus().
+  uint32_t imeOwnerId = 0;
+
+  // brief 18.5: layout direction. RTL mirrors horizontal containers' X axis,
+  // default text alignment and directional icons. Mirror via IsRTL().
+  enum class LayoutDirection : uint8_t { LTR, RTL };
+  LayoutDirection layoutDirection = LayoutDirection::LTR;
+  bool IsRTL() const { return layoutDirection == LayoutDirection::RTL; }
+
   // brief 13: zonas de hit-test publicadas por TitleBar() y leídas por el callback
   // de SDL_SetWindowHitTest (ver TitleBarHitRegions arriba). active se limpia en
   // NewFrame y lo re-fija el widget cada frame.

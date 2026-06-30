@@ -80,6 +80,7 @@ void InputState::Update(SDL_Window* window)
         textInputData->buffer.clear();
     }
     droppedFiles.clear();
+    droppedText.clear();   // brief 18.7
     anyKeyPressed = false;
 
     prevMouseX = mouseX;
@@ -185,10 +186,41 @@ void InputState::ProcessEvent(const SDL_Event& e)
         mouseWheelY += static_cast<float>(e.wheel.y);
         break;
 
+    case SDL_EVENT_DROP_BEGIN:
+        // brief 18.7: an OS drag entered this window — start tracking so widgets
+        // can show a drop-target highlight while the cursor moves over them.
+        osDragActive = true;
+        dropX = e.drop.x;
+        dropY = e.drop.y;
+        break;
+
+    case SDL_EVENT_DROP_POSITION:
+        // Cursor moving inside the window during an active OS drag.
+        osDragActive = true;
+        dropX = e.drop.x;
+        dropY = e.drop.y;
+        break;
+
     case SDL_EVENT_DROP_FILE:
         if (e.drop.data) {
             droppedFiles.emplace_back(e.drop.data);
         }
+        dropX = e.drop.x;
+        dropY = e.drop.y;
+        break;
+
+    case SDL_EVENT_DROP_TEXT:
+        // brief 18.7: dragged text payload (e.g. a URL or selection from another app).
+        if (e.drop.data) {
+            droppedText = e.drop.data;
+        }
+        dropX = e.drop.x;
+        dropY = e.drop.y;
+        break;
+
+    case SDL_EVENT_DROP_COMPLETE:
+        // The OS drag ended (whether or not anything was dropped on us).
+        osDragActive = false;
         break;
 
     // Phase F2: Gamepad navigation — translate buttons to virtual key events

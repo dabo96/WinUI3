@@ -75,6 +75,20 @@ SDL_HitTestResult CustomTitleBarHitTest(SDL_Window* win, const SDL_Point* area,
     }
     return SDL_HITTEST_NORMAL;
 }
+
+// brief 18.7: deliver positioned OS drops (files / text) to the context's sinks.
+// Each context owns its own InputState, so this routes per-window already; the
+// drop position is in window coordinates (same space as widget rects).
+void dispatchOSDrops(UIContext* ctx) {
+    if (!ctx) return;
+    Vec2 pos(ctx->input.DropX(), ctx->input.DropY());
+    if (ctx->onFilesDropped && ctx->input.HasDroppedFiles()) {
+        ctx->onFilesDropped(ctx->input.DroppedFiles(), pos);
+    }
+    if (ctx->onTextDropped && ctx->input.HasDroppedText()) {
+        ctx->onTextDropped(ctx->input.DroppedText(), pos);
+    }
+}
 } // namespace
 
 // ===================== AppWindow (Secondary Windows) =====================
@@ -199,6 +213,8 @@ void AppWindow::processFrame(float dt, SDL_Window* parentWindow, SDL_GLContext p
     SetCurrentContext(ctx_);
 
     ctx_->input.Update(window_);
+
+    dispatchOSDrops(ctx_); // brief 18.7: route OS drops to this window's sinks
 
     NewFrame(dt);
 
@@ -440,6 +456,13 @@ SDL_WindowID FluentApp::getEventWindowID(const SDL_Event& e) {
             return e.button.windowID;
         case SDL_EVENT_MOUSE_WHEEL:
             return e.wheel.windowID;
+        case SDL_EVENT_DROP_BEGIN:
+        case SDL_EVENT_DROP_POSITION:
+        case SDL_EVENT_DROP_FILE:
+        case SDL_EVENT_DROP_TEXT:
+        case SDL_EVENT_DROP_COMPLETE:
+            // brief 18.7: route OS drops to the window they target (multi-window).
+            return e.drop.windowID;
         default:
             return 0;
     }
@@ -527,6 +550,8 @@ void FluentApp::run() {
         if (fileDropFn_ && ctx_->input.HasDroppedFiles()) {
             fileDropFn_(ctx_->input.DroppedFiles());
         }
+        // brief 18.7: dispatch positioned OS drops to the context-level sinks.
+        dispatchOSDrops(ctx_);
 
         // Main window frame
         if (mainGLContext_) SDL_GL_MakeCurrent(window_, mainGLContext_); // GL-only; null on Vulkan
@@ -682,6 +707,7 @@ void FluentApp::beginFrame(float dt) {
     if (fileDropFn_ && ctx_->input.HasDroppedFiles()) {
         fileDropFn_(ctx_->input.DroppedFiles());
     }
+    dispatchOSDrops(ctx_); // brief 18.7
 
     NewFrame(dt);
     shortcuts.ProcessFrame(ctx_->input);
