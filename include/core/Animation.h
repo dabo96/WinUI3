@@ -269,7 +269,7 @@ namespace FluentUI {
         // Interruptible: keeps velocity_. First target initializes in place (no anim).
         // brief 10 Part B: reduceMotion (MotionDuration(1)==0) degrades to a snap.
         void SetTarget(const T& target) {
-            if (!initialized_) { current_ = target; target_ = target; initialized_ = true; active_ = false; return; }
+            if (!initialized_) { current_ = target; target_ = target; velocity_ = Zero(); initialized_ = true; active_ = false; return; }
             if (MotionDuration(1.0f) <= 1e-4f) { SetImmediate(target); return; }
             target_ = target;
             active_ = true;
