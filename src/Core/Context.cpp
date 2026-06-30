@@ -139,6 +139,28 @@ namespace FluentUI {
         return fs.offset.Get();
     }
 
+    // brief 10 Part F: stagger helpers.
+    float StaggerDelaySeconds(int index, float staggerMs, float capMs) {
+        if (index <= 0 || staggerMs <= 0.0f) return 0.0f;
+        float ms = std::min((float)index * staggerMs, capMs);
+        return ms * 0.001f;
+    }
+
+    float StaggeredAppear(UIContext* ctx, uint32_t itemId, int index, float staggerMs,
+                          float enterResponse) {
+        if (!ctx) return 1.0f;
+        auto& a = ctx->floatAnimations[itemId];
+        ctx->lastSeenFrame[itemId] = ctx->frame;
+        if (!a.IsInitialized()) {
+            a.SetImmediate(0.0f);
+            a.SetTarget(1.0f, enterResponse, EasingType::Decelerate);
+            a.SetDelay(StaggerDelaySeconds(index, staggerMs));
+            ctx->NotifyFloatAnimActive(itemId);
+        }
+        if (a.IsAnimating()) ctx->NotifyFloatAnimActive(itemId);
+        return a.Get();
+    }
+
     // brief 10 Part G: union of all active animation sources. Used by the host loop
     // to decide whether to idle (block on events) or render continuously.
     bool UIContext::AnyAnimationActive() const {

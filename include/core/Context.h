@@ -1101,6 +1101,16 @@ PresenceResult BeginPresence(UIContext* ctx, uint32_t nodeId, bool active,
 Vec2 LayoutFlipOffset(UIContext* ctx, uint32_t itemId, const Vec2& currentPos,
                       float response = 0.32f, float dampingRatio = 0.85f);
 
+// brief 10 Part F: stagger. StaggerDelaySeconds maps a child index to an entrance
+// delay (index * staggerMs, capped so the last child still starts within capMs).
+float StaggerDelaySeconds(int index, float staggerMs, float capMs = 120.0f);
+// Per-item staggered entrance factor [0..1]. On an item's first appearance it starts
+// a Decelerate tween 0→1 delayed by StaggerDelaySeconds(index, staggerMs); returns
+// the current factor each frame (multiply into the item's opacity via PushOpacity,
+// and/or use as a slide/scale factor). Backed by the existing floatAnimations map.
+float StaggeredAppear(UIContext* ctx, uint32_t itemId, int index, float staggerMs,
+                      float enterResponse = 0.22f);
+
 // brief 10 Part B: seed g_ctx->motion.reduceMotion from the OS accessibility flag
 // (Windows: SPI_GETCLIENTAREAANIMATION). No-op / default false on other platforms.
 // Safe to call once after CreateContext(); FluentApp::run() calls it for you.

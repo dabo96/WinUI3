@@ -380,8 +380,10 @@ bool IsFlyoutOpen(const std::string& id);
 
 /// Menu popup built on BeginFlyout: icon/label/accelerator rows, checkable items,
 /// separators and keyboard navigation (arrows/Enter/Esc). Submenus are TODO.
+/// brief 10 Part F: staggerMs cascades each item's entrance (0 = no stagger). The
+/// total delay is capped (~120ms) so long menus still appear promptly.
 void MenuFlyout(const std::string& id, const Rect& anchorRect,
-                const std::vector<MenuEntry>& entries);
+                const std::vector<MenuEntry>& entries, float staggerMs = 18.0f);
 
 // === Signature controls (brief 14, sections 1-4, 7-9) ========================
 

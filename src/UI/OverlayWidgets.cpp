@@ -1014,7 +1014,7 @@ bool IsFlyoutOpen(const std::string &id) {
 }
 
 void MenuFlyout(const std::string &id, const Rect &anchorRect,
-                const std::vector<MenuEntry> &entries) {
+                const std::vector<MenuEntry> &entries, float staggerMs) {
   UIContext *ctx = GetContext();
   if (!ctx)
     return;
@@ -1085,6 +1085,7 @@ void MenuFlyout(const std::string &id, const Rect &anchorRect,
   }
 
   int invokeIndex = -1;
+  int visIndex = 0; // brief 10 Part F: count of non-separator rows (for stagger)
   for (int i = 0; i < (int)entries.size(); ++i) {
     const MenuEntry &e = entries[i];
     Vec2 rowPos = ctx->cursorPos;
@@ -1104,6 +1105,17 @@ void MenuFlyout(const std::string &id, const Rect &anchorRect,
       hl = i; // el ratón fija el highlight
     bool highlighted = e.enabled && hl == i;
     bool clicked = hover && ctx->input.IsMousePressed(0);
+
+    // brief 10 Part F: cascade each item's entrance. Opacity scope wraps the whole
+    // row's emitted draws (closed in PopOpacity before AdvanceCursor). Nests under
+    // the flyout-wide PushOpacity(pres.t), so the row fades = enter * stagger.
+    uint32_t rowId = GenerateId("FLYOUTMENU_ITEM:",
+                                (id + ":" + std::to_string(i)).c_str());
+    float rowT = (staggerMs > 0.0f)
+                     ? StaggeredAppear(ctx, rowId, visIndex, staggerMs)
+                     : 1.0f;
+    ctx->renderer.PushOpacity(rowT);
+    ++visIndex;
 
     if (highlighted) {
       ctx->renderer.DrawRectFilled(rowPos, rowSize, panelStyle.headerBackground,
@@ -1156,6 +1168,8 @@ void MenuFlyout(const std::string &id, const Rect &anchorRect,
       ctx->renderer.DrawLine(Vec2(ax + s, ay), Vec2(ax - s, ay + s), textColor,
                              1.5f);
     }
+
+    ctx->renderer.PopOpacity(); // brief 10 Part F: close the per-row stagger scope
 
     AdvanceCursor(ctx, rowSize);
 
