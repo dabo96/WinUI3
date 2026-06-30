@@ -107,6 +107,25 @@ void UIBuilder::progressBar(float fraction, const Vec2& size, const std::string&
     ProgressBar(fraction, size, overlay);
 }
 
+// --- Feedback & estado (brief 15) ---
+bool UIBuilder::infoBar(const std::string& id, InfoSeverity severity,
+                        const std::string& title, const std::string& message,
+                        bool closable, const std::string& actionText) {
+    return InfoBar(id, severity, title, message, closable, actionText);
+}
+void UIBuilder::progressRing(const std::string& id, float size, float progress) {
+    ProgressRing(id, size, progress);
+}
+void UIBuilder::badge(int count, bool dot, std::optional<Vec2> anchorTopRight) {
+    Badge(count, dot, anchorTopRight);
+}
+void UIBuilder::skeleton(const Vec2& size, float cornerRadius) {
+    Skeleton(size, cornerRadius);
+}
+void UIBuilder::skeletonText(int lines, float lineHeight, float lastLineFraction) {
+    SkeletonText(lines, lineHeight, lastLineFraction);
+}
+
 bool UIBuilder::textInput(const std::string& label, std::string* value, float width, size_t maxLength) {
     return TextInput(label, value, width, false, std::nullopt, nullptr, maxLength);
 }

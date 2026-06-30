@@ -24,6 +24,8 @@ add_library(FluentUI
     UI/OverlayWidgets.cpp
     UI/PlotWidgets.cpp
     UI/DateTimeWidgets.cpp
+    UI/FeedbackWidgets.cpp
+
     Demo/DemoWindow.cpp
     Demo/StyleEditor.cpp
     Demo/ItemPicker.cpp

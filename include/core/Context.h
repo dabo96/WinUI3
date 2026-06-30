@@ -246,6 +246,28 @@ struct TableFrameContext {
   bool cellClipPushed = false;       // Whether TableSetCell has a pending clip to pop
 };
 
+// ─── brief 15 (Feedback): cola de toasts ──────────────────────────────────────
+// Instancia viva de un toast en la cola global del contexto. Definida aquí (y no
+// en UI/FeedbackWidgets.h) para que la cola sobreviva entre frames dentro de
+// UIContext. El struct no depende de FeedbackWidgets.h salvo InfoSeverity, que se
+// declara aquí como enum opaco (tipo completo: tamaño conocido = int) y se define
+// con sus enumeradores en UI/FeedbackWidgets.h. Gestionada por ShowToast() /
+// RenderToasts(). Ver brief 15.
+enum class InfoSeverity : int; // definición real (enumeradores) en UI/FeedbackWidgets.h
+struct ToastInstance {
+  uint64_t id = 0;                 // id único incremental (apilado/animación estable)
+  std::string title;
+  std::string message;
+  InfoSeverity severity{};         // value-init = Informational (0)
+  float durationSec = 4.0f;        // tiempo visible antes de auto-descartarse
+  std::string actionText;          // texto del botón de acción opcional
+  std::function<void()> onAction;  // callback al pulsar la acción
+  float age = 0.0f;                // tiempo visible acumulado (pausado por hover)
+  float enterAnim = 0.0f;          // 0→1 progreso de entrada (fade/slide; sin brief 10)
+  float exitAnim = 1.0f;           // 1→0 progreso de salida (fade) tras descartarse
+  bool dismissed = false;          // marcado para salir (por tiempo, acción o cierre)
+};
+
 struct UIContext {
   Renderer renderer;
   InputState input;
@@ -284,6 +306,13 @@ struct UIContext {
   float time = 0.0f;        // tiempo total transcurrido
   Vec2 lastItemPos{0.0f, 0.0f};
   Vec2 lastItemSize{0.0f, 0.0f};
+
+  // ─── brief 15 (Feedback): cola global de toasts ────────────────────────────
+  // Encolada por ShowToast() y consumida/renderizada por RenderToasts() (una vez
+  // por frame, capa Overlay). Vive aquí para persistir el estado de animación y
+  // el temporizador de auto-descarte entre frames. Ver ToastInstance (arriba).
+  std::vector<ToastInstance> toasts;
+  uint64_t nextToastId = 1;
 
   bool initialized = false;
 
