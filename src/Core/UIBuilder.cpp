@@ -795,4 +795,35 @@ int UIBuilder::flipView(const std::string& id, int itemCount,
                     currentIndex);
 }
 
+// ─── BRIEF 13: App shell & navegación (sugar) ───────────────────────────────
+
+std::string UIBuilder::navigationView(const std::string& id,
+                                      const std::vector<NavItem>& items,
+                                      std::string* selectedKey, NavDisplayMode mode,
+                                      const std::vector<NavItem>& footerItems) {
+    return NavigationView(id, items, selectedKey, mode, footerItems);
+}
+
+std::string UIBuilder::navigationView(const std::string& id,
+                                      const std::vector<NavItem>& items,
+                                      std::string* selectedKey) {
+    return NavigationView(id, items, selectedKey);
+}
+
+void UIBuilder::commandBar(const std::string& id,
+                           const std::vector<CommandItem>& primary,
+                           const std::vector<CommandItem>& secondary) {
+    CommandBar(id, primary, secondary);
+}
+
+int UIBuilder::breadcrumbBar(const std::string& id,
+                             const std::vector<std::string>& crumbs) {
+    return BreadcrumbBar(id, crumbs);
+}
+
+TitleBarResult UIBuilder::titleBar(const std::string& id, const std::string& title,
+                                   uint32_t icon, std::function<void()> centerContent) {
+    return TitleBar(id, title, icon, std::move(centerContent));
+}
+
 } // namespace FluentUI

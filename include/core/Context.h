@@ -14,12 +14,30 @@
 #include <map>
 #include <functional>
 #include <cstdarg>
+#include <mutex>
 
 
 namespace FluentUI {
 
 class RenderBackend;
 struct SharedResourcePool;
+
+// ─── brief 13: regiones de hit-test de la TitleBar custom ─────────────────────
+// El widget TitleBar() (hilo de UI) publica aquí la zona arrastrable (caption) y
+// las exclusiones (caption buttons + contenido interactivo). El callback de
+// SDL_SetWindowHitTest registrado por FluentApp las lee — y ese callback puede
+// ejecutarse en el hilo de la cola de eventos del SO — de ahí el mutex. Las
+// coordenadas están en el espacio del viewport del renderer, que coincide con el
+// de SDL_GetWindowSize (= el de SDL_HitTest `area`), así que el callback no
+// necesita convertir DPI. `active` se reinicia cada frame en NewFrame().
+struct TitleBarHitRegions {
+  std::mutex mutex;
+  bool active = false;          ///< Un TitleBar() se construyó este frame.
+  Rect caption;                 ///< Rect arrastrable (mover ventana).
+  std::vector<Rect> exclusions; ///< Sub-rects NO arrastrables dentro del caption.
+  float resizeBorder = 6.0f;    ///< Grosor (px) de los bordes de redimensión.
+  bool resizable = true;        ///< Habilita zonas RESIZE_* en los bordes.
+};
 
 // Logging system
 enum class LogLevel { Debug, Info, Warning, Error };
@@ -872,6 +890,11 @@ struct UIContext {
 
   // --- DPI Scaling (Phase 4) ---
   float dpiScale = 1.0f;  // Display scale factor (1.0 = 100%, 1.5 = 150%, 2.0 = 200%)
+
+  // brief 13: zonas de hit-test publicadas por TitleBar() y leídas por el callback
+  // de SDL_SetWindowHitTest (ver TitleBarHitRegions arriba). active se limpia en
+  // NewFrame y lo re-fija el widget cada frame.
+  TitleBarHitRegions titleBarHit;
 
   // --- Phase B1: Last item published state ---
   // Each widget that returns a bool (button, textInput, slider, drag, checkbox, etc.)

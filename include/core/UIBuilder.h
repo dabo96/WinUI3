@@ -27,6 +27,14 @@ enum class InfoSeverity : int;
 // brief 16: collection types (defined in UI/Widgets.h).
 struct DataColumn;
 struct DataGridResult;
+// brief 13: app-shell types (defined in UI/NavigationWidgets.h, via Widgets.h).
+// Forward declared so the sugar signatures below compile without pulling the full
+// header in. CommandItem is forward-declared too (mirrors MenuEntry above).
+struct CommandItem;
+struct NavItem;
+struct NavFrame;
+struct TitleBarResult;
+enum class NavDisplayMode;
 
 class UIBuilder {
 public:
@@ -214,6 +222,25 @@ public:
     int flipView(const std::string& id, int itemCount,
                  std::function<void(UIBuilder&, int index)> itemBuilder,
                  int* currentIndex = nullptr);
+
+    // ─── BRIEF 13: App shell & navegación (sugar) ──────────────────────────
+    /// NavigationView con modo y footer explícitos. @return key seleccionada.
+    std::string navigationView(const std::string& id,
+                               const std::vector<NavItem>& items,
+                               std::string* selectedKey, NavDisplayMode mode,
+                               const std::vector<NavItem>& footerItems);
+    /// Conveniencia: modo Expanded, sin footer.
+    std::string navigationView(const std::string& id,
+                               const std::vector<NavItem>& items,
+                               std::string* selectedKey);
+    void commandBar(const std::string& id,
+                    const std::vector<CommandItem>& primary,
+                    const std::vector<CommandItem>& secondary = {});
+    int breadcrumbBar(const std::string& id,
+                      const std::vector<std::string>& crumbs);
+    TitleBarResult titleBar(const std::string& id, const std::string& title,
+                            uint32_t icon = 0,
+                            std::function<void()> centerContent = nullptr);
 
     // --- Context access ---
     UIContext* context() { return ctx; }

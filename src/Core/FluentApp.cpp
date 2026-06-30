@@ -32,6 +32,49 @@ Uint64 BackendWindowFlag() {
     }
     return SDL_WINDOW_OPENGL;
 }
+
+// brief 13: SDL hit-test callback for borderless windows with a custom title bar.
+// Runs on the thread that pumps the OS event queue (the main thread here, during
+// SDL_PollEvent). Reads the zones published by FluentUI::TitleBar() under the
+// context mutex. `area` is in window-point coordinates, the same space the
+// renderer viewport (SDL_GetWindowSize) and the widget rects use, so no DPI
+// conversion is needed.
+SDL_HitTestResult CustomTitleBarHitTest(SDL_Window* win, const SDL_Point* area,
+                                        void* data) {
+    UIContext* ctx = static_cast<UIContext*>(data);
+    if (!ctx || !area) return SDL_HITTEST_NORMAL;
+
+    int w = 0, h = 0;
+    SDL_GetWindowSize(win, &w, &h);
+
+    std::lock_guard<std::mutex> lk(ctx->titleBarHit.mutex);
+    TitleBarHitRegions& tb = ctx->titleBarHit;
+    float fx = static_cast<float>(area->x), fy = static_cast<float>(area->y);
+
+    // Resize borders take precedence at the window edges.
+    if (tb.resizable && tb.resizeBorder > 0.0f) {
+        float b = tb.resizeBorder;
+        bool left = fx < b, right = fx > (float)w - b;
+        bool top = fy < b, bottom = fy > (float)h - b;
+        if (top && left) return SDL_HITTEST_RESIZE_TOPLEFT;
+        if (top && right) return SDL_HITTEST_RESIZE_TOPRIGHT;
+        if (bottom && left) return SDL_HITTEST_RESIZE_BOTTOMLEFT;
+        if (bottom && right) return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+        if (top) return SDL_HITTEST_RESIZE_TOP;
+        if (bottom) return SDL_HITTEST_RESIZE_BOTTOM;
+        if (left) return SDL_HITTEST_RESIZE_LEFT;
+        if (right) return SDL_HITTEST_RESIZE_RIGHT;
+    }
+
+    // Draggable caption strip, minus the interactive exclusions (caption buttons,
+    // center content) which must stay clickable.
+    if (tb.active && tb.caption.Contains(Vec2(fx, fy))) {
+        for (const Rect& ex : tb.exclusions)
+            if (ex.Contains(Vec2(fx, fy))) return SDL_HITTEST_NORMAL;
+        return SDL_HITTEST_DRAGGABLE;
+    }
+    return SDL_HITTEST_NORMAL;
+}
 } // namespace
 
 // ===================== AppWindow (Secondary Windows) =====================
@@ -253,6 +296,8 @@ FluentApp::FluentApp(const std::string& title, const AppConfig& config)
     Uint64 flags = BackendWindowFlag();
     if (config.resizable) flags |= SDL_WINDOW_RESIZABLE;
     flags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    // brief 13: borderless chrome so the custom TitleBar() drives the window.
+    if (config.useCustomTitleBar) flags |= SDL_WINDOW_BORDERLESS;
 
     window_ = SDL_CreateWindow(title.c_str(), config.width, config.height, flags);
     if (!window_) {
@@ -276,6 +321,14 @@ FluentApp::FluentApp(const std::string& title, const AppConfig& config)
     ctx_->style = config.darkMode ? GetDarkFluentStyle() : GetDefaultFluentStyle();
 
     AutoLoadIconFont(ctx_, config.iconFontPath, config.iconFontSize);
+
+    // brief 13: install the hit-test so TitleBar() can drag/resize the window.
+    if (config.useCustomTitleBar) {
+        if (!SDL_SetWindowHitTest(window_, CustomTitleBarHitTest, ctx_)) {
+            Log(LogLevel::Warning, "FluentApp: SDL_SetWindowHitTest failed: %s",
+                SDL_GetError());
+        }
+    }
 
     int w, h;
     SDL_GetWindowSize(window_, &w, &h);
@@ -419,7 +472,12 @@ void FluentApp::run() {
 
             if (eventWinID == mainWindowID || eventWinID == 0) {
                 // Main window or global event
-                if (e.type == SDL_EVENT_WINDOW_RESIZED) {
+                if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+                    // brief 13: custom TitleBar close button posts this for the main
+                    // window; the OS X button (non-borderless) sends it too.
+                    running_ = false;
+                    break;
+                } else if (e.type == SDL_EVENT_WINDOW_RESIZED) {
                     int w, h;
                     SDL_GetWindowSize(window_, &w, &h);
                     ctx_->renderer.SetViewport(w, h);

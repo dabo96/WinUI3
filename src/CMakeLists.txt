@@ -23,6 +23,7 @@ add_library(FluentUI
     UI/CollectionWidgets.cpp
     UI/MenuWidgets.cpp
     UI/OverlayWidgets.cpp
+    UI/NavigationWidgets.cpp
     UI/PlotWidgets.cpp
     UI/DateTimeWidgets.cpp
     UI/FeedbackWidgets.cpp

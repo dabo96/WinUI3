@@ -29,6 +29,13 @@ struct AppConfig {
     int targetFPS = 60;      ///< Frame rate cap (0 = vsync only).
     bool enableDPI = true;   ///< Auto-detect and apply DPI scaling.
 
+    /// brief 13: borderless window with a custom title bar. When true, the window
+    /// is created with SDL_WINDOW_BORDERLESS and a hit-test is installed so the
+    /// FluentUI::TitleBar() widget drives drag/resize/caption-buttons. Opt-in so
+    /// the default window chrome is preserved for existing apps. The app MUST draw
+    /// a TitleBar() each frame (otherwise the window has no draggable region).
+    bool useCustomTitleBar = false;
+
     /// Optional override for the icon font path. When empty (default),
     /// FluentApp searches for `assets/fonts/lucide.ttf` next to the
     /// executable, the current working directory, and the

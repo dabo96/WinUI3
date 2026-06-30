@@ -383,6 +383,11 @@ bool IsFlyoutOpen(const std::string& id);
 void MenuFlyout(const std::string& id, const Rect& anchorRect,
                 const std::vector<MenuEntry>& entries);
 
+// brief 13: App shell & navegación (NavigationView, NavFrame, CommandBar,
+// BreadcrumbBar, TitleBar). Incluido aquí — tras CommandItem/MenuEntry — porque
+// CommandBar reusa CommandItem y la overflow usa MenuFlyout.
+#include "UI/NavigationWidgets.h"
+
 // ─── Lists ──────────────────────────────────────────────────────────────────
 
 /// Single-selection list view.

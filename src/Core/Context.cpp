@@ -316,6 +316,13 @@ namespace FluentUI {
         // Actualizar tiempo
         g_ctx->deltaTime = deltaTime;
         g_ctx->time += deltaTime;
+
+        // brief 13: el TitleBar() volverá a publicar sus zonas este frame; si no se
+        // dibuja ninguna, el callback de hit-test no marcará nada como arrastrable.
+        {
+            std::lock_guard<std::mutex> lk(g_ctx->titleBarHit.mutex);
+            g_ctx->titleBarHit.active = false;
+        }
         
         // Perf 2.2: Only update active animations (O(active) instead of O(total))
         for (size_t i = 0; i < g_ctx->activeColorAnimIds.size(); ) {
