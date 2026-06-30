@@ -24,6 +24,9 @@ enum class Breakpoint;
 // opaco con tipo subyacente fijo para declarar las firmas de azúcar de feedback
 // sin incluir el header de widgets aquí.
 enum class InfoSeverity : int;
+// brief 16: collection types (defined in UI/Widgets.h).
+struct DataColumn;
+struct DataGridResult;
 
 class UIBuilder {
 public:
@@ -194,6 +197,23 @@ public:
     // --- DPI helpers (Phase 4) ---
     float dpiScale() const;
     float scaled(float value) const;  // Returns value * dpiScale
+
+    // ─── BRIEF 16: Collections (sugar) ──────────────────────────────────────
+    void gridView(const std::string& id, int itemCount, const Vec2& itemSize,
+                  std::function<void(UIBuilder&, int index)> itemBuilder,
+                  float gap = 8.0f, float minItemWidth = 0.0f);
+    DataGridResult dataGrid(const std::string& id, const std::vector<DataColumn>& cols,
+                            int rowCount,
+                            std::function<std::string(int row, int col)> getCell,
+                            std::function<void(int row, int col, const std::string&)> setCell);
+    int pagination(const std::string& id, int pageCount, int* currentPage = nullptr);
+    void expanderList(const std::string& id, int itemCount,
+                      std::function<std::string(int)> headerFn,
+                      std::function<void(UIBuilder&, int)> bodyFn,
+                      bool accordion = false);
+    int flipView(const std::string& id, int itemCount,
+                 std::function<void(UIBuilder&, int index)> itemBuilder,
+                 int* currentIndex = nullptr);
 
     // --- Context access ---
     UIContext* context() { return ctx; }

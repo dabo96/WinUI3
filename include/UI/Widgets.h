@@ -592,6 +592,83 @@ void PopTextColor();
 /// Draw a 2px focus ring around a widget for keyboard navigation.
 void DrawAccessibilityFocusRing(const Vec2& pos, const Vec2& size);
 
+// ═════════════════════════════════════════════════════════════════════════════
+// BRIEF 16 — Colecciones a escala de app (GridView, DataGrid, Pagination,
+//            ExpanderList, FlipView). Implementación en src/UI/ListWidgets.cpp
+//            (GridView/DataGrid/ExpanderList) y src/UI/CollectionWidgets.cpp
+//            (Pagination/FlipView).
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// GridView: tile/mosaic of items that reflows by available width and virtualizes
+/// like ListView (only visible rows are built). Calls @p itemBuilder(index) for
+/// each visible item with the cell width pinned via a Fixed constraint.
+/// Single-selection + 2D keyboard focus (arrows) when the grid has focus.
+/// @param itemSize     Cell size. When @p minItemWidth <= 0, columns are computed
+///                     from itemSize.x; cell width stays itemSize.x.
+/// @param gap          Spacing between cells (both axes).
+/// @param minItemWidth >0 → fluid columns: count derived from width, cells stretch
+///                     to share the row (cell width >= minItemWidth).
+void GridView(const std::string& id, int itemCount, Vec2 itemSize,
+              const std::function<void(int index)>& itemBuilder,
+              float gap = 8.0f, float minItemWidth = 0.0f);
+
+/// Column descriptor for DataGrid.
+struct DataColumn {
+  std::string header;
+  float width = 120.0f;
+  bool sortable = true;
+  bool resizable = true;
+  bool editable = false;
+  enum class Type { Text, Number, Bool, Choice } type = Type::Text;
+  std::vector<std::string> choices; ///< For Type::Choice (fallback editor uses text).
+};
+
+/// Result of a DataGrid frame. Indices are in the caller's ORIGINAL (logical)
+/// column space, regardless of any visual reordering done by dragging headers.
+struct DataGridResult {
+  int sortedColumn = -1;   ///< Logical column currently sorted, or -1.
+  bool ascending = true;
+  int editedRow = -1;      ///< Row whose cell was committed this frame, or -1.
+  int editedCol = -1;      ///< Logical column committed this frame, or -1.
+};
+
+/// DataGrid: an app-grade editable data grid built on top of the existing Table
+/// (frozen columns / sort / resize / row virtualization are reused). Adds column
+/// REORDER (drag a header to permute columns; persisted per id) and inline cell
+/// EDITING (double-click / Enter on an editable cell; confirm with Enter/blur,
+/// cancel with Esc). Editors by type: Text/Number/Choice → TextInput (fallback —
+/// NumberBox/ComboBox of brief 14 do not exist yet); Bool → Checkbox.
+/// @param getCell  Returns the display string for (row, logicalCol). For Bool,
+///                 "true"/"1"/"yes" (case-insensitive) reads as checked.
+/// @param setCell  Called with the new value on commit (logical row/col).
+DataGridResult DataGrid(const std::string& id, const std::vector<DataColumn>& cols,
+                        int rowCount,
+                        const std::function<std::string(int row, int col)>& getCell,
+                        const std::function<void(int row, int col, const std::string& newVal)>& setCell);
+
+/// Pagination control: ‹ 1 2 … 8 9 … 42 › with collapse of the middle range.
+/// Click a page to navigate; Left/Right arrows when focused. Returns the current
+/// 0-based page. @p currentPage is optional persistent storage (else per-id state).
+int Pagination(const std::string& id, int pageCount, int* currentPage = nullptr);
+
+/// ExpanderList: a vertical list of collapsible headers (built on CollapsingHeader).
+/// @param headerFn  Returns the header label for an item.
+/// @param bodyFn    Builds the expanded body for an item.
+/// @param accordion When true, opening one item closes the others (open index in
+///                  intStates); otherwise each item toggles independently.
+/// Body height animation (brief 10) degrades to snap (open/closed).
+void ExpanderList(const std::string& id, int itemCount,
+                  const std::function<std::string(int)>& headerFn,
+                  const std::function<void(int)>& bodyFn,
+                  bool accordion = false);
+
+/// FlipView / Carousel: one item visible at a time with ‹ › arrows and dot
+/// indicators. Returns the current index. @p currentIndex is optional persistent
+/// storage (else per-id state). Navigation wraps. Slide transition (brief 10) is a
+/// lightweight slide-in; degrades gracefully to a cut when motion is unavailable.
+int FlipView(const std::string& id, int itemCount,
+             const std::function<void(int index)>& itemBuilder, int* currentIndex = nullptr);
+
 /// @}
 
 } // namespace FluentUI

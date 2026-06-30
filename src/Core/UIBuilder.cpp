@@ -758,4 +758,41 @@ float UIBuilder::scaled(float value) const {
     return ctx ? value * ctx->dpiScale : value;
 }
 
+// ─── BRIEF 16: Collections (sugar) ──────────────────────────────────────────
+
+void UIBuilder::gridView(const std::string& id, int itemCount, const Vec2& itemSize,
+                         std::function<void(UIBuilder&, int)> itemBuilder,
+                         float gap, float minItemWidth) {
+    GridView(id, itemCount, itemSize,
+             [this, &itemBuilder](int index) { if (itemBuilder) itemBuilder(*this, index); },
+             gap, minItemWidth);
+}
+
+DataGridResult UIBuilder::dataGrid(const std::string& id,
+                                   const std::vector<DataColumn>& cols, int rowCount,
+                                   std::function<std::string(int, int)> getCell,
+                                   std::function<void(int, int, const std::string&)> setCell) {
+    return DataGrid(id, cols, rowCount, getCell, setCell);
+}
+
+int UIBuilder::pagination(const std::string& id, int pageCount, int* currentPage) {
+    return Pagination(id, pageCount, currentPage);
+}
+
+void UIBuilder::expanderList(const std::string& id, int itemCount,
+                             std::function<std::string(int)> headerFn,
+                             std::function<void(UIBuilder&, int)> bodyFn,
+                             bool accordion) {
+    ExpanderList(id, itemCount, headerFn,
+                 [this, &bodyFn](int i) { if (bodyFn) bodyFn(*this, i); }, accordion);
+}
+
+int UIBuilder::flipView(const std::string& id, int itemCount,
+                        std::function<void(UIBuilder&, int)> itemBuilder,
+                        int* currentIndex) {
+    return FlipView(id, itemCount,
+                    [this, &itemBuilder](int index) { if (itemBuilder) itemBuilder(*this, index); },
+                    currentIndex);
+}
+
 } // namespace FluentUI
