@@ -137,10 +137,9 @@ std::string GroupDigits(const std::string& digits, const LocaleFormat& f) {
     return rev;
 }
 
-std::string Replace2(const std::string& num, int v) {
+std::string Pad2(int v) {
     char b[8];
     std::snprintf(b, sizeof(b), "%02d", v);
-    (void)num;
     return b;
 }
 
@@ -289,12 +288,12 @@ std::string FormatTime(int hour, int minute, int second, bool h24) {
         h = hour % 12;
         if (h == 0) h = 12;
     }
-    out += Replace2("", h);
+    out += Pad2(h);
     out += ":";
-    out += Replace2("", minute);
+    out += Pad2(minute);
     if (second >= 0) {
         out += ":";
-        out += Replace2("", second);
+        out += Pad2(second);
     }
     out += suffix;
     return out;

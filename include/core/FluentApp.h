@@ -29,6 +29,11 @@ struct AppConfig {
     int targetFPS = 60;      ///< Frame rate cap (0 = vsync only).
     bool enableDPI = true;   ///< Auto-detect and apply DPI scaling.
 
+    /// brief 18.3: attach the Windows UI Automation provider (screen-reader peer)
+    /// to the main window. Opt-in because it subclasses the OS window proc; the
+    /// default-off keeps existing apps untouched. No effect on non-Windows.
+    bool enableAccessibility = false;
+
     /// brief 13: borderless window with a custom title bar. When true, the window
     /// is created with SDL_WINDOW_BORDERLESS and a hit-test is installed so the
     /// FluentUI::TitleBar() widget drives drag/resize/caption-buttons. Opt-in so

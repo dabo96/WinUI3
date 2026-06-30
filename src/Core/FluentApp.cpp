@@ -3,6 +3,7 @@
 #include "core/DockSystem.h"
 #include "core/LayoutSerializer.h"
 #include "core/OpenGLBackend.h"
+#include "core/Accessibility.h"   // brief 18.3: InitUIAutomation/ShutdownUIAutomation
 #include "UI/Widgets.h"
 #include "Theme/FluentTheme.h"
 #include <SDL3/SDL_vulkan.h>
@@ -88,6 +89,20 @@ void dispatchOSDrops(UIContext* ctx) {
     if (ctx->onTextDropped && ctx->input.HasDroppedText()) {
         ctx->onTextDropped(ctx->input.DroppedText(), pos);
     }
+}
+
+// brief 18.3: attach the platform accessibility provider to an OS window. Pulls
+// the native HWND out of SDL on Windows (as an opaque void*, so this TU needs no
+// <windows.h>); no-op elsewhere.
+void AttachAccessibility(SDL_Window* window, UIContext* ctx) {
+#ifdef _WIN32
+    if (!window) return;
+    void* hwnd = SDL_GetPointerProperty(
+        SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+    if (hwnd) InitUIAutomation(hwnd, ctx);
+#else
+    (void)window; (void)ctx;
+#endif
 }
 } // namespace
 
@@ -362,6 +377,11 @@ FluentApp::FluentApp(const std::string& title, const AppConfig& config)
     // brief 18.4: text input is started per focused field (see TextInput), not globally.
     lastTime_ = SDL_GetTicks();
     initialized_ = true;
+
+    // brief 18.3: attach the Windows UI Automation provider to the main window so
+    // screen readers (Narrator/NVDA) see a FluentUI automation peer. Opt-in
+    // (subclasses the window proc). No-op on non-Windows.
+    if (config.enableAccessibility) AttachAccessibility(window_, ctx_);
 }
 
 FluentApp::FluentApp(const std::string& title, int width, int height)
@@ -405,6 +425,12 @@ FluentApp::FluentApp(SDL_Window* externalWindow, SDL_GLContext externalGLContext
 }
 
 FluentApp::~FluentApp() {
+    // brief 18.3: detach the UIA provider and restore the window proc BEFORE the
+    // window/context are torn down.
+#ifdef _WIN32
+    ShutdownUIAutomation();
+#endif
+
     // Destroy secondary windows first
     secondaryWindows_.clear();
 
