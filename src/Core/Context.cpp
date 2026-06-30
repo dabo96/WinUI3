@@ -6,7 +6,12 @@
 #include "Theme/FluentTheme.h"
 #include <cassert>
 #if defined(_WIN32)
-#include <windows.h> // brief 10 Part B: SystemParametersInfo (SPI_GETCLIENTAREAANIMATION)
+// brief 10 Part B: query the OS "reduce animations" preference without pulling in
+// <windows.h> here (it would inject the min/max and DrawText macros that clash with
+// std::min/std::max and Renderer::DrawText across this TU). Forward-declare the one
+// API we need. SPI_GETCLIENTAREAANIMATION == 0x1042.
+extern "C" __declspec(dllimport) int __stdcall SystemParametersInfoA(
+    unsigned int uiAction, unsigned int uiParam, void* pvParam, unsigned int fWinIni);
 #endif
 
 namespace FluentUI {
@@ -71,9 +76,10 @@ namespace FluentUI {
     void InitMotionFromOS() {
         if (!g_ctx) return;
 #if defined(_WIN32)
-        BOOL clientAreaAnim = TRUE; // default: animations on
-        if (SystemParametersInfoA(SPI_GETCLIENTAREAANIMATION, 0, &clientAreaAnim, 0)) {
-            g_ctx->motion.reduceMotion = (clientAreaAnim == FALSE);
+        int clientAreaAnim = 1; // default: animations on
+        if (SystemParametersInfoA(0x1042 /*SPI_GETCLIENTAREAANIMATION*/, 0,
+                                  &clientAreaAnim, 0)) {
+            g_ctx->motion.reduceMotion = (clientAreaAnim == 0);
         }
 #else
         // No portable SDL query for "reduce motion"; leave the default (false). Hosts

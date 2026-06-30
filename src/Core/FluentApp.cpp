@@ -503,6 +503,9 @@ void FluentApp::run() {
     }
 
     if (initFn_) initFn_();
+    // brief 10 Part B: honor the OS "reduce animations" preference at startup.
+    SetCurrentContext(ctx_);
+    InitMotionFromOS();
     running_ = true;
 
     SDL_WindowID mainWindowID = SDL_GetWindowID(window_);
@@ -514,6 +517,19 @@ void FluentApp::run() {
 
         // Update main window input
         ctx_->input.Update(window_);
+
+        // brief 10 Part G: idle/wake. When nothing is animating (and there are no
+        // secondary windows whose animations this context can't see), block on the
+        // event queue instead of spinning at max FPS. The short cap keeps time-based
+        // effects (e.g. text caret blink) ticking. No-op for the embedded render path
+        // (hosts drive their own loop and never call run()), and skipped whenever an
+        // animation is in flight so motion stays smooth.
+        if (secondaryWindows_.empty() && !ctx_->AnyAnimationActive()) {
+            SDL_Event we;
+            if (SDL_WaitEventTimeout(&we, 100)) {
+                SDL_PushEvent(&we); // re-queue for the unified poll loop below
+            }
+        }
 
         // Poll ALL events and route to correct window
         SDL_Event e;
