@@ -880,4 +880,40 @@ TitleBarResult UIBuilder::titleBar(const std::string& id, const std::string& tit
     return TitleBar(id, title, icon, std::move(centerContent));
 }
 
+// ─── BRIEF 17: Texto y contenido rico (sugar) ───────────────────────────────
+
+void UIBuilder::selectableText(const std::string& id, const std::string& text,
+                               float fontSize, bool wrap) {
+    SelectableText(id, text, fontSize, wrap);
+}
+
+bool UIBuilder::hyperlink(const std::string& text, const std::string& url,
+                          float fontSize) {
+    return HyperlinkButton(text, url, fontSize);
+}
+
+std::string UIBuilder::autoSuggestBox(
+    const std::string& id, std::string* text,
+    const std::function<std::vector<std::string>(const std::string&)>& suggestionsFn,
+    const std::string& placeholder) {
+    return AutoSuggestBox(id, text, suggestionsFn, placeholder);
+}
+
+bool UIBuilder::tokenizingTextBox(
+    const std::string& id, std::vector<std::string>* tokens,
+    const std::string& placeholder,
+    const std::function<std::vector<std::string>(const std::string&)>& suggestionsFn) {
+    return TokenizingTextBox(id, tokens, placeholder, suggestionsFn);
+}
+
+bool UIBuilder::passwordBox(const std::string& id, std::string* value,
+                            const std::string& placeholder) {
+    return PasswordBox(id, value, placeholder);
+}
+
+void UIBuilder::markdownView(const std::string& id, const std::string& markdown,
+                             float maxWidth) {
+    MarkdownView(id, markdown, maxWidth);
+}
+
 } // namespace FluentUI

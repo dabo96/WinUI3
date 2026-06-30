@@ -269,6 +269,22 @@ public:
     bool rating(const std::string& id, int* value, int maxStars = 5,
                 bool allowHalf = false);
 
+    // ─── BRIEF 17: Texto y contenido rico (sugar) ───────────────────────────
+    void selectableText(const std::string& id, const std::string& text,
+                        float fontSize = 0, bool wrap = true);
+    bool hyperlink(const std::string& text, const std::string& url = "",
+                   float fontSize = 0);
+    std::string autoSuggestBox(const std::string& id, std::string* text,
+                               const std::function<std::vector<std::string>(const std::string&)>& suggestionsFn,
+                               const std::string& placeholder = "");
+    bool tokenizingTextBox(const std::string& id, std::vector<std::string>* tokens,
+                           const std::string& placeholder = "",
+                           const std::function<std::vector<std::string>(const std::string&)>& suggestionsFn = {});
+    bool passwordBox(const std::string& id, std::string* value,
+                     const std::string& placeholder = "");
+    void markdownView(const std::string& id, const std::string& markdown,
+                      float maxWidth = 0);
+
     // --- Context access ---
     UIContext* context() { return ctx; }
 

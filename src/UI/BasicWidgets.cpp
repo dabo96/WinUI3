@@ -684,6 +684,84 @@ void Label(const std::string &text, uint32_t iconCodepoint,
   }
 }
 
+// brief 17 — HyperlinkButton: accent-colored inline link. Underlined on hover,
+// hand cursor, focusable (Enter/Space activates). Opens the url with the OS via
+// SDL_OpenURL when non-empty. Sits inline beside Label in a horizontal row.
+bool HyperlinkButton(const std::string &text, const std::string &url,
+                     float fontSize) {
+  UIContext *ctx = GetContext();
+  if (!ctx)
+    return false;
+
+  const TextStyle &ts = ctx->style.GetTextStyle(TypographyStyle::Body);
+  float fs = fontSize > 0.0f ? fontSize : ts.fontSize;
+
+  Vec2 measured = MeasureTextCached(ctx, text, fs);
+  if (measured.y <= 0.0f)
+    measured.y = fs;
+  Vec2 contentSize(measured.x, std::max(measured.y, fs));
+
+  bool inHorizontal =
+      !ctx->layoutStack.empty() && !ctx->layoutStack.back().isVertical;
+  if (inHorizontal) {
+    float lineH = ctx->layoutStack.back().availableSpace.y;
+    if (lineH > contentSize.y)
+      contentSize.y = lineH;
+  }
+
+  LayoutConstraints constraints = ConsumeNextConstraints(SizeConstraint::Auto);
+  Vec2 finalSize = ApplyConstraints(ctx, constraints, contentSize);
+  Vec2 pos = ctx->cursorPos;
+
+  uint32_t id = GenerateId("LINK:", text.c_str());
+  ctx->focusableWidgets.push_back(id);
+
+  bool hover = IsMouseOver(ctx, pos, finalSize);
+  bool focused = (ctx->focusedWidgetId == id);
+  bool activated = false;
+
+  if (hover) {
+    ctx->desiredCursor = UIContext::CursorType::Hand;
+    if (ctx->input.IsMousePressed(0)) {
+      ctx->focusedWidgetId = id;
+      focused = true;
+      activated = true;
+    }
+  }
+  if (focused && (ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
+                  ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER) ||
+                  ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE))) {
+    activated = true;
+  }
+
+  Color col = FluentColors::Accent;
+  if (hover)
+    col = Color(std::min(col.r + 0.12f, 1.0f), std::min(col.g + 0.12f, 1.0f),
+                std::min(col.b + 0.12f, 1.0f), col.a);
+
+  if (IsRectInViewport(ctx, pos, finalSize)) {
+    if (focused)
+      DrawFocusRing(ctx, pos, finalSize, 2.0f);
+    Vec2 textPos(pos.x, pos.y + (finalSize.y - measured.y) * 0.5f);
+    ctx->renderer.DrawText(textPos, text, col, fs);
+    if (hover) {
+      float underY = textPos.y + fs * 0.95f;
+      ctx->renderer.DrawLine(Vec2(textPos.x, underY),
+                             Vec2(textPos.x + measured.x, underY), col, 1.0f);
+    }
+  }
+
+  if (activated && !url.empty()) {
+    SDL_OpenURL(url.c_str());
+  }
+
+  ctx->lastItemPos = pos;
+  AdvanceCursor(ctx, finalSize);
+  SetLastItem(id, pos, pos + finalSize, hover, hover && ctx->input.IsMouseDown(0),
+              focused, activated);
+  return activated;
+}
+
 void IconLabel(uint32_t iconCodepoint, float size, std::optional<Color> color,
                std::optional<Vec2> position) {
   UIContext *ctx = GetContext();

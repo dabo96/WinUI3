@@ -745,4 +745,70 @@ int FlipView(const std::string& id, int itemCount,
 
 /// @}
 
+// ═════════════════════════════════════════════════════════════════════════════
+// BRIEF 17 — Texto y contenido rico (selección/copia, hyperlinks, AutoSuggest,
+//            chips/tokens, password, Markdown). SelectableText / PasswordBox /
+//            AutoSuggestBox / TokenizingTextBox en src/UI/InputWidgets.cpp;
+//            HyperlinkButton en src/UI/BasicWidgets.cpp; MarkdownView en
+//            src/UI/MarkdownWidgets.cpp.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// SelectableText: read-only text the user can select and copy. Selection range
+/// (anchor + caret, byte offsets) is kept by @p id in intStates. Mouse: down sets
+/// anchor, drag moves caret, double-click selects a word, triple-click a line.
+/// Keyboard when focused: Shift+Left/Right extend, Ctrl+A all, Ctrl+C / Ctrl+Insert
+/// copy to the OS clipboard (brief 18). Highlight (translucent accent) is drawn
+/// before the glyphs. @param fontSize 0 = Body. @param wrap word-wrap to the
+/// available width. Role: Label.
+void SelectableText(const std::string& id, const std::string& text,
+                    float fontSize = 0, bool wrap = true,
+                    std::optional<Vec2> pos = std::nullopt);
+
+/// HyperlinkButton: accent-colored text, underlined on hover, hand cursor. Click
+/// (or Enter when focused) opens @p url with the OS (SDL_OpenURL) when non-empty.
+/// Usable inline beside Label in a horizontal row. @param fontSize 0 = Body.
+/// @return true when activated this frame.
+bool HyperlinkButton(const std::string& text, const std::string& url = "",
+                     float fontSize = 0);
+
+/// AutoSuggestBox: search field with a popup of suggestions (TextInput + Flyout).
+/// @p suggestionsFn receives the current text and returns the list to show; the
+/// matched substring is highlighted. Up/Down move the highlight, Enter picks it,
+/// Esc/click-outside close, click picks. @return the chosen suggestion this frame
+/// (empty if none). @p text is the live edit buffer (or per-id state when null).
+std::string AutoSuggestBox(const std::string& id, std::string* text,
+                           const std::function<std::vector<std::string>(const std::string&)>& suggestionsFn,
+                           const std::string& placeholder = "");
+
+/// TokenizingTextBox / Chips: multi-value entry. Existing tokens render as pills
+/// (text + "x") that wrap (WrapPanel, brief 19), followed by an inline text field.
+/// Enter / comma confirm a token; Backspace on an empty field deletes the last
+/// chip; clicking "x" deletes that chip. Optional @p suggestionsFn shows a popup.
+/// @return true when @p tokens changes this frame.
+bool TokenizingTextBox(const std::string& id, std::vector<std::string>* tokens,
+                       const std::string& placeholder = "",
+                       const std::function<std::vector<std::string>(const std::string&)>& suggestionsFn = {});
+
+/// PasswordBox: single-line masked field. Like TextInput but draws '•' per
+/// codepoint, with an eye button to reveal/hide. Copy/Cut are disabled so the
+/// secret cannot leave via the clipboard (paste is allowed). Claims IME per-field
+/// on focus (brief 18). @return true when the value changes.
+bool PasswordBox(const std::string& id, std::string* value,
+                 const std::string& placeholder = "",
+                 std::optional<Vec2> pos = std::nullopt);
+
+/// MarkdownView: render a read-only subset of Markdown — headings (#..###),
+/// **bold** / *italic* / `code`, unordered lists (- / *), block quotes (>), links
+/// [txt](url) (via HyperlinkButton), images ![alt](url) (DrawImage if a texture is
+/// registered for the url, else a placeholder), and horizontal rules (---). Inline
+/// emphasis is rendered segment-by-segment with weight/font; paragraphs wrap by
+/// word. @param maxWidth 0 = current layout width.
+void MarkdownView(const std::string& id, const std::string& markdown,
+                  float maxWidth = 0);
+
+/// Register a texture handle for a Markdown image url (used by MarkdownView's
+/// ![alt](url)). Backend-specific handle (e.g. GLuint cast to void*); pass with an
+/// intrinsic pixel size for layout. Pass nullptr to unregister.
+void MarkdownRegisterImage(const std::string& url, void* textureHandle, Vec2 size);
+
 } // namespace FluentUI

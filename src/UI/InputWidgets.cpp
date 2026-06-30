@@ -621,6 +621,41 @@ static size_t FindCaretPosition(const std::string &text, float targetX,
   return text.size();
 }
 
+// brief 17: shared selection-boundary helpers, extracted from TextInput's
+// double/triple-click logic so SelectableText (and any future selectable text
+// widget) reuses the exact same word/line semantics.
+//   WordBounds  — the [start,end) byte range of the word containing `pos`
+//                 (alnum/underscore run); falls back to a single char when not on
+//                 a word char, matching TextInput's behaviour.
+//   LineBounds  — the [start,end) byte range of the logical line containing `pos`
+//                 (between surrounding '\n's; the terminating '\n' is excluded).
+static void WordBounds(const std::string &text, size_t pos, size_t &outStart,
+                       size_t &outEnd) {
+  auto isWordChar = [](unsigned char c) { return std::isalnum(c) || c == '_'; };
+  size_t wStart = std::min(pos, text.size());
+  size_t wEnd = wStart;
+  while (wStart > 0 && isWordChar(static_cast<unsigned char>(text[wStart - 1])))
+    --wStart;
+  while (wEnd < text.size() && isWordChar(static_cast<unsigned char>(text[wEnd])))
+    ++wEnd;
+  if (wStart == wEnd && wEnd < text.size())
+    wEnd = wStart + 1; // not on a word char: select the single char
+  outStart = wStart;
+  outEnd = wEnd;
+}
+
+static void LineBounds(const std::string &text, size_t pos, size_t &outStart,
+                       size_t &outEnd) {
+  size_t lStart = std::min(pos, text.size());
+  size_t lEnd = lStart;
+  while (lStart > 0 && text[lStart - 1] != '\n')
+    --lStart;
+  while (lEnd < text.size() && text[lEnd] != '\n')
+    ++lEnd;
+  outStart = lStart;
+  outEnd = lEnd;
+}
+
 bool TextInput(const std::string &label, std::string *value, float width,
                bool multiline, std::optional<Vec2> pos, const char* placeholder, size_t maxLength) {
   UIContext *ctx = GetContext();
@@ -629,7 +664,14 @@ bool TextInput(const std::string &label, std::string *value, float width,
   if (width <= 0.0f)
     width = 200.0f;
 
-  float labelSpacing = 4.0f;
+  // Hidden-label convention (ImGui-style): an empty label, or one beginning with
+  // "##", reserves no header row and draws no label text — only the id is derived
+  // from it. Lets brief 17 widgets (AutoSuggestBox / TokenizingTextBox) embed a
+  // TextInput with no stray gap or visible "##..." string.
+  bool hideLabel = label.empty() ||
+                   (label.size() >= 2 && label[0] == '#' && label[1] == '#');
+
+  float labelSpacing = hideLabel ? 0.0f : 4.0f;
 
   const TextStyle &labelStyle =
       ctx->style.GetTextStyle(TypographyStyle::Subtitle);
@@ -642,7 +684,8 @@ bool TextInput(const std::string &label, std::string *value, float width,
   // so panel theming doesn't inflate field heights.
   float singleLineHeight = inputTextStyle.fontSize + 16.0f;
   float inputHeight = multiline ? std::max(100.0f, singleLineHeight * 4.0f) : singleLineHeight;
-  Vec2 labelSize = MeasureTextCached(ctx,label, labelStyle.fontSize);
+  Vec2 labelSize = hideLabel ? Vec2(0.0f, 0.0f)
+                             : MeasureTextCached(ctx, label, labelStyle.fontSize);
   Vec2 fieldSize(width, inputHeight);
 
   Vec2 totalSize(fieldSize.x, labelSize.y + labelSpacing + fieldSize.y);
@@ -771,40 +814,20 @@ bool TextInput(const std::string &label, std::string *value, float width,
       clickInfo.lastClickTime = now;
       clickInfo.lastClickPos = mousePos;
 
-      auto isWordChar = [](unsigned char c) {
-        return std::isalnum(c) || c == '_';
-      };
-
       if (shiftClick && selAnchor != SIZE_MAX) {
         // Extend selection from existing anchor; do not reset
         caret = newCaret;
         clickInfo.clickCount = 1; // Shift+click resets multi-click tracking
       } else if (clickInfo.clickCount == 2) {
-        // Double-click: select word containing newCaret
-        size_t wStart = newCaret;
-        size_t wEnd = newCaret;
-        while (wStart > 0 && isWordChar(static_cast<unsigned char>(textRef[wStart - 1]))) {
-          --wStart;
-        }
-        while (wEnd < textRef.size() && isWordChar(static_cast<unsigned char>(textRef[wEnd]))) {
-          ++wEnd;
-        }
-        if (wStart == wEnd && wEnd < textRef.size()) {
-          // Not on a word char: select single char
-          wEnd = wStart + 1;
-        }
+        // Double-click: select word containing newCaret (brief 17 shared helper)
+        size_t wStart, wEnd;
+        WordBounds(textRef, newCaret, wStart, wEnd);
         selAnchor = wStart;
         caret = wEnd;
       } else if (clickInfo.clickCount >= 3) {
-        // Triple-click: select entire line
-        size_t lStart = newCaret;
-        size_t lEnd = newCaret;
-        while (lStart > 0 && textRef[lStart - 1] != '\n') {
-          --lStart;
-        }
-        while (lEnd < textRef.size() && textRef[lEnd] != '\n') {
-          ++lEnd;
-        }
+        // Triple-click: select entire line (brief 17 shared helper)
+        size_t lStart, lEnd;
+        LineBounds(textRef, newCaret, lStart, lEnd);
         selAnchor = lStart;
         caret = lEnd;
       } else {
@@ -1190,8 +1213,10 @@ bool TextInput(const std::string &label, std::string *value, float width,
     if (cbIt != ctx->valueChangedCallbacks.end()) cbIt->second(idStr, textPtr);
   }
 
-  ctx->renderer.DrawText(widgetPos, label, labelStyle.color,
-                         labelStyle.fontSize);
+  if (!hideLabel) {
+    ctx->renderer.DrawText(widgetPos, label, labelStyle.color,
+                           labelStyle.fontSize);
+  }
 
   // Fondo recesado (consistente con DragFloat/ComboBox) para que el campo se
   // distinga claramente de la superficie del panel.
@@ -3008,6 +3033,883 @@ bool NumberBox(const std::string &label, double *value, double min, double max,
   });
   if (auto *node = ctx->widgetTree.FindById(nbId))
     node->accessibleValue = formatVal(*value);
+
+  return changed;
+}
+
+// ============================================================================
+// brief 17 — Texto y contenido rico
+// SelectableText / PasswordBox / AutoSuggestBox / TokenizingTextBox.
+// (HyperlinkButton lives in BasicWidgets.cpp; MarkdownView in MarkdownWidgets.cpp.)
+//
+// These reuse the shared selection-boundary helpers (WordBounds/LineBounds),
+// the hit-test primitives (FindCaretPosition/GetGlyphAdvance) and the SO
+// clipboard (InputState::Set/GetClipboardText). AutoSuggestBox/TokenizingTextBox
+// build their popups on BeginFlyout (brief 14) and chips on BeginWrapPanel
+// (brief 19), and reuse the internal TextInput for editing — which already
+// claims IME per-field via ctx->imeOwnerId (brief 18).
+// ============================================================================
+
+// SelectableText — read-only text the user can select and copy. Selection is
+// kept by id in intStates (anchor + caret byte offsets). Highlight is drawn
+// before the glyphs. Mouse: down sets anchor, drag moves caret, double-click =
+// word, triple-click = line. Keyboard (when focused): Shift+Left/Right extend,
+// Ctrl+A select all, Ctrl+C / Ctrl+Insert copy to the OS clipboard.
+void SelectableText(const std::string &id, const std::string &text,
+                    float fontSize, bool wrap, std::optional<Vec2> pos) {
+  UIContext *ctx = GetContext();
+  if (!ctx)
+    return;
+
+  const TextStyle &bodyStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
+  float fs = fontSize > 0.0f ? fontSize : bodyStyle.fontSize;
+  Color textColor = bodyStyle.color;
+  float lineH = fs * 1.4f;
+
+  // Resolve wrap width (logical layout width). 0 = no wrap.
+  float wrapW = 0.0f;
+  if (wrap) {
+    Vec2 avail = GetCurrentAvailableSpace(ctx);
+    wrapW = avail.x;
+    if (wrapW <= 0.0f)
+      wrapW = ctx->renderer.GetViewportSize().x - ctx->cursorPos.x;
+  }
+
+  // Build the visual line layout as byte ranges [start,end). We do our own greedy
+  // word-wrap (instead of MeasureTextWrapped) so the SAME line breaks are used for
+  // both the highlight rects and the per-line DrawText below — guaranteeing they
+  // line up exactly. Every byte belongs to exactly one line; a trailing '\n' stays
+  // at the end of its line and is stripped for display.
+  std::vector<std::pair<size_t, size_t>> lines;
+  {
+    size_t i = 0, lineStart = 0, n = text.size();
+    float lineW = 0.0f;
+    while (i < n) {
+      if (text[i] == '\n') {
+        lines.push_back({lineStart, i + 1});
+        ++i;
+        lineStart = i;
+        lineW = 0.0f;
+        continue;
+      }
+      size_t tokStart = i;
+      while (i < n && text[i] != ' ' && text[i] != '\t' && text[i] != '\n')
+        ++i;
+      size_t wordEnd = i;
+      while (i < n && (text[i] == ' ' || text[i] == '\t'))
+        ++i;
+      size_t tokEnd = i;
+      float wordW = MeasureTextCached(ctx, text.substr(tokStart, wordEnd - tokStart), fs).x;
+      float tokW = MeasureTextCached(ctx, text.substr(tokStart, tokEnd - tokStart), fs).x;
+      if (wrap && wrapW > 0.0f && lineW > 0.0f && lineW + wordW > wrapW) {
+        lines.push_back({lineStart, tokStart});
+        lineStart = tokStart;
+        lineW = 0.0f;
+      }
+      lineW += tokW;
+    }
+    lines.push_back({lineStart, n});
+  }
+  int numLines = static_cast<int>(lines.size());
+
+  auto lineDisp = [&](int ln) -> std::string {
+    size_t s = lines[ln].first, e = lines[ln].second;
+    if (e > s && text[e - 1] == '\n')
+      --e;
+    return text.substr(s, e - s);
+  };
+
+  float maxW = 0.0f;
+  for (int ln = 0; ln < numLines; ++ln)
+    maxW = std::max(maxW, MeasureTextCached(ctx, lineDisp(ln), fs).x);
+  float totalH = static_cast<float>(numLines) * lineH;
+  Vec2 totalSize(wrap && wrapW > 0.0f ? wrapW : maxW, totalH);
+
+  LayoutConstraints constraints =
+      ConsumeNextConstraints(wrap ? SizeConstraint::Fill : SizeConstraint::Auto);
+  Vec2 finalSize = ApplyConstraints(ctx, constraints, totalSize);
+  Vec2 widgetPos = pos.has_value()
+                       ? ResolveAbsolutePosition(ctx, pos.value(), finalSize)
+                       : ctx->cursorPos;
+
+  uint32_t wid = GenerateId("SELTXT:", id.c_str());
+  ctx->focusableWidgets.push_back(wid);
+
+  // Selection range (anchor + caret) as byte offsets in intStates (2 sub-keys).
+  int &anchorI = ctx->intStates[wid];
+  int &caretI = ctx->intStates[AnimSlot(wid, 1)];
+  bool &dragging = ctx->boolStates[AnimSlot(wid, 2)];
+  auto clampIdx = [&](int v) -> size_t {
+    if (v < 0)
+      v = 0;
+    return std::min(static_cast<size_t>(v), text.size());
+  };
+  size_t anchor = clampIdx(anchorI);
+  size_t caret = clampIdx(caretI);
+
+  // x within a single display line -> byte offset (glyph-advance hit-test at fs).
+  auto caretInLine = [&](const std::string &ln, float targetX) -> size_t {
+    float acc = 0.0f;
+    const char *p = ln.data();
+    const char *e = p + ln.size();
+    size_t bp = 0;
+    while (p < e) {
+      uint32_t cp = DecodeUTF8(p, e);
+      if (cp == 0)
+        break;
+      float w = ctx->renderer.GetGlyphAdvance(cp, fs);
+      if (targetX < acc + w * 0.5f)
+        return bp;
+      acc += w;
+      bp = static_cast<size_t>(p - ln.data());
+    }
+    return ln.size();
+  };
+  auto hitTest = [&](const Vec2 &m) -> size_t {
+    int ln = static_cast<int>((m.y - widgetPos.y) / lineH);
+    ln = std::clamp(ln, 0, numLines - 1);
+    std::string disp = lineDisp(ln);
+    float localX = m.x - widgetPos.x;
+    return lines[ln].first + caretInLine(disp, std::max(localX, 0.0f));
+  };
+
+  Vec2 mousePos(ctx->input.MouseX(), ctx->input.MouseY());
+  bool hover = IsMouseOver(ctx, widgetPos, finalSize);
+  if (hover)
+    ctx->desiredCursor = UIContext::CursorType::IBeam;
+  bool focused = (ctx->focusedWidgetId == wid);
+
+  if (ctx->input.IsMousePressed(0)) {
+    if (hover) {
+      ctx->focusedWidgetId = wid;
+      focused = true;
+      size_t hit = hitTest(mousePos);
+      auto &ci = ctx->textClickInfo[wid];
+      uint64_t now = SDL_GetTicks();
+      const uint64_t MS = 350;
+      const float DIST = 4.0f;
+      bool multi = (now - ci.lastClickTime) <= MS &&
+                   std::abs(mousePos.x - ci.lastClickPos.x) <= DIST &&
+                   std::abs(mousePos.y - ci.lastClickPos.y) <= DIST;
+      ci.clickCount = multi ? std::min(ci.clickCount + 1, 3) : 1;
+      ci.lastClickTime = now;
+      ci.lastClickPos = mousePos;
+      SDL_Keymod mod = SDL_GetModState();
+      bool shiftClk = (mod & SDL_KMOD_SHIFT) != 0;
+      if (shiftClk) {
+        caret = hit; // extend from existing anchor
+        ci.clickCount = 1;
+      } else if (ci.clickCount == 2) {
+        size_t ws, we;
+        WordBounds(text, hit, ws, we);
+        anchor = ws;
+        caret = we;
+      } else if (ci.clickCount >= 3) {
+        size_t ls, le;
+        LineBounds(text, hit, ls, le);
+        anchor = ls;
+        caret = le;
+      } else {
+        anchor = caret = hit;
+      }
+      dragging = true;
+    }
+  }
+  if (!ctx->input.IsMouseDown(0))
+    dragging = false;
+  else if (dragging && !ctx->input.IsMousePressed(0))
+    caret = hitTest(mousePos);
+
+  if (focused) {
+    SDL_Keymod mod = SDL_GetModState();
+    bool ctrlHeld = (mod & SDL_KMOD_CTRL) != 0;
+    bool shiftHeld = (mod & SDL_KMOD_SHIFT) != 0;
+    bool hasSel = anchor != caret;
+    if (ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_A)) {
+      anchor = 0;
+      caret = text.size();
+    } else if (ctrlHeld && (ctx->input.IsKeyPressed(SDL_SCANCODE_C) ||
+                            ctx->input.IsKeyPressed(SDL_SCANCODE_INSERT))) {
+      if (hasSel) {
+        size_t s = std::min(anchor, caret), e = std::max(anchor, caret);
+        ctx->input.SetClipboardText(text.substr(s, e - s));
+      }
+    } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_LEFT)) {
+      if (!shiftHeld && hasSel) {
+        caret = anchor = std::min(anchor, caret);
+      } else {
+        if (caret > 0)
+          caret = Utf8PrevCodepoint(text, caret);
+        if (!shiftHeld)
+          anchor = caret;
+      }
+    } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_RIGHT)) {
+      if (!shiftHeld && hasSel) {
+        caret = anchor = std::max(anchor, caret);
+      } else {
+        if (caret < text.size())
+          caret = Utf8NextCodepoint(text, caret);
+        if (!shiftHeld)
+          anchor = caret;
+      }
+    }
+  }
+
+  anchorI = static_cast<int>(anchor);
+  caretI = static_cast<int>(caret);
+
+  if (IsRectInViewport(ctx, widgetPos, finalSize)) {
+    // Highlight (accent, translucent) BEFORE the glyphs.
+    if (anchor != caret) {
+      size_t selS = std::min(anchor, caret), selE = std::max(anchor, caret);
+      Color sel = ctx->style.button.background.normal;
+      sel.a = 0.35f;
+      for (int ln = 0; ln < numLines; ++ln) {
+        size_t ls = lines[ln].first, le = lines[ln].second;
+        size_t a = std::max(selS, ls);
+        size_t b = std::min(selE, le);
+        if (b <= a)
+          continue;
+        size_t dispEnd = (le > ls && text[le - 1] == '\n') ? le - 1 : le;
+        size_t da = std::min(a, dispEnd);
+        size_t db = std::min(b, dispEnd);
+        float x0 = MeasureTextCached(ctx, text.substr(ls, da - ls), fs).x;
+        float x1 = MeasureTextCached(ctx, text.substr(ls, db - ls), fs).x;
+        if (b > dispEnd)
+          x1 += fs * 0.3f; // selection runs through the line break
+        float top = widgetPos.y + static_cast<float>(ln) * lineH;
+        ctx->renderer.DrawRectFilled(Vec2(widgetPos.x + x0, top + 1.0f),
+                                     Vec2(std::max(0.0f, x1 - x0), lineH - 2.0f),
+                                     sel, 2.0f);
+      }
+    }
+    for (int ln = 0; ln < numLines; ++ln) {
+      float top = widgetPos.y + static_cast<float>(ln) * lineH;
+      ctx->renderer.DrawText(Vec2(widgetPos.x, top + (lineH - fs) * 0.5f),
+                             lineDisp(ln), textColor, fs);
+    }
+  }
+
+  ctx->lastItemPos = widgetPos;
+  if (pos.has_value())
+    ctx->lastItemSize = finalSize;
+  else
+    AdvanceCursor(ctx, finalSize);
+  SetLastItem(wid, widgetPos, widgetPos + finalSize, hover, dragging, focused,
+              false);
+}
+
+// PasswordBox — single-line masked field. Like a single-line TextInput but draws
+// '•' per codepoint, with an eye toggle to reveal. Copy/cut are intentionally
+// disabled so the secret cannot leave via the clipboard. Paste IS allowed.
+// Claims IME per-field on focus (ctx->imeOwnerId), like TextInput.
+bool PasswordBox(const std::string &id, std::string *value,
+                 const std::string &placeholder, std::optional<Vec2> pos) {
+  UIContext *ctx = GetContext();
+  if (!ctx)
+    return false;
+
+  const TextStyle &ts = ctx->style.GetTextStyle(TypographyStyle::Body);
+  const PanelStyle &panelStyle = ctx->style.panel;
+  const ColorState &accentState = ctx->style.button.background;
+  float fs = ts.fontSize;
+  float fieldH = fs + 16.0f;
+
+  Vec2 totalSize(220.0f, fieldH);
+  LayoutConstraints c = ConsumeNextConstraints(SizeConstraint::Fill);
+  Vec2 finalSize = ApplyConstraints(ctx, c, totalSize);
+  finalSize.y = std::max(finalSize.y, fieldH);
+  Vec2 widgetPos = pos.has_value()
+                       ? ResolveAbsolutePosition(ctx, pos.value(), finalSize)
+                       : ctx->cursorPos;
+  Vec2 fieldPos = widgetPos;
+  Vec2 fieldSize(finalSize.x, fieldH);
+
+  uint32_t wid = GenerateId("PWD:", id.c_str());
+  ctx->focusableWidgets.push_back(wid);
+
+  std::string *textPtr = value;
+  if (!textPtr) {
+    auto e = ctx->stringStates.try_emplace(wid, "");
+    textPtr = &e.first->second;
+  }
+  std::string &textRef = *textPtr;
+
+  auto caretIt = ctx->caretPositions.try_emplace(wid, textRef.size());
+  size_t &caret = caretIt.first->second;
+  caret = std::min(caret, textRef.size());
+  auto anchorIt = ctx->selectionAnchors.try_emplace(wid, SIZE_MAX);
+  size_t &selAnchor = anchorIt.first->second;
+  bool &reveal = ctx->boolStates[AnimSlot(wid, 3)];
+
+  auto HasSelection = [&]() { return selAnchor != SIZE_MAX && selAnchor != caret; };
+  auto SelStart = [&]() -> size_t { return HasSelection() ? std::min(selAnchor, caret) : caret; };
+  auto SelEnd = [&]() -> size_t { return HasSelection() ? std::max(selAnchor, caret) : caret; };
+  auto ClearSel = [&]() { selAnchor = SIZE_MAX; };
+  auto DelSel = [&]() {
+    if (!HasSelection())
+      return;
+    size_t s = SelStart(), e = SelEnd();
+    textRef.erase(s, e - s);
+    caret = s;
+    ClearSel();
+  };
+
+  // codepoint <-> byte mapping (masking is per-codepoint, not per-byte).
+  auto byteToCp = [&](size_t b) -> size_t {
+    const char *p = textRef.data();
+    const char *end = textRef.data() + textRef.size();
+    const char *stop = textRef.data() + std::min(b, textRef.size());
+    size_t n = 0;
+    while (p < stop) {
+      DecodeUTF8(p, end);
+      ++n;
+    }
+    return n;
+  };
+  auto cpToByte = [&](size_t k) -> size_t {
+    const char *p = textRef.data();
+    const char *end = textRef.data() + textRef.size();
+    size_t n = 0;
+    while (p < end && n < k) {
+      DecodeUTF8(p, end);
+      ++n;
+    }
+    return static_cast<size_t>(p - textRef.data());
+  };
+  auto totalCp = [&]() -> size_t { return byteToCp(textRef.size()); };
+  const std::string BULLET = "\xE2\x80\xA2"; // U+2022, 3 bytes
+  auto displayStr = [&]() -> std::string {
+    if (reveal)
+      return textRef;
+    std::string s;
+    size_t n = totalCp();
+    s.reserve(n * BULLET.size());
+    for (size_t i = 0; i < n; ++i)
+      s += BULLET;
+    return s;
+  };
+  // display-byte length of the prefix up to byte caret `b`.
+  auto dispPrefix = [&](size_t b) -> std::string {
+    if (reveal)
+      return textRef.substr(0, std::min(b, textRef.size()));
+    std::string s;
+    size_t k = byteToCp(b);
+    for (size_t i = 0; i < k; ++i)
+      s += BULLET;
+    return s;
+  };
+  auto hitToByte = [&](float localX) -> size_t {
+    if (reveal)
+      return FindCaretPosition(textRef, localX, ctx);
+    float bw = ctx->renderer.GetGlyphAdvance(0x2022, fs);
+    size_t k = bw > 0.0f ? static_cast<size_t>(std::max(0.0f, (localX + bw * 0.5f) / bw)) : 0;
+    k = std::min(k, totalCp());
+    return cpToByte(k);
+  };
+
+  float textPadding = panelStyle.padding.x * 0.5f;
+  float eyeW = fieldH;
+  Vec2 eyePos(fieldPos.x + fieldSize.x - eyeW, fieldPos.y);
+  Vec2 eyeSize(eyeW, fieldSize.y);
+  float textAreaRight = fieldPos.x + fieldSize.x - eyeW;
+
+  Vec2 mousePos(ctx->input.MouseX(), ctx->input.MouseY());
+  bool blocked = IsMouseInputBlocked(ctx);
+  bool hoverField = PointInRect(mousePos, fieldPos, Vec2(fieldSize.x - eyeW, fieldSize.y)) && !blocked;
+  bool hoverEye = PointInRect(mousePos, eyePos, eyeSize) && !blocked;
+  if (hoverField)
+    ctx->desiredCursor = UIContext::CursorType::IBeam;
+
+  bool leftPressed = ctx->input.IsMousePressed(0);
+  bool leftDown = ctx->input.IsMouseDown(0);
+
+  if (leftPressed) {
+    if (hoverEye) {
+      reveal = !reveal;
+    } else if (hoverField) {
+      ctx->activeWidgetId = wid;
+      ctx->activeWidgetType = ActiveWidgetType::TextInput;
+      ctx->focusedWidgetId = wid;
+      SDL_Keymod mod = SDL_GetModState();
+      float localX = mousePos.x - (fieldPos.x + textPadding);
+      size_t nc = hitToByte(std::max(localX, 0.0f));
+      if ((mod & SDL_KMOD_SHIFT) && selAnchor != SIZE_MAX) {
+        caret = nc;
+      } else {
+        caret = nc;
+        selAnchor = caret;
+        ClearSel();
+      }
+    } else if (ctx->activeWidgetId == wid &&
+               ctx->activeWidgetType == ActiveWidgetType::TextInput) {
+      ctx->activeWidgetId = 0;
+      ctx->activeWidgetType = ActiveWidgetType::None;
+    }
+  }
+  if (!leftPressed && leftDown && ctx->activeWidgetId == wid &&
+      ctx->activeWidgetType == ActiveWidgetType::TextInput) {
+    float localX = mousePos.x - (fieldPos.x + textPadding);
+    caret = hitToByte(std::max(localX, 0.0f));
+  }
+
+  bool hasFocus = ctx->activeWidgetId == wid &&
+                  ctx->activeWidgetType == ActiveWidgetType::TextInput;
+  bool valueChanged = false;
+
+  // brief 18.4: claim IME per-field while focused; release on blur.
+  if (ctx->window) {
+    if (hasFocus) {
+      if (ctx->imeOwnerId != wid) {
+        SDL_StartTextInput(ctx->window);
+        ctx->imeOwnerId = wid;
+      }
+      SDL_Rect area{static_cast<int>(fieldPos.x), static_cast<int>(fieldPos.y),
+                    static_cast<int>(fieldSize.x), static_cast<int>(fieldSize.y)};
+      SDL_SetTextInputArea(ctx->window, &area, 0);
+    } else if (ctx->imeOwnerId == wid) {
+      SDL_StopTextInput(ctx->window);
+      ctx->imeOwnerId = 0;
+    }
+  }
+
+  if (hasFocus) {
+    SDL_Keymod mod = SDL_GetModState();
+    bool ctrlHeld = (mod & SDL_KMOD_CTRL) != 0;
+    bool shiftHeld = (mod & SDL_KMOD_SHIFT) != 0;
+
+    if (ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_A)) {
+      selAnchor = 0;
+      caret = textRef.size();
+    }
+    // Ctrl+C / Ctrl+X are intentionally NOT handled (do not leak the secret).
+    else if (ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_V)) {
+      std::string clip = ctx->input.GetClipboardText();
+      for (char &ch : clip)
+        if (ch == '\n' || ch == '\r')
+          ch = ' ';
+      if (!clip.empty()) {
+        if (HasSelection())
+          DelSel();
+        textRef.insert(caret, clip);
+        caret += clip.size();
+        valueChanged = true;
+      }
+    } else {
+      if (!ctrlHeld) {
+        const std::string &inputText = ctx->input.TextInputBuffer();
+        if (!inputText.empty()) {
+          if (HasSelection())
+            DelSel();
+          textRef.insert(caret, inputText);
+          caret += inputText.size();
+          valueChanged = true;
+        }
+      }
+      if (ctx->input.IsKeyPressed(SDL_SCANCODE_BACKSPACE)) {
+        if (HasSelection()) {
+          DelSel();
+          valueChanged = true;
+        } else if (caret > 0) {
+          size_t prev = Utf8PrevCodepoint(textRef, caret);
+          textRef.erase(prev, caret - prev);
+          caret = prev;
+          valueChanged = true;
+        }
+      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_DELETE)) {
+        if (HasSelection()) {
+          DelSel();
+          valueChanged = true;
+        } else if (caret < textRef.size()) {
+          size_t next = Utf8NextCodepoint(textRef, caret);
+          textRef.erase(caret, next - caret);
+          valueChanged = true;
+        }
+      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_LEFT)) {
+        if (shiftHeld && selAnchor == SIZE_MAX)
+          selAnchor = caret;
+        else if (!shiftHeld)
+          ClearSel();
+        if (caret > 0)
+          caret = Utf8PrevCodepoint(textRef, caret);
+      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_RIGHT)) {
+        if (shiftHeld && selAnchor == SIZE_MAX)
+          selAnchor = caret;
+        else if (!shiftHeld)
+          ClearSel();
+        if (caret < textRef.size())
+          caret = Utf8NextCodepoint(textRef, caret);
+      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_HOME)) {
+        if (shiftHeld && selAnchor == SIZE_MAX)
+          selAnchor = caret;
+        else if (!shiftHeld)
+          ClearSel();
+        caret = 0;
+      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_END)) {
+        if (shiftHeld && selAnchor == SIZE_MAX)
+          selAnchor = caret;
+        else if (!shiftHeld)
+          ClearSel();
+        caret = textRef.size();
+      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
+                 ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER)) {
+        ctx->activeWidgetId = 0;
+        ctx->activeWidgetType = ActiveWidgetType::None;
+      }
+    }
+  }
+
+  // ---- draw ----
+  Color bgColor = InputFieldBackground(ctx, hoverField && !hasFocus);
+  if (hasFocus) {
+    DrawFocusRing(ctx, fieldPos, fieldSize, panelStyle.cornerRadius);
+    bgColor = accentState.hover;
+    bgColor.a = 0.15f;
+  }
+  ctx->renderer.DrawRectFilled(fieldPos, fieldSize, bgColor, panelStyle.cornerRadius);
+  ctx->renderer.DrawInsetShadow(fieldPos, fieldSize, panelStyle.cornerRadius, 2.0f,
+                                Color(0.0f, 0.0f, 0.0f, 0.16f));
+  if (!hasFocus)
+    ctx->renderer.DrawRect(fieldPos, fieldSize, InputFieldBorder(ctx, hoverField),
+                           panelStyle.cornerRadius);
+
+  std::string disp = displayStr();
+  Vec2 textPos(fieldPos.x + textPadding,
+               fieldPos.y + (fieldSize.y - fs) * 0.5f);
+
+  ctx->renderer.PushClipRect(Vec2(fieldPos.x + textPadding, fieldPos.y),
+                             Vec2(std::max(0.0f, textAreaRight - fieldPos.x - textPadding * 2.0f),
+                                  fieldSize.y));
+  if (hasFocus && HasSelection()) {
+    float sx = MeasureTextCached(ctx, dispPrefix(SelStart()), fs).x;
+    float ex = MeasureTextCached(ctx, dispPrefix(SelEnd()), fs).x;
+    Color sel = accentState.normal;
+    sel.a = 0.35f;
+    ctx->renderer.DrawRectFilled(Vec2(textPos.x + sx, fieldPos.y + 2.0f),
+                                 Vec2(std::max(0.0f, ex - sx), fieldSize.y - 4.0f),
+                                 sel, 2.0f);
+  }
+  if (textRef.empty() && !hasFocus && !placeholder.empty()) {
+    Color ph = ts.color;
+    ph.a *= 0.4f;
+    ctx->renderer.DrawText(textPos, placeholder, ph, fs);
+  } else {
+    ctx->renderer.DrawText(textPos, disp, ts.color, fs);
+  }
+  if (hasFocus && !HasSelection()) {
+    float caretX = textPos.x + MeasureTextCached(ctx, dispPrefix(caret), fs).x;
+    float blink = 0.5f + 0.5f * std::sin(ctx->frame * 0.1f);
+    Color cc = accentState.normal;
+    cc.a = blink;
+    ctx->renderer.DrawRectFilled(Vec2(caretX, fieldPos.y + textPadding * 0.5f),
+                                 Vec2(1.5f, fieldSize.y - textPadding), cc, 0.0f);
+  }
+  ctx->renderer.PopClipRect();
+
+  // Eye toggle (Lucide). Eye = revealed, EyeOff = masked.
+  Color eyeColor = ts.color;
+  eyeColor.a = hoverEye ? 1.0f : 0.6f;
+  DrawWidgetIcon(ctx, eyePos, eyeSize, reveal ? Icons::Eye : Icons::EyeOff,
+                 eyeColor, fs, (eyeW - fs) * 0.5f, 0.0f);
+
+  ctx->lastItemPos = widgetPos;
+  if (pos.has_value())
+    ctx->lastItemSize = finalSize;
+  else
+    AdvanceCursor(ctx, finalSize);
+  SetLastItem(wid, widgetPos, widgetPos + finalSize, hoverField, hasFocus,
+              hasFocus, valueChanged);
+  return valueChanged;
+}
+
+// Shared: case-insensitive substring search; returns byte offset or npos.
+static size_t CaseInsensitiveFind(const std::string &hay, const std::string &needle) {
+  if (needle.empty())
+    return std::string::npos;
+  auto lower = [](char ch) {
+    return static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  };
+  if (needle.size() > hay.size())
+    return std::string::npos;
+  for (size_t i = 0; i + needle.size() <= hay.size(); ++i) {
+    size_t j = 0;
+    for (; j < needle.size(); ++j)
+      if (lower(hay[i + j]) != lower(needle[j]))
+        break;
+    if (j == needle.size())
+      return i;
+  }
+  return std::string::npos;
+}
+
+// Draw a suggestion row with the matched substring (of `query`) highlighted in
+// the accent color. Returns true when the row is clicked.
+static bool DrawSuggestionRow(UIContext *ctx, const std::string &label,
+                              const std::string &query, float rowW, float rowH,
+                              float fs, bool highlighted) {
+  Vec2 rowPos = ctx->cursorPos;
+  Vec2 rowSize(rowW, rowH);
+  const ColorState &accent = ctx->style.button.background;
+  bool hover = IsMouseOver(ctx, rowPos, rowSize);
+  if (hover || highlighted) {
+    Color hl = accent.hover;
+    ctx->renderer.DrawRectFilled(rowPos, rowSize, hl, 4.0f);
+  }
+  const TextStyle &ts = ctx->style.GetTextStyle(TypographyStyle::Body);
+  Vec2 tp(rowPos.x + 8.0f, rowPos.y + (rowH - fs) * 0.5f);
+  ctx->renderer.DrawText(tp, label, ts.color, fs);
+  size_t m = CaseInsensitiveFind(label, query);
+  if (m != std::string::npos) {
+    float mx = MeasureTextCached(ctx, label.substr(0, m), fs).x;
+    ctx->renderer.DrawText(Vec2(tp.x + mx, tp.y), label.substr(m, query.size()),
+                           accent.normal, fs);
+  }
+  AdvanceCursor(ctx, rowSize);
+  return hover && ctx->input.IsMousePressed(0);
+}
+
+// AutoSuggestBox — search field + popup of suggestions (TextInput + BeginFlyout).
+// Up/Down move the highlight, Enter picks it, Esc closes, click picks. Returns
+// the chosen suggestion this frame (or "").
+std::string AutoSuggestBox(
+    const std::string &id, std::string *text,
+    const std::function<std::vector<std::string>(const std::string &)> &suggestionsFn,
+    const std::string &placeholder) {
+  UIContext *ctx = GetContext();
+  if (!ctx)
+    return "";
+
+  uint32_t wid = GenerateId("ASB:", id.c_str());
+  std::string *textPtr = text;
+  if (!textPtr) {
+    auto e = ctx->stringStates.try_emplace(wid, "");
+    textPtr = &e.first->second;
+  }
+
+  // Inner field is scoped by id so its empty/hidden label produces a stable id.
+  PushID(id.c_str());
+  TextInput("##field", textPtr, 240.0f, false, std::nullopt,
+            placeholder.empty() ? nullptr : placeholder.c_str());
+  uint32_t tid = GenerateId("TXT:", "##field");
+  PopID();
+
+  Vec2 mn, mx;
+  GetItemRect(&mn, &mx);
+  Rect anchorRect(mn, mx - mn);
+
+  bool fieldFocused = (ctx->activeWidgetId == tid &&
+                       ctx->activeWidgetType == ActiveWidgetType::TextInput);
+
+  std::vector<std::string> sugg = suggestionsFn ? suggestionsFn(*textPtr)
+                                                : std::vector<std::string>{};
+  std::string flyId = "ASB_FLY:" + id;
+  uint32_t hlKey = GenerateId("ASB_HL:", id.c_str());
+  int &hl = ctx->intStates[hlKey];
+
+  std::string result;
+
+  if (fieldFocused && !sugg.empty())
+    OpenFlyout(flyId);
+  else if (sugg.empty())
+    CloseFlyout(flyId);
+
+  if (IsFlyoutOpen(flyId) && !sugg.empty()) {
+    int n = static_cast<int>(sugg.size());
+    if (hl >= n)
+      hl = n - 1;
+    if (ctx->input.IsKeyPressed(SDL_SCANCODE_DOWN))
+      hl = (hl + 1) % n;
+    else if (ctx->input.IsKeyPressed(SDL_SCANCODE_UP))
+      hl = (hl <= 0) ? n - 1 : hl - 1;
+    if ((ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
+         ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER)) &&
+        hl >= 0 && hl < n) {
+      result = sugg[hl];
+      *textPtr = result;
+      CloseFlyout(flyId);
+    }
+  } else {
+    hl = -1;
+  }
+
+  if (IsFlyoutOpen(flyId)) {
+    if (BeginFlyout(flyId, anchorRect, FlyoutPlacement::BottomEdgeAlignedLeft)) {
+      const TextStyle &ts = ctx->style.GetTextStyle(TypographyStyle::Body);
+      float fs = ts.fontSize;
+      float rowH = fs + 12.0f;
+      float rowW = std::max(anchorRect.size.x - ctx->style.panel.padding.x * 2.0f, 80.0f);
+      for (int i = 0; i < static_cast<int>(sugg.size()); ++i) {
+        if (DrawSuggestionRow(ctx, sugg[i], *textPtr, rowW, rowH, fs, i == hl)) {
+          result = sugg[i];
+          *textPtr = result;
+          CloseFlyout(flyId);
+        }
+      }
+      EndFlyout();
+    }
+  }
+
+  return result;
+}
+
+// TokenizingTextBox / Chips — multi-value entry. Chips (pills with an "x") wrap
+// via BeginWrapPanel, followed by an inline text field. Enter / comma confirm a
+// token; Backspace on an empty field deletes the last chip; clicking "x" deletes
+// that chip. Optional suggestions via BeginFlyout. Returns true when the token
+// list changes.
+bool TokenizingTextBox(
+    const std::string &id, std::vector<std::string> *tokens,
+    const std::string &placeholder,
+    const std::function<std::vector<std::string>(const std::string &)> &suggestionsFn) {
+  UIContext *ctx = GetContext();
+  if (!ctx || !tokens)
+    return false;
+
+  const TextStyle &ts = ctx->style.GetTextStyle(TypographyStyle::Body);
+  const ColorState &accent = ctx->style.button.background;
+  float fs = ts.fontSize;
+  bool changed = false;
+
+  uint32_t bufKey = GenerateId("TTB_BUF:", id.c_str());
+  std::string &buf = ctx->stringStates[bufKey];
+
+  auto trim = [](std::string s) {
+    size_t a = s.find_first_not_of(" \t");
+    size_t b = s.find_last_not_of(" \t");
+    if (a == std::string::npos)
+      return std::string();
+    return s.substr(a, b - a + 1);
+  };
+
+  int deleteIndex = -1;
+  uint32_t tid = 0;
+
+  BeginWrapPanel("ttb_" + id);
+
+  // Chips
+  for (size_t i = 0; i < tokens->size(); ++i) {
+    PushID(static_cast<int>(i));
+    const std::string &tok = (*tokens)[i];
+    float padX = 8.0f;
+    float gap = 4.0f;
+    float xSize = fs * 0.85f;
+    Vec2 tsz = MeasureTextCached(ctx, tok, fs);
+    float chipH = fs + 8.0f;
+    float chipW = padX + tsz.x + gap + xSize + padX;
+    Vec2 chipSize(chipW, chipH);
+
+    LayoutConstraints cc = ConsumeNextConstraints(SizeConstraint::Auto);
+    Vec2 chipFinal = ApplyConstraints(ctx, cc, chipSize);
+    Vec2 chipPos = ctx->cursorPos;
+
+    Color pill = accent.normal;
+    pill.a = 0.25f;
+    ctx->renderer.DrawRectFilled(chipPos, chipFinal, pill, chipH * 0.5f);
+    ctx->renderer.DrawText(Vec2(chipPos.x + padX, chipPos.y + (chipFinal.y - fs) * 0.5f),
+                           tok, ts.color, fs);
+    // "x" delete zone
+    Vec2 xPos(chipPos.x + padX + tsz.x + gap, chipPos.y);
+    Vec2 xZone(xSize + padX, chipFinal.y);
+    bool xHover = IsMouseOver(ctx, xPos, xZone);
+    Color xCol = ts.color;
+    xCol.a = xHover ? 1.0f : 0.6f;
+    DrawWidgetIcon(ctx, xPos, xZone, Icons::X, xCol, xSize, 0.0f, 0.0f);
+    if (xHover && ctx->input.IsMousePressed(0))
+      deleteIndex = static_cast<int>(i);
+
+    ctx->lastItemPos = chipPos;
+    AdvanceCursor(ctx, chipFinal);
+    PopID();
+  }
+
+  // Inline text field (scoped so its hidden label gives a stable id).
+  PushID("field");
+  SetNextConstraints(FixedSize(140.0f, fs + 16.0f));
+  TextInput("##ttb_field", &buf, 140.0f, false, std::nullopt,
+            placeholder.empty() ? nullptr : placeholder.c_str());
+  tid = GenerateId("TXT:", "##ttb_field");
+  PopID();
+
+  Vec2 fmn, fmx;
+  GetItemRect(&fmn, &fmx);
+  Rect fieldRect(fmn, fmx - fmn);
+
+  EndWrapPanel();
+
+  bool fieldFocused = (ctx->activeWidgetId == tid &&
+                       ctx->activeWidgetType == ActiveWidgetType::TextInput);
+
+  // Apply chip deletion.
+  if (deleteIndex >= 0 && deleteIndex < static_cast<int>(tokens->size())) {
+    tokens->erase(tokens->begin() + deleteIndex);
+    changed = true;
+  }
+
+  auto addToken = [&](const std::string &raw) {
+    std::string t = trim(raw);
+    if (!t.empty()) {
+      tokens->push_back(t);
+      changed = true;
+    }
+  };
+
+  // Comma anywhere in the buffer splits into tokens (keep the trailing remainder).
+  if (buf.find(',') != std::string::npos) {
+    std::string remainder;
+    size_t start = 0;
+    for (size_t i = 0; i <= buf.size(); ++i) {
+      if (i == buf.size() || buf[i] == ',') {
+        std::string part = buf.substr(start, i - start);
+        if (i == buf.size())
+          remainder = part; // last segment has no trailing comma yet
+        else
+          addToken(part);
+        start = i + 1;
+      }
+    }
+    buf = remainder;
+  }
+
+  bool enter = ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
+               ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER);
+  if (fieldFocused && enter && !trim(buf).empty()) {
+    addToken(buf);
+    buf.clear();
+    // keep editing the field after committing
+    ctx->activeWidgetId = tid;
+    ctx->activeWidgetType = ActiveWidgetType::TextInput;
+  }
+
+  // Backspace on an empty field removes the last chip.
+  if (fieldFocused && buf.empty() &&
+      ctx->input.IsKeyPressed(SDL_SCANCODE_BACKSPACE) && !tokens->empty()) {
+    tokens->pop_back();
+    changed = true;
+  }
+
+  // Optional suggestions popup.
+  if (suggestionsFn) {
+    std::vector<std::string> sugg = suggestionsFn(buf);
+    std::string flyId = "TTB_FLY:" + id;
+    if (fieldFocused && !buf.empty() && !sugg.empty())
+      OpenFlyout(flyId);
+    else if (buf.empty() || sugg.empty())
+      CloseFlyout(flyId);
+    if (IsFlyoutOpen(flyId) && !sugg.empty()) {
+      if (BeginFlyout(flyId, fieldRect, FlyoutPlacement::BottomEdgeAlignedLeft)) {
+        float rowH = fs + 12.0f;
+        float rowW = std::max(fieldRect.size.x, 120.0f);
+        for (const auto &s : sugg) {
+          if (DrawSuggestionRow(ctx, s, buf, rowW, rowH, fs, false)) {
+            addToken(s);
+            buf.clear();
+            CloseFlyout(flyId);
+          }
+        }
+        EndFlyout();
+      }
+    }
+  }
 
   return changed;
 }
