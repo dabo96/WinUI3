@@ -162,6 +162,17 @@ namespace FluentUI {
         g_ctx = ctx;
     }
 
+    // brief 18.5: layout direction (RTL) control on the active context.
+    void SetLayoutDirection(UIContext::LayoutDirection dir) {
+        if (g_ctx) g_ctx->layoutDirection = dir;
+    }
+    UIContext::LayoutDirection GetLayoutDirection() {
+        return g_ctx ? g_ctx->layoutDirection : UIContext::LayoutDirection::LTR;
+    }
+    bool IsLayoutRTL() {
+        return g_ctx && g_ctx->IsRTL();
+    }
+
     UIContext* CreateStandaloneContext(SDL_Window* window, RenderBackend** outBackend) {
         if (!window) {
             Log(LogLevel::Error, "Window handle is NULL");

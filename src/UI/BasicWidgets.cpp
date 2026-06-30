@@ -108,6 +108,15 @@ void BeginHorizontal(float spacing, std::optional<Vec2> size,
   stack.itemCount = 0;
   stack.contentStart = stack.origin + stack.padding;
   stack.cursor = stack.contentStart;
+  // brief 18.5: capture the active RTL direction on this horizontal layout so
+  // AdvanceCursor can mirror the X axis. Only meaningful with a finite width.
+  // NOTE: geometric right→left packing of *auto-sized* children needs a measure
+  // pass in immediate mode (the child draws at cursorPos before its width is
+  // known), which would require touching every widget. That is deferred to a
+  // future pass (see AdvanceCursor's RTL branch); the flag + direction plumbing
+  // ship now so directional icons (MirrorDirectionalIcon) and explicit-width
+  // mirroring work today.
+  stack.rtl = ctx->IsRTL() && available.x > 1.0f;
   ctx->layoutStack.push_back(stack);
   ctx->cursorPos = stack.contentStart;
 

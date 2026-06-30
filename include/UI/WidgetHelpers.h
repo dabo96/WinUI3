@@ -33,6 +33,19 @@ float GetCurrentSpacing(UIContext *ctx);
 bool RectanglesOverlap(const Vec2 &pos1, const Vec2 &size1, const Vec2 &pos2, const Vec2 &size2);
 Vec2 ResolveAbsolutePosition(UIContext *ctx, const Vec2 &desiredPos, const Vec2 &widgetSize);
 void AdvanceCursor(UIContext *ctx, const Vec2 &size);
+
+// brief 18.5 (RTL): when the active context is RTL, swap a left/right directional
+// icon codepoint (chevrons, arrows, carets) for its mirror so navigational glyphs
+// point along the reading direction. Returns the codepoint unchanged in LTR or
+// for non-directional icons. Takes/returns a raw Unicode codepoint (Icons::*).
+uint32_t MirrorDirectionalIcon(UIContext *ctx, uint32_t codepoint);
+
+// brief 18.5 (RTL): mirror the x position of a child of known width inside the
+// current horizontal layout (or the window) so callers with an explicit width can
+// place themselves right-aligned in RTL. Returns x unchanged in LTR. `x` is the
+// intended left edge in window coordinates; `width` is the child's width.
+float MirrorXInContainer(UIContext *ctx, float x, float width);
+
 Vec2 MeasureTextCached(UIContext *ctx, const std::string &text, float fontSize);
 Vec2 MeasureTextCached(UIContext *ctx, const std::string &text, float fontSize, const std::string &fontName);
 

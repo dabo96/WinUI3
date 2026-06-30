@@ -483,8 +483,9 @@ bool CollapsingHeader(const std::string &label, bool *open,
     DrawFocusRing(ctx, widgetPos, finalSize, panelStyle.cornerRadius);
   }
 
-  // Chevron at left.
-  uint32_t chevronCp = isOpen ? Icons::ChevronDown : Icons::ChevronRight;
+  // Chevron at left. brief 18.5: in RTL a collapsed header points left.
+  uint32_t chevronCp = isOpen ? Icons::ChevronDown
+                              : MirrorDirectionalIcon(ctx, Icons::ChevronRight);
   DrawWidgetIcon(ctx, widgetPos, finalSize, chevronCp,
                  labelStyle.color, chevronSize, padX, iconGap);
 

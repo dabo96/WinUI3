@@ -1,6 +1,7 @@
 #include "UI/WidgetHelpers.h"
 #include "core/Context.h"
 #include "core/Renderer.h"
+#include "UI/Icons.h"   // brief 18.5: directional-icon mirror pairs
 #include <cmath>
 #include <algorithm>
 #include <cstring>
@@ -265,6 +266,12 @@ void AdvanceCursor(UIContext *ctx, const Vec2 &size) {
     }
     ctx->cursorPos = Vec2(stack.cursor.x, stack.cursor.y);
   } else {
+    // brief 18.5 (RTL): when stack.rtl is set, children should pack right→left
+    // from the container's right edge. Correct geometric mirroring of auto-sized
+    // children needs a measure pass (the child draws at cursorPos before its
+    // width is known), so it is deferred; horizontal layout currently flows
+    // left→right regardless. Direction is still honoured for directional icons
+    // (MirrorDirectionalIcon) and explicit-width mirroring (MirrorXInContainer).
     stack.contentSize.x += size.x;
     stack.contentSize.y = std::max(stack.contentSize.y, size.y);
     stack.cursor.x += size.x;
@@ -277,6 +284,46 @@ void AdvanceCursor(UIContext *ctx, const Vec2 &size) {
     }
     ctx->cursorPos = Vec2(stack.cursor.x, stack.contentStart.y);
   }
+}
+
+uint32_t MirrorDirectionalIcon(UIContext *ctx, uint32_t codepoint) {
+  if (!ctx || !ctx->IsRTL())
+    return codepoint;
+  switch (codepoint) {
+    case Icons::ChevronLeft:        return Icons::ChevronRight;
+    case Icons::ChevronRight:       return Icons::ChevronLeft;
+    case Icons::ChevronsLeft:       return Icons::ChevronsRight;
+    case Icons::ChevronsRight:      return Icons::ChevronsLeft;
+    case Icons::ChevronLeftCircle:  return Icons::ChevronRightCircle;
+    case Icons::ChevronRightCircle: return Icons::ChevronLeftCircle;
+    case Icons::ChevronLeftSquare:  return Icons::ChevronRightSquare;
+    case Icons::ChevronRightSquare: return Icons::ChevronLeftSquare;
+    case Icons::ArrowLeft:          return Icons::ArrowRight;
+    case Icons::ArrowRight:         return Icons::ArrowLeft;
+    case Icons::ArrowLeftCircle:    return Icons::ArrowRightCircle;
+    case Icons::ArrowRightCircle:   return Icons::ArrowLeftCircle;
+    case Icons::ArrowLeftSquare:    return Icons::ArrowRightSquare;
+    case Icons::ArrowRightSquare:   return Icons::ArrowLeftSquare;
+    default:                        return codepoint;
+  }
+}
+
+float MirrorXInContainer(UIContext *ctx, float x, float width) {
+  if (!ctx || !ctx->IsRTL())
+    return x;
+  // Mirror within the current horizontal layout's content box if one is active,
+  // otherwise within the window viewport.
+  float left, span;
+  if (!ctx->layoutStack.empty() && !ctx->layoutStack.back().isVertical) {
+    const LayoutStack &s = ctx->layoutStack.back();
+    left = s.contentStart.x;
+    span = s.availableSpace.x > 1.0f ? s.availableSpace.x : s.contentSize.x;
+  } else {
+    left = 0.0f;
+    span = ctx->renderer.GetViewportSize().x;
+  }
+  // new_left = left + span - (x - left) - width
+  return left + span - (x - left) - width;
 }
 
 Vec2 MeasureTextCached(UIContext *ctx, const std::string &text,

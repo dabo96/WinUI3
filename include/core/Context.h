@@ -97,6 +97,10 @@ struct LayoutStack {
   // Vertical/Horizontal/Grid stacks leave this false so their behaviour is
   // unchanged. The per-row bookkeeping lives in the parallel wrapStack entry.
   bool isWrap = false;
+  // brief 18.5: captured from ctx->layoutDirection when this (horizontal) layout
+  // is pushed. When true, AdvanceCursor flows children right→left from the right
+  // edge of the container instead of left→right. Vertical layouts ignore it.
+  bool rtl = false;
 };
 
 // brief 19: per-WrapPanel bookkeeping, pushed/popped in lockstep with the
@@ -1002,6 +1006,14 @@ UIContext* CreateStandaloneContext(SDL_Window* window, UIContext* shareFrom,
 // Destroy a standalone context (does not touch the global singleton). Frees the
 // backend but never the shared resource pool (owned by the main context).
 void DestroyStandaloneContext(UIContext* ctx, RenderBackend* backend);
+
+// brief 18.5: RTL layout direction control. SetLayoutDirection(RTL) mirrors the
+// X axis of horizontal/grid containers (see AdvanceCursor) and directional icons
+// (see MirrorDirectionalIcon). Complex bidi text shaping (Arabic/Indic via
+// HarfBuzz) is out of scope — see brief 18 "Fuera de alcance".
+void SetLayoutDirection(UIContext::LayoutDirection dir);
+UIContext::LayoutDirection GetLayoutDirection();
+bool IsLayoutRTL();
 
 void NewFrame(float deltaTime = 0.016f);
 void Render();
