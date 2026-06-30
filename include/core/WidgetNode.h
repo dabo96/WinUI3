@@ -72,6 +72,27 @@ public:
     AnimatedValue<Color> bgColorAnim;
     AnimatedValue<float> opacityAnim{1.0f};
 
+    // ─── brief 10 Part D — presence tracking (enter / exit transitions) ──────────
+    // A managed overlay (Flyout/Menu/Tooltip/Modal/Dialog/Toast) marks its node with
+    // animatesExit=true via BeginPresence(). While present the node is re-emitted each
+    // frame; when it stops being emitted the presence driver (Context.cpp, between
+    // frame build and Reconcile) flips it to Exiting and animates opacity→0 + scale→
+    // ~0.96 before letting Reconcile remove it. enterT drives fade+scale on entrance.
+    enum class Presence : uint8_t { Entering, Present, Exiting };
+    Presence presence = Presence::Entering;
+    AnimatedValue<float> enterT{0.0f};  // 0→1 on appear (fade/scale factor)
+    float scaleAnim = 1.0f;             // current scale (1=full); driven on exit
+    bool animatesExit = false;          // opted-in by BeginPresence for managed overlays
+
+    // ─── brief 10 Part E — FLIP layout animation ────────────────────────────────
+    // Opt-in (animateLayout containers). prevBounds is last frame's rect; when a
+    // child's new bounds differ, posSpring is seeded with the delta and decays to 0,
+    // so the child slides from its old position to the new one. offset = posSpring.Get().
+    Rect prevBounds;
+    bool prevBoundsValid = false;
+    SpringValue<Vec2> posSpring;        // visual offset (delta→0)
+    bool animatesLayout = false;        // set by FLIP-enabled containers
+
     // Style override (nullptr = inherit from theme)
     Style* styleOverride = nullptr;
 
@@ -90,8 +111,21 @@ public:
     // Perf 2.3: Flag to skip nodes without active animations
     bool hasActiveAnimations = false;
 
+    // brief 10 Part D/E/G: true while a presence (enter/exit) or FLIP spring is
+    // running. Distinct from hasActiveAnimations (which gates bg/opacity tweens) so
+    // the presence/FLIP drivers can advance these even on nodes that don't set it.
+    bool IsMotionActive() const {
+        return enterT.IsAnimating() || posSpring.IsAnimating() ||
+               presence == Presence::Exiting;
+    }
+
     // Virtual interface — subclasses override as needed
     virtual void Update(float dt) {
+        // brief 10 Part D/E: advance presence + FLIP motion independently of the
+        // hasActiveAnimations fast-path (which only covers bg/opacity tweens).
+        enterT.Update(dt);
+        posSpring.Update(dt);
+
         if (!hasActiveAnimations) return;
         bgColorAnim.Update(dt);
         opacityAnim.Update(dt);

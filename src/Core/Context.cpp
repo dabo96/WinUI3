@@ -5,6 +5,9 @@
 #include "core/SharedResourcePool.h"
 #include "Theme/FluentTheme.h"
 #include <cassert>
+#if defined(_WIN32)
+#include <windows.h> // brief 10 Part B: SystemParametersInfo (SPI_GETCLIENTAREAANIMATION)
+#endif
 
 namespace FluentUI {
 
@@ -53,6 +56,38 @@ namespace FluentUI {
 
     static UIContext* g_ctx = nullptr;
     static RenderBackend* g_backend = nullptr;
+
+    // ─── brief 10 Part B — motion policy ──────────────────────────────────────────
+    // Single point that scales / disables animation durations. Called from header
+    // inlines (AnimatedValue/SpringValue) so it must tolerate a null context (unit
+    // tests build AnimatedValue without ever calling CreateContext).
+    float MotionDuration(float base) {
+        if (!g_ctx) return base;
+        const MotionConfig& m = g_ctx->motion;
+        if (!m.enabled || m.reduceMotion) return 0.0f;
+        return base * m.durationScale;
+    }
+
+    void InitMotionFromOS() {
+        if (!g_ctx) return;
+#if defined(_WIN32)
+        BOOL clientAreaAnim = TRUE; // default: animations on
+        if (SystemParametersInfoA(SPI_GETCLIENTAREAANIMATION, 0, &clientAreaAnim, 0)) {
+            g_ctx->motion.reduceMotion = (clientAreaAnim == FALSE);
+        }
+#else
+        // No portable SDL query for "reduce motion"; leave the default (false). Hosts
+        // can set g_ctx->motion.reduceMotion themselves from their platform hook.
+#endif
+    }
+
+    // brief 10 Part G: union of all active animation sources. Used by the host loop
+    // to decide whether to idle (block on events) or render continuously.
+    bool UIContext::AnyAnimationActive() const {
+        return !activeColorAnimIds.empty() || !activeFloatAnimIds.empty() ||
+               !activeRippleIds.empty() || !activeSpringColorIds.empty() ||
+               !activeSpringFloatIds.empty() || widgetTree.HasActiveAnimations();
+    }
 
     // Helper: initialize system cursors for a context
     static void InitCursors(UIContext* ctx) {

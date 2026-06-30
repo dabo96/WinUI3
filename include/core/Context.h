@@ -342,10 +342,26 @@ struct UIContext {
   std::unordered_map<uint32_t, AnimatedValue<Color>> colorAnimations;
   std::unordered_map<uint32_t, AnimatedValue<float>> floatAnimations;
 
+  // brief 10 Part B: global motion tokens (durationScale / reduceMotion / enabled).
+  // Read via the free function MotionDuration(). Hosts can mutate it at runtime
+  // (e.g. honor the OS "reduce animations" preference — see InitMotionFromOS()).
+  MotionConfig motion;
+
+  // brief 10 Part C: spring-based interactive animations (interruptible). Kept as
+  // SEPARATE maps from colorAnimations/floatAnimations on purpose — brief 22
+  // (unified state) will absorb these. springColors holds Color springs (button
+  // bg/fg/border, overlay tints), springFloats holds scalar springs. Keyed by
+  // AnimSlot(widgetId, slot) exactly like the tween maps.
+  std::unordered_map<uint32_t, SpringValue<Color>> springColors;
+  std::unordered_map<uint32_t, SpringValue<float>> springFloats;
+
   // Perf 2.2: Track active animation IDs to avoid iterating all entries
   std::vector<uint32_t> activeColorAnimIds;
   std::vector<uint32_t> activeFloatAnimIds;
   std::vector<uint32_t> activeRippleIds;
+  // brief 10 Part C: active spring ids (parallel to the tween vectors above).
+  std::vector<uint32_t> activeSpringColorIds;
+  std::vector<uint32_t> activeSpringFloatIds;
 
   // Perf 2.2: Notify that an animation became active
   void NotifyColorAnimActive(uint32_t id) {
@@ -360,6 +376,20 @@ struct UIContext {
     for (auto aid : activeRippleIds) if (aid == id) return;
     activeRippleIds.push_back(id);
   }
+  // brief 10 Part C: notify that a spring became active this frame.
+  void NotifySpringColorActive(uint32_t id) {
+    for (auto aid : activeSpringColorIds) if (aid == id) return;
+    activeSpringColorIds.push_back(id);
+  }
+  void NotifySpringFloatActive(uint32_t id) {
+    for (auto aid : activeSpringFloatIds) if (aid == id) return;
+    activeSpringFloatIds.push_back(id);
+  }
+
+  // brief 10 Part G: true when any CPU-side animation is still running, so the host
+  // loop can block on events (idle) instead of spinning. Union of the five active
+  // vectors plus the retained tree's animation flag. Defined in Context.cpp.
+  bool AnyAnimationActive() const;
 
   // Sistema de ripple effects
   std::unordered_map<uint32_t, RippleEffect> rippleEffects;
@@ -1017,6 +1047,16 @@ bool IsLayoutRTL();
 
 void NewFrame(float deltaTime = 0.016f);
 void Render();
+
+// brief 10 Part B: motion-duration policy. Returns base * g_ctx->motion.durationScale,
+// or 0 when reduceMotion / !enabled. Returns base unchanged when there is no context.
+// Also declared in Animation.h (forward) so AnimatedValue/SpringValue can call it
+// without including Context.h (the Animation.h ↔ Context.h cycle).
+float MotionDuration(float base);
+// brief 10 Part B: seed g_ctx->motion.reduceMotion from the OS accessibility flag
+// (Windows: SPI_GETCLIENTAREAANIMATION). No-op / default false on other platforms.
+// Safe to call once after CreateContext(); FluentApp::run() calls it for you.
+void InitMotionFromOS();
 
 /// Returns true if the mouse was over any FluentUI widget last frame.
 /// Host app should skip 3D picking / viewport interaction when this returns true.

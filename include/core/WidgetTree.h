@@ -77,13 +77,27 @@ public:
         if (root) root->TraverseDepthFirst(visitor);
     }
 
-    // Perf 2.3: Only update nodes with active animations
+    // Perf 2.3: Only update nodes with active animations.
+    // brief 10 Part D/E: also update nodes whose presence (enter/exit) or FLIP spring
+    // is running, even if the bg/opacity fast-path flag is clear.
     void UpdateAnimations(float dt) {
         TraverseDepthFirst([dt](WidgetNode* node) {
-            if (node->hasActiveAnimations) {
+            if (node->hasActiveAnimations || node->IsMotionActive()) {
                 node->Update(dt);
             }
         });
+    }
+
+    // brief 10 Part G: true if any retained node is mid-animation (inline tween,
+    // presence enter/exit, or a FLIP position spring). Feeds AnyAnimationActive()
+    // so a static UI can idle. Cheap: short-circuits on the first active node.
+    bool HasActiveAnimations() const {
+        bool any = false;
+        const_cast<WidgetTree*>(this)->TraverseDepthFirst([&any](WidgetNode* node) {
+            if (any) return;
+            if (node->hasActiveAnimations || node->IsMotionActive()) any = true;
+        });
+        return any;
     }
 
     // Get root node
