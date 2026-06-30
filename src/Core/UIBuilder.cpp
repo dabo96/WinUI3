@@ -343,6 +343,60 @@ void UIBuilder::menuFlyout(const std::string& id, const Rect& anchorRect,
     MenuFlyout(id, anchorRect, entries);
 }
 
+// --- BRIEF 14: Signature controls (sugar) ---
+
+bool UIBuilder::toggleSwitch(const std::string& label, bool* value,
+                             const std::string& onText, const std::string& offText) {
+    return ToggleSwitch(label, value, onText, offText);
+}
+
+void UIBuilder::expander(const std::string& id, const std::string& header,
+                         std::function<void(UIBuilder&)> content,
+                         uint32_t icon, bool* expanded) {
+    if (BeginExpander(id, header, icon, expanded)) {
+        if (content) content(*this);
+        EndExpander();
+    }
+}
+
+int UIBuilder::splitButton(const std::string& label, uint32_t icon,
+                           std::function<void()> onPrimary,
+                           const std::vector<CommandItem>& menu) {
+    return SplitButton(label, icon, onPrimary, menu);
+}
+
+void UIBuilder::dropDownButton(const std::string& label, uint32_t icon,
+                               const std::vector<CommandItem>& menu) {
+    DropDownButton(label, icon, menu);
+}
+
+bool UIBuilder::numberBox(const std::string& label, double* value,
+                          double min, double max, double step, const char* format) {
+    return NumberBox(label, value, min, max, step, format);
+}
+
+bool UIBuilder::teachingTip(const std::string& id, const Rect& targetRect,
+                            const std::string& title, const std::string& body,
+                            const std::string& actionText) {
+    return TeachingTip(id, targetRect, title, body, actionText);
+}
+
+DialogResult UIBuilder::contentDialog(const std::string& id, bool* open,
+                                      const std::string& title,
+                                      std::function<void(UIBuilder&)> body,
+                                      const std::string& primaryText,
+                                      const std::string& secondaryText,
+                                      const std::string& closeText) {
+    return ContentDialog(id, open, title,
+                         [&]() { if (body) body(*this); },
+                         primaryText, secondaryText, closeText);
+}
+
+bool UIBuilder::rating(const std::string& id, int* value, int maxStars,
+                       bool allowHalf) {
+    return RatingControl(id, value, maxStars, allowHalf);
+}
+
 // --- Grid layout ---
 
 void UIBuilder::grid(const std::string& id, int columns, int itemCount,

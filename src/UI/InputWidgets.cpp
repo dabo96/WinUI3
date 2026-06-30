@@ -6,11 +6,14 @@
 #include "core/Context.h"
 #include "core/Renderer.h"
 #include "core/Elevation.h"
+#include "core/WidgetNode.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <optional>
 
 namespace FluentUI {
@@ -2794,6 +2797,195 @@ void RenderDeferredDropdowns() {
       ctx->openMenuId = 0;
     }
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// NumberBox (brief 14, section 4)
+// ════════════════════════════════════════════════════════════════════════════
+// Numeric field with +/- spinners and validation. Reuses the internal TextInput
+// for editing (buffer in stringStates); parses on Enter/blur, clamps, reformats.
+// Spinners repeat while held; the mouse wheel over the control steps ±step.
+bool NumberBox(const std::string &label, double *value, double min, double max,
+               double step, const char *format, std::optional<Vec2> pos) {
+  UIContext *ctx = GetContext();
+  if (!ctx || !value)
+    return false;
+  if (!format)
+    format = "%.0f";
+
+  uint32_t nbId = GenerateId("NUMBOX:", label.c_str());
+  // Mismo id que el TextInput interno (mismo label, mismo scope de PushID).
+  uint32_t txtId = GenerateId("TXT:", label.c_str());
+
+  auto formatVal = [&](double v) {
+    char b[64];
+    std::snprintf(b, sizeof(b), format, v);
+    return std::string(b);
+  };
+
+  // Buffer de edición (lo muta el TextInput interno) y flag de edición.
+  std::string &buf = ctx->stringStates[nbId];
+  bool &editing = ctx->boolStates[nbId];
+
+  // Geometría: campo + spinners reservados a la derecha.
+  bool inVertical =
+      !ctx->layoutStack.empty() && ctx->layoutStack.back().isVertical;
+  float totalW = S(160.0f);
+  if (inVertical) {
+    float av = GetCurrentAvailableSpace(ctx).x;
+    if (av > 1.0f)
+      totalW = av;
+  }
+  totalW = std::max(totalW, S(90.0f));
+  float spinnerW = S(20.0f);
+  float gap = S(2.0f);
+  float fieldWidth = std::max(S(40.0f), totalW - spinnerW - gap);
+
+  // Mientras NO se edita, el buffer refleja el valor (sincronía externa).
+  if (!editing)
+    buf = formatVal(*value);
+
+  // Campo de texto interno (anatomía estándar: label arriba). Anchura fija para
+  // reservar hueco a los spinners.
+  LayoutConstraints fc;
+  fc.width = SizeConstraint::Auto;
+  fc.fixedWidth = fieldWidth;
+  SetNextConstraints(fc);
+  TextInput(label, &buf, fieldWidth, false, pos, nullptr, 0);
+
+  Vec2 widgetPos = ctx->lastItemPos;
+  Vec2 totalItemSize = ctx->lastItemSize;
+
+  // Recalcular la geometría del campo (label arriba, campo abajo) — debe coincidir
+  // con TextInput: labelStyle = Subtitle, labelSpacing = 4, alto = bodyFont+16.
+  const TextStyle &labelStyle =
+      ctx->style.GetTextStyle(TypographyStyle::Subtitle);
+  const TextStyle &bodyStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
+  float labelSpacing = 4.0f;
+  Vec2 labelSize = MeasureTextCached(ctx, label, labelStyle.fontSize);
+  float fieldH = bodyStyle.fontSize + 16.0f;
+  float fieldTop = widgetPos.y + labelSize.y + labelSpacing;
+  // Si TextInput expandió la altura (constraint Fill vertical), anclar el campo
+  // a la parte baja del item total.
+  if (totalItemSize.y - fieldH > labelSize.y + labelSpacing + 0.5f)
+    fieldTop = widgetPos.y + (totalItemSize.y - fieldH);
+
+  // --- Commit en Enter/blur ---
+  bool nowActive = (ctx->activeWidgetId == txtId &&
+                    ctx->activeWidgetType == ActiveWidgetType::TextInput);
+  // Blur por click fuera del control: el TextInput single-line solo desactiva con
+  // Enter, así que aquí detectamos un click fuera del campo+spinners para confirmar.
+  Vec2 mp(ctx->input.MouseX(), ctx->input.MouseY());
+  bool clickAway = editing && ctx->input.IsMousePressed(0) &&
+                   !PointInRect(mp, Vec2(widgetPos.x, fieldTop),
+                                Vec2(totalW, fieldH));
+  bool changed = false;
+  if (nowActive && !clickAway) {
+    editing = true;
+  } else if (editing) {
+    // Perdió el foco / pulsó Enter / click fuera → confirmar.
+    editing = false;
+    if (clickAway && ctx->activeWidgetId == txtId) {
+      ctx->activeWidgetId = 0;
+      ctx->activeWidgetType = ActiveWidgetType::None;
+    }
+    const char *s = buf.c_str();
+    char *endp = nullptr;
+    double parsed = std::strtod(s, &endp);
+    if (endp != s) {
+      double nv = std::clamp(parsed, min, max);
+      if (nv != *value) {
+        *value = nv;
+        changed = true;
+      }
+    }
+    // Re-formatear (también revierte un texto inválido).
+    buf = formatVal(*value);
+  }
+
+  // --- Spinners +/- (repetición al mantener) ---
+  Vec2 spinPos(widgetPos.x + fieldWidth + gap, fieldTop);
+  Vec2 upRect(spinPos.x, spinPos.y);
+  Vec2 upSize(spinnerW, std::floor(fieldH * 0.5f));
+  Vec2 dnRect(spinPos.x, spinPos.y + upSize.y);
+  Vec2 dnSize(spinnerW, fieldH - upSize.y);
+
+  auto spinner = [&](const Vec2 &bp, const Vec2 &bs, bool isUp,
+                     const char *rkeyName) -> bool {
+    bool hov = IsMouseOver(ctx, bp, bs);
+    ctx->renderer.DrawRectFilled(bp, bs, InputFieldBackground(ctx, hov), 0.0f);
+    uint32_t cp = isUp ? Icons::Plus : Icons::Minus;
+    float glyphSize = bs.y * 0.7f;
+    DrawWidgetIcon(ctx, bp, bs, cp, bodyStyle.color, glyphSize,
+                   (bs.x - glyphSize) * 0.5f, 0.0f);
+    uint32_t rkey = GenerateId(rkeyName, label.c_str());
+    float &timer = ctx->floatStates[rkey];
+    bool pressed = hov && ctx->input.IsMousePressed(0);
+    bool down = hov && ctx->input.IsMouseDown(0);
+    bool tick = false;
+    if (pressed) {
+      tick = true;
+      timer = -0.35f; // retardo inicial antes de la auto-repetición
+    } else if (down) {
+      timer += ctx->deltaTime;
+      if (timer >= 0.05f) {
+        tick = true;
+        timer = 0.0f;
+      }
+    } else {
+      timer = 0.0f;
+    }
+    return tick;
+  };
+
+  int delta = 0;
+  if (IsRectInViewport(ctx, spinPos, Vec2(spinnerW, fieldH))) {
+    if (spinner(upRect, upSize, true, "NBSPIN_UP:"))
+      delta += 1;
+    if (spinner(dnRect, dnSize, false, "NBSPIN_DN:"))
+      delta -= 1;
+    ctx->renderer.DrawRect(spinPos, Vec2(spinnerW, fieldH),
+                           InputFieldBorder(ctx, false), 0.0f);
+  }
+
+  // --- Rueda del ratón sobre todo el control (campo + spinners) ---
+  Vec2 wheelPos(widgetPos.x, fieldTop);
+  Vec2 wheelSize(totalW, fieldH);
+  if (!ctx->scrollConsumedThisFrame && !IsMouseInputBlocked(ctx) &&
+      PointInRect(Vec2(ctx->input.MouseX(), ctx->input.MouseY()), wheelPos,
+                  wheelSize)) {
+    float wy = ctx->input.MouseWheelY();
+    if (std::abs(wy) > 0.001f) {
+      delta += (wy > 0.0f) ? 1 : -1;
+      ctx->scrollConsumedThisFrame = true;
+    }
+  }
+
+  if (delta != 0) {
+    double nv = std::clamp(*value + delta * step, min, max);
+    if (nv != *value) {
+      *value = nv;
+      changed = true;
+    }
+    buf = formatVal(*value);
+    editing = false;
+    if (ctx->activeWidgetId == txtId) {
+      ctx->activeWidgetId = 0;
+      ctx->activeWidgetType = ActiveWidgetType::None;
+    }
+  }
+
+  // Accesibilidad: rol Slider/SpinButton, value formateado.
+  ctx->widgetTree.FindOrCreate(nbId, ctx->frame, [&]() {
+    auto node = std::make_unique<WidgetNode>(nbId);
+    node->accessibleRole = WidgetNode::AccessibleRole::Slider;
+    node->accessibleName = label;
+    return node;
+  });
+  if (auto *node = ctx->widgetTree.FindById(nbId))
+    node->accessibleValue = formatVal(*value);
+
+  return changed;
 }
 
 } // namespace FluentUI

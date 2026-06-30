@@ -5,11 +5,14 @@
 #include "core/Context.h"
 #include "core/Renderer.h"
 #include "core/Elevation.h"
+#include "core/WidgetNode.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <iostream>
+#include <memory>
 #include <optional>
+#include <vector>
 
 namespace FluentUI {
 
@@ -1158,6 +1161,200 @@ void MenuFlyout(const std::string &id, const Rect &anchorRect,
   }
 
   EndFlyout();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TeachingTip / coachmark (brief 14, section 7)
+// ════════════════════════════════════════════════════════════════════════════
+bool TeachingTip(const std::string &id, const Rect &targetRect,
+                 const std::string &title, const std::string &body,
+                 const std::string &actionText) {
+  UIContext *ctx = GetContext();
+  if (!ctx)
+    return false;
+
+  uint32_t seenKey = GenerateId("TEACHTIP_SEEN:", id.c_str());
+  bool &seen = ctx->boolStates[seenKey];
+  if (seen)
+    return false;
+
+  std::string flyoutId = "TEACHTIP:" + id;
+  // Abrir una sola vez. Si el flyout se cerró (click fuera/Esc) y ya se había
+  // abierto, marcar "ya visto" y no volver a mostrar.
+  uint32_t openedKey = GenerateId("TEACHTIP_OPENED:", id.c_str());
+  bool &openedOnce = ctx->boolStates[openedKey];
+  if (!IsFlyoutOpen(flyoutId)) {
+    if (!openedOnce) {
+      OpenFlyout(flyoutId);
+      openedOnce = true;
+    } else {
+      seen = true;
+      return false;
+    }
+  }
+
+  const PanelStyle &panelStyle = ctx->style.panel;
+  bool actioned = false;
+
+  // Colocar el flyout debajo del target (con flip si no cabe).
+  if (BeginFlyout(flyoutId, targetRect, FlyoutPlacement::Bottom)) {
+    Label(title, std::nullopt, TypographyStyle::BodyStrong);
+    Spacing(2.0f);
+    LabelWrapped(body, 240.0f);
+    Spacing(6.0f);
+    BeginHorizontal(8.0f);
+    if (!actionText.empty() && Button(actionText)) {
+      actioned = true;
+      seen = true;
+      CloseFlyout(flyoutId);
+    }
+    if (Button("Got it")) {
+      seen = true;
+      CloseFlyout(flyoutId);
+    }
+    EndHorizontal();
+    EndFlyout();
+  }
+
+  // Dibujar el "beak" (flecha) apuntando al target, sobre la capa de overlay y
+  // fuera del clip de la card (queda en el hueco entre el target y el flyout).
+  uint32_t fid = GenerateId("FLYOUT:", flyoutId.c_str());
+  auto it = ctx->flyoutStates.find(fid);
+  if (it != ctx->flyoutStates.end() && it->second.open &&
+      it->second.measuredSize.y > 1.0f) {
+    Vec2 fpos = it->second.position;
+    Vec2 fsize = it->second.measuredSize;
+    Color beakColor = panelStyle.background;
+    beakColor.a = 1.0f;
+    float tcx = targetRect.pos.x + targetRect.size.x * 0.5f;
+    float cx = std::clamp(tcx, fpos.x + 10.0f, fpos.x + fsize.x - 10.0f);
+    const float k = 7.0f;
+    ctx->renderer.SetLayer(RenderLayer::Overlay);
+    ctx->renderer.FlushBatch();
+    if (fpos.y >= targetRect.Bottom()) {
+      // Flyout debajo del target → pico hacia arriba.
+      float by = fpos.y;
+      ctx->renderer.DrawTriangleFilled(Vec2(cx - k, by), Vec2(cx + k, by),
+                                       Vec2(cx, by - k), beakColor);
+    } else {
+      // Flyout encima → pico hacia abajo.
+      float by = fpos.y + fsize.y;
+      ctx->renderer.DrawTriangleFilled(Vec2(cx - k, by), Vec2(cx + k, by),
+                                       Vec2(cx, by + k), beakColor);
+    }
+    ctx->renderer.SetLayer(RenderLayer::Default);
+  }
+
+  return actioned;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ContentDialog (brief 14, section 9)
+// ════════════════════════════════════════════════════════════════════════════
+DialogResult ContentDialog(const std::string &id, bool *open,
+                           const std::string &title,
+                           std::function<void()> body,
+                           const std::string &primaryText,
+                           const std::string &secondaryText,
+                           const std::string &closeText) {
+  UIContext *ctx = GetContext();
+  if (!ctx || !open || !*open)
+    return DialogResult::None;
+
+  bool escPressed = ctx->input.IsKeyPressed(SDL_SCANCODE_ESCAPE);
+  bool enterPressed = ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
+                      ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER);
+
+  // Foco inicial en el botón primario la primera vez que se abre. No mantenemos
+  // una referencia al mapa: body() es arbitrario y podría insertar en boolStates
+  // (rehash) e invalidarla.
+  uint32_t focusInitKey = GenerateId("CDLG_FOCUS:", id.c_str());
+  bool focusInit = false;
+  {
+    auto fit = ctx->boolStates.find(focusInitKey);
+    if (fit != ctx->boolStates.end())
+      focusInit = fit->second;
+  }
+  if (!focusInit && !primaryText.empty()) {
+    ctx->focusedWidgetId = GenerateId("BTN:", primaryText.c_str());
+    ctx->boolStates[focusInitKey] = true;
+  }
+
+  // Trap de foco: recordar dónde empiezan los widgets enfocables del diálogo.
+  size_t focusStart = ctx->focusableWidgets.size();
+
+  bool wantPrimary = false, wantSecondary = false, wantClose = false;
+  Vec2 dlgSize(S(420.0f), S(180.0f));
+
+  if (BeginModal(id, title, open, dlgSize)) {
+    if (body)
+      body();
+    Spacing(S(10.0f));
+    BeginHorizontal(S(8.0f));
+    if (!primaryText.empty()) {
+      // Botón primario acentuado (color de acento, texto blanco).
+      ButtonStyle accentStyle = ctx->GetEffectiveButtonStyle();
+      Color ac = ctx->style.accentColor;
+      accentStyle.background.normal = ac;
+      accentStyle.background.hover =
+          Color(std::min(1.0f, ac.r * 1.12f), std::min(1.0f, ac.g * 1.12f),
+                std::min(1.0f, ac.b * 1.12f), ac.a);
+      accentStyle.background.pressed =
+          Color(ac.r * 0.88f, ac.g * 0.88f, ac.b * 0.88f, ac.a);
+      Color white(1.0f, 1.0f, 1.0f, 1.0f);
+      accentStyle.foreground.normal = white;
+      accentStyle.foreground.hover = white;
+      accentStyle.foreground.pressed = white;
+      PushButtonStyle(accentStyle);
+      if (Button(primaryText))
+        wantPrimary = true;
+      PopButtonStyle();
+    }
+    if (!secondaryText.empty() && Button(secondaryText))
+      wantSecondary = true;
+    if (!closeText.empty() && Button(closeText))
+      wantClose = true;
+    EndHorizontal();
+    EndModal();
+  }
+
+  // Trap de foco: dejar en focusableWidgets sólo los controles del diálogo, de
+  // modo que Tab (procesado al inicio del frame siguiente) cicle dentro de él.
+  if (focusStart > 0 && focusStart <= ctx->focusableWidgets.size()) {
+    ctx->focusableWidgets.erase(ctx->focusableWidgets.begin(),
+                                ctx->focusableWidgets.begin() +
+                                    static_cast<long>(focusStart));
+    if (ctx->focusIndex >= static_cast<int>(focusStart))
+      ctx->focusIndex -= static_cast<int>(focusStart);
+    else
+      ctx->focusIndex = 0;
+  }
+
+  // Resolver el resultado. Enter = Primary, Esc = Close (el Modal ya cerró por
+  // Esc/X poniendo *open=false, que también tratamos como Close).
+  DialogResult result = DialogResult::None;
+  if (wantPrimary || (enterPressed && !primaryText.empty()))
+    result = DialogResult::Primary;
+  else if (wantSecondary)
+    result = DialogResult::Secondary;
+  else if (wantClose || escPressed || !*open)
+    result = DialogResult::Close;
+
+  if (result != DialogResult::None) {
+    *open = false;
+    ctx->boolStates[focusInitKey] = false; // re-armar el foco para la próxima
+  }
+
+  // Accesibilidad: rol Dialog.
+  uint32_t dlgId = GenerateId("CONTENTDIALOG:", id.c_str());
+  ctx->widgetTree.FindOrCreate(dlgId, ctx->frame, [&]() {
+    auto node = std::make_unique<WidgetNode>(dlgId);
+    node->accessibleRole = WidgetNode::AccessibleRole::Dialog;
+    node->accessibleName = title;
+    return node;
+  });
+
+  return result;
 }
 
 } // namespace FluentUI
