@@ -72,6 +72,58 @@ struct LayoutStack {
   // vertical layout. Reset on each layout pop. Auto-resets when another header
   // at the same level is rendered.
   float collapseIndent = 0.0f;
+  // brief 19 (WrapPanel): when true the layout flows children left→right like a
+  // horizontal layout (isVertical is false) but AdvanceCursor wraps to a new line
+  // when the next slot reaches the right edge. Orthogonal to isVertical; existing
+  // Vertical/Horizontal/Grid stacks leave this false so their behaviour is
+  // unchanged. The per-row bookkeeping lives in the parallel wrapStack entry.
+  bool isWrap = false;
+};
+
+// brief 19: per-WrapPanel bookkeeping, pushed/popped in lockstep with the
+// WrapPanel's LayoutStack (which has isWrap = true). AdvanceCursor reads/writes
+// the top entry when the current layout stack is a wrap layout.
+struct WrapFrameContext {
+  Vec2 origin{0.0f, 0.0f};   // container origin (cursor at BeginWrapPanel)
+  float left = 0.0f;         // left edge children wrap back to (contentStart.x)
+  float availWidth = 0.0f;   // usable content width before wrapping
+  float hGap = 8.0f;         // horizontal gap between items on a row
+  float vGap = 8.0f;         // vertical gap between rows
+  float rowHeight = 0.0f;    // tallest item in the current (open) row
+  float maxWidth = 0.0f;     // widest row reached so far (for final size)
+  float totalHeight = 0.0f;  // accumulated height of all rows incl. current
+  Vec2 savedCursor{0.0f, 0.0f};
+  Vec2 savedLastItemPos{0.0f, 0.0f};
+  Vec2 savedLastItemSize{0.0f, 0.0f};
+};
+
+// brief 19: per-UniformGrid bookkeeping. Cells share an identical width; each
+// cell receives a Fixed-width constraint and the cursor advances cell-by-cell,
+// wrapping every `columns` children. Height is auto (tallest item per row).
+struct UniformGridFrameContext {
+  Vec2 origin{0.0f, 0.0f};
+  int columns = 1;
+  float cellWidth = 0.0f;
+  float gap = 8.0f;
+  int currentCell = 0;
+  float rowHeight = 0.0f;    // tallest item in current row
+  float totalHeight = 0.0f;  // committed height of completed rows
+  Vec2 savedCursor{0.0f, 0.0f};
+  Vec2 savedLastItemPos{0.0f, 0.0f};
+  Vec2 savedLastItemSize{0.0f, 0.0f};
+};
+
+// brief 19: per-Canvas bookkeeping. Children are placed by explicit coordinates
+// (their pos param, resolved against the canvas origin) rather than the flow
+// cursor. A throwaway vertical LayoutStack is pushed so any AdvanceCursor calls
+// from children mutate it instead of the parent layout.
+struct CanvasFrameContext {
+  uint32_t id = 0;
+  Vec2 origin{0.0f, 0.0f};
+  Vec2 size{0.0f, 0.0f};
+  Vec2 savedCursor{0.0f, 0.0f};
+  Vec2 savedLastItemPos{0.0f, 0.0f};
+  Vec2 savedLastItemSize{0.0f, 0.0f};
 };
 
 struct TabContentFrame {
@@ -617,6 +669,12 @@ struct UIContext {
   std::vector<LayoutStack> layoutStack;
   std::vector<Vec2> offsetStack;
   std::vector<TabContentFrame> tabFrameStack;
+
+  // brief 19: layout-primitive stacks (parallel bookkeeping for WrapPanel /
+  // UniformGrid / Canvas). Each is pushed in its Begin* and popped in End*.
+  std::vector<WrapFrameContext> wrapStack;
+  std::vector<UniformGridFrameContext> uniformGridStack;
+  std::vector<CanvasFrameContext> canvasStack;
 
   // brief 21: ID scope stack. Each entry is a seed hash derived from the enclosing
   // scope + a discriminant (container id / item index / pointer). GenerateId mixes

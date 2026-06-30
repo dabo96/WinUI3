@@ -12,6 +12,10 @@ namespace FluentUI {
 
 // Forward declarations
 struct UIContext;
+// brief 19: responsive breakpoint enum (defined in UI/Widgets.h). Opaque enum
+// declaration (fixed underlying type int) so the sugar signatures below compile
+// without pulling the full Widgets.h into this header.
+enum class Breakpoint;
 
 class UIBuilder {
 public:
@@ -118,6 +122,16 @@ public:
     void grid(const std::string& id, int columns, int itemCount,
               std::function<void(UIBuilder&, int index)> cellContent,
               float rowHeight = 0.0f);
+
+    // --- Layout primitives (brief 19) ---
+    void wrapPanel(const std::string& id, std::function<void(UIBuilder&)> content,
+                   float hGap = 8.0f, float vGap = 8.0f);
+    void uniformGrid(const std::string& id, int columns, int itemCount,
+                     std::function<void(UIBuilder&, int index)> cellContent,
+                     float gap = 8.0f);
+    void canvas(const std::string& id, const Vec2& size,
+                std::function<void(UIBuilder&)> content);
+    void adaptiveLayout(std::function<void(UIBuilder&, Breakpoint)> build);
 
     // --- Table/DataGrid ---
     void table(const std::string& id, std::vector<struct TableColumn>& columns,

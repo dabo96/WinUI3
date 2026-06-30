@@ -223,7 +223,34 @@ void AdvanceCursor(UIContext *ctx, const Vec2 &size) {
   }
 
   LayoutStack &stack = ctx->layoutStack.back();
-  if (stack.isVertical) {
+  if (stack.isWrap && !ctx->wrapStack.empty()) {
+    // brief 19 (WrapPanel): flow children left→right, wrapping to a new row when
+    // there is no usable room left on the current row. The current item has
+    // already been drawn at stack.cursor (== ctx->cursorPos), so it always lands
+    // at a real position (no stranding/gaps). After advancing past it, if the
+    // cursor has reached the right edge we wrap pre-emptively so the *next* item
+    // starts a fresh row. Immediate-mode caveat: because the next child's size
+    // isn't known until it is built, a row's trailing item may extend up to its
+    // own width past the right edge before the wrap fires — fine for the chip/
+    // toolbar use case and clipped by any enclosing clip rect. Children must be
+    // Auto-sized (a Fill child would otherwise eat the whole row).
+    WrapFrameContext &wf = ctx->wrapStack.back();
+    // Record the current item's extent into the open row.
+    wf.rowHeight = std::max(wf.rowHeight, size.y);
+    wf.maxWidth = std::max(wf.maxWidth, (stack.cursor.x + size.x) - wf.left);
+    wf.totalHeight =
+        std::max(wf.totalHeight, (stack.cursor.y + size.y) - wf.origin.y);
+    // Advance to the next slot on the same row.
+    stack.cursor.x += size.x + wf.hGap;
+    stack.itemCount++;
+    // If the row is full (no usable width remains), wrap for the next item.
+    if (stack.cursor.x >= wf.left + wf.availWidth) {
+      stack.cursor.x = wf.left;
+      stack.cursor.y += wf.rowHeight + wf.vGap;
+      wf.rowHeight = 0.0f;
+    }
+    ctx->cursorPos = stack.cursor;
+  } else if (stack.isVertical) {
     stack.contentSize.x = std::max(stack.contentSize.x, size.x);
     stack.contentSize.y += size.y;
     // Reset X to left edge after each item, applying any active CollapsingHeader indent.

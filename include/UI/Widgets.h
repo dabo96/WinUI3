@@ -413,6 +413,53 @@ void BeginGrid(const std::string& id, int columns, float rowHeight = 0.0f);
 void GridNextCell();
 void EndGrid();
 
+// ─── Layout primitives (brief 19) ────────────────────────────────────────────
+
+/// WrapPanel: lays children out left→right and wraps to a new line when the next
+/// item no longer fits the available width (chips, toolbars, simple galleries).
+/// Children must be Auto-sized — a Fill child would consume the whole row. The
+/// panel reports its total size (full width × accumulated height) to the parent.
+/// @param hGap  Horizontal gap between items on a row.
+/// @param vGap  Vertical gap between rows.
+void BeginWrapPanel(const std::string& id, float hGap = 8.0f, float vGap = 8.0f);
+void EndWrapPanel();
+
+/// UniformGrid: N equal-width columns sharing the available width; children fill
+/// cells left→right, top→bottom, wrapping every `columns` items. Each cell gets a
+/// Fixed-width constraint; cell height is auto (tallest item in the row).
+void BeginUniformGrid(const std::string& id, int columns, float gap = 8.0f);
+/// Fluid variant: column count is derived from the available width so each cell
+/// is at least `minCellWidth` wide (like a responsive GridView).
+void BeginUniformGrid(const std::string& id, float minCellWidth, float gap = 8.0f);
+/// Advance to the next cell (call between cells, like GridNextCell). The
+/// `uniformGrid` UIBuilder sugar calls this automatically between items.
+void UniformGridNextCell();
+void EndUniformGrid();
+
+/// Responsive breakpoints (logical px, Fluent/WinUI thresholds).
+///   Small  < 640 | Medium < 1008 | Large < 1366 | XLarge ≥ 1366
+enum class Breakpoint { Small, Medium, Large, XLarge };
+
+/// Breakpoint for a given logical width. `availWidth` <= 0 → use the current
+/// container's available width, or the viewport if there is no active container.
+/// Physical widths are converted to logical px via the DPI scale.
+Breakpoint CurrentBreakpoint(float availWidth = 0.0f);
+
+/// Build `build` only when the current breakpoint is at least `min`.
+void VisibleFrom(Breakpoint min, const std::function<void()>& build);
+
+/// Invoke `build` with the current breakpoint so callers can branch their layout.
+void AdaptiveLayout(const std::function<void(Breakpoint)>& build);
+
+/// Canvas: an absolute-positioning layer. Children are placed by explicit
+/// coordinates (their `pos` param, resolved relative to the canvas origin, or via
+/// CanvasChild) instead of the sequential flow cursor; everything is clipped to
+/// the canvas rect. Negative coordinates are clamped to 0 by ResolveAbsolutePosition.
+void BeginCanvas(const std::string& id, Vec2 size);
+/// Position a sub-group at `pos` (relative to the canvas top-left) and build it.
+void CanvasChild(Vec2 pos, const std::function<void()>& build);
+void EndCanvas();
+
 // ─── Table / DataGrid ───────────────────────────────────────────────────────
 
 /// Column definition for Table widget.

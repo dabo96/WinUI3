@@ -322,6 +322,39 @@ void UIBuilder::grid(const std::string& id, int columns, int itemCount,
     EndGrid();
 }
 
+// --- Layout primitives (brief 19) ---
+
+void UIBuilder::wrapPanel(const std::string& id,
+                          std::function<void(UIBuilder&)> content,
+                          float hGap, float vGap) {
+    BeginWrapPanel(id, hGap, vGap);
+    if (content) content(*this);
+    EndWrapPanel();
+}
+
+void UIBuilder::uniformGrid(const std::string& id, int columns, int itemCount,
+                            std::function<void(UIBuilder&, int index)> cellContent,
+                            float gap) {
+    BeginUniformGrid(id, columns, gap);
+    for (int i = 0; i < itemCount; ++i) {
+        if (i > 0) UniformGridNextCell();
+        if (cellContent) cellContent(*this, i);
+    }
+    EndUniformGrid();
+}
+
+void UIBuilder::canvas(const std::string& id, const Vec2& size,
+                       std::function<void(UIBuilder&)> content) {
+    BeginCanvas(id, size);
+    if (content) content(*this);
+    EndCanvas();
+}
+
+void UIBuilder::adaptiveLayout(std::function<void(UIBuilder&, Breakpoint)> build) {
+    if (!build) return;
+    AdaptiveLayout([this, &build](Breakpoint bp) { build(*this, bp); });
+}
+
 // --- Table/DataGrid ---
 
 void UIBuilder::table(const std::string& id, std::vector<TableColumn>& columns,
