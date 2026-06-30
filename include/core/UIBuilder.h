@@ -16,6 +16,10 @@ struct UIContext;
 // declaration (fixed underlying type int) so the sugar signatures below compile
 // without pulling the full Widgets.h into this header.
 enum class Breakpoint;
+// brief 15: severidad de InfoBar/Toast (definida en UI/FeedbackWidgets.h). Enum
+// opaco con tipo subyacente fijo para declarar las firmas de azúcar de feedback
+// sin incluir el header de widgets aquí.
+enum class InfoSeverity : int;
 
 class UIBuilder {
 public:
@@ -154,6 +158,15 @@ public:
     void sameLine(float offset = 0.0f);
     void setNextSize(float w, float h);
     void setNextConstraints(const LayoutConstraints& c);
+
+    // --- Feedback & estado (brief 15) ---
+    bool infoBar(const std::string& id, InfoSeverity severity,
+                 const std::string& title, const std::string& message,
+                 bool closable = true, const std::string& actionText = "");
+    void progressRing(const std::string& id, float size = 32.0f, float progress = -1.0f);
+    void badge(int count, bool dot = false, std::optional<Vec2> anchorTopRight = {});
+    void skeleton(const Vec2& size, float cornerRadius = 4.0f);
+    void skeletonText(int lines, float lineHeight = 16.0f, float lastLineFraction = 0.6f);
 
     // --- Style overrides (Phase 6) ---
     void pushStyle(const Style& override);

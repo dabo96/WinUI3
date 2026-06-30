@@ -3,6 +3,7 @@
 #include "Math/Color.h"
 #include "UI/Layout.h"
 #include "UI/Icons.h"
+#include "UI/FeedbackWidgets.h" // brief 15: InfoBar, Toast, ProgressRing, Badge, Skeleton
 #include "Theme/Style.h"
 #include <string>
 #include <vector>
