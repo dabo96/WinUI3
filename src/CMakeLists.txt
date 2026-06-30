@@ -20,6 +20,7 @@ add_library(FluentUI
     UI/ContainerWidgets.cpp
     UI/LayoutPrimitives.cpp
     UI/ListWidgets.cpp
+    UI/CollectionWidgets.cpp
     UI/MenuWidgets.cpp
     UI/OverlayWidgets.cpp
     UI/PlotWidgets.cpp
