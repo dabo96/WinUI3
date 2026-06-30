@@ -66,7 +66,22 @@ App::App(const char *titulo)
 
     // Initialize tab labels
     m_mainTabLabels = {"Basic", "Input", "Containers", "Lists & Trees",
-                       "Overlays", "Theme"};
+                       "Overlays", "Theme",
+                       "Controls", "Feedback", "Collections", "Layout",
+                       "Navigation"};
+
+    // Editable DataGrid demo data (brief 16): 6 rows x 4 logical columns.
+    m_gridRows = {
+        {"Alice",   "Engineering", "98",  "true"},
+        {"Bob",     "Design",      "87",  "false"},
+        {"Carol",   "Marketing",   "75",  "true"},
+        {"Dave",    "Sales",       "91",  "false"},
+        {"Erin",    "Engineering", "82",  "true"},
+        {"Frank",   "Support",     "69",  "false"},
+    };
+
+    // NavFrame starts on the "home" page (brief 13).
+    NavigateTo(m_navFrame, "home");
 
     m_containerTabLabels = {"Panel", "ScrollView", "Nested"};
 
@@ -134,6 +149,9 @@ void App::Run() {
 
         NewFrame(deltaTime);
         BuildUI();
+        // brief 15: flush the toast queue once per frame, on the overlay layer,
+        // just before rendering.
+        RenderToasts(ctx);
         Render();
         // OpenGL presents via the swap; the Vulkan backend presents inside EndFrame().
         if (!m_useVulkan)
@@ -185,6 +203,21 @@ void App::BuildUI() {
             break;
         case 5:
             BuildThemeSettings();
+            break;
+        case 6:
+            BuildControls();
+            break;
+        case 7:
+            BuildFeedback();
+            break;
+        case 8:
+            BuildCollections();
+            break;
+        case 9:
+            BuildLayout();
+            break;
+        case 10:
+            BuildNavigation();
             break;
         }
         EndTabView();
@@ -820,5 +853,539 @@ void App::BuildThemeSettings() {
     Button("Wide spacing");
     Button("Between");
     Button("Buttons");
+    EndHorizontal();
+}
+
+// --- Tab 6: Signature Controls (brief 14) -----------------------------------
+
+void App::BuildControls() {
+    // --- ToggleSwitch ---
+    Label("ToggleSwitch", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    if (ToggleSwitch("Wi-Fi", &m_toggleWifi, "On", "Off")) {
+        m_statusText = m_toggleWifi ? "Wi-Fi enabled" : "Wi-Fi disabled";
+    }
+    if (ToggleSwitch("Bluetooth", &m_toggleBluetooth, "On", "Off")) {
+        m_statusText = m_toggleBluetooth ? "Bluetooth enabled" : "Bluetooth disabled";
+    }
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- Expander ---
+    Label("Expander", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    if (BeginExpander("demo_expander", "Advanced settings", Icons::Settings,
+                      &m_expanderOpen)) {
+        Label("These options are hidden until the card is expanded.");
+        Spacing(2);
+        Checkbox("Enable telemetry", &m_checkbox1);
+        SliderInt("Cache size (MB)", &m_sliderInt, 0, 100, 240.0f);
+        EndExpander();
+    }
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- SplitButton / DropDownButton ---
+    Label("SplitButton & DropDownButton", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+
+    std::vector<CommandItem> saveMenu = {
+        {"Save", Icons::Save, [this]() { m_statusText = "Save"; }, true, true},
+        {"Save As...", Icons::Copy, [this]() { m_statusText = "Save As"; }, false, true},
+        {"Save All", Icons::FileText, [this]() { m_statusText = "Save All"; }, false, true},
+    };
+    BeginHorizontal(12.0f);
+    SplitButton("Save", Icons::Save, [this]() { m_statusText = "Primary Save"; }, saveMenu);
+
+    std::vector<CommandItem> exportMenu = {
+        {"Export PNG", Icons::Image, [this]() { m_statusText = "Export PNG"; }, true, true},
+        {"Export PDF", Icons::FileText, [this]() { m_statusText = "Export PDF"; }, true, true},
+        {"Export SVG", Icons::FileText, [this]() { m_statusText = "Export SVG"; }, true, true},
+    };
+    DropDownButton("Export", Icons::Download, exportMenu);
+    EndHorizontal();
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- NumberBox ---
+    Label("NumberBox", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    if (NumberBox("Temperature (C)", &m_numberBoxValue, -50.0, 150.0, 1.0, "%.0f")) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Temperature set to %.0f", m_numberBoxValue);
+        m_statusText = buf;
+    }
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- RatingControl ---
+    Label("RatingControl", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    if (RatingControl("demo_rating", &m_rating, 5, false)) {
+        m_statusText = "Rating: " + std::to_string(m_rating) + " of 5";
+    }
+    Spacing(2);
+    Label("Half-stars:", std::nullopt, TypographyStyle::Caption);
+    if (RatingControl("demo_rating_half", &m_ratingHalf, 5, true)) {
+        m_statusText = "Half rating units: " + std::to_string(m_ratingHalf);
+    }
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- Flyout / MenuFlyout ---
+    Label("Flyout & MenuFlyout", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    BeginHorizontal(12.0f);
+    if (Button("Open Flyout", Icons::Info)) {
+        OpenFlyout("demo_flyout");
+    }
+    Rect flyoutAnchor(ctx->lastItemPos, ctx->lastItemSize);
+
+    if (Button("Menu Flyout", Icons::LayoutGrid)) {
+        OpenFlyout("demo_menuflyout");
+    }
+    Rect menuAnchor(ctx->lastItemPos, ctx->lastItemSize);
+    EndHorizontal();
+
+    // Generic anchored flyout with arbitrary content.
+    if (BeginFlyout("demo_flyout", flyoutAnchor, FlyoutPlacement::Bottom)) {
+        Label("Quick actions", std::nullopt, TypographyStyle::BodyStrong);
+        Spacing(4);
+        if (Button("Refresh", Vec2(160, 0))) {
+            m_statusText = "Flyout: Refresh";
+            CloseFlyout("demo_flyout");
+        }
+        if (Button("Reset", Vec2(160, 0))) {
+            m_statusText = "Flyout: Reset";
+            CloseFlyout("demo_flyout");
+        }
+        EndFlyout();
+    }
+
+    // Menu-style flyout (icon/label/accelerator rows).
+    std::vector<MenuEntry> menuEntries = {
+        {"Cut", Icons::Copy, "Ctrl+X", false, false, false, true, {}, [this]() { m_statusText = "Menu: Cut"; }},
+        {"Copy", Icons::Copy, "Ctrl+C", false, false, false, true, {}, [this]() { m_statusText = "Menu: Copy"; }},
+        {"Paste", Icons::Copy, "Ctrl+V", false, false, false, true, {}, [this]() { m_statusText = "Menu: Paste"; }},
+        {"", 0, "", false, false, true, true, {}, nullptr}, // separator
+        {"Word wrap", 0, "", true, m_checkbox1, false, true, {}, [this]() { m_checkbox1 = !m_checkbox1; }},
+    };
+    MenuFlyout("demo_menuflyout", menuAnchor, menuEntries);
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- ContentDialog ---
+    Label("ContentDialog", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    if (Button("Open Content Dialog")) {
+        m_contentDialogOpen = true;
+    }
+    if (m_contentDialogOpen) {
+        DialogResult r = ContentDialog(
+            "demo_content_dialog", &m_contentDialogOpen, "Rename item",
+            [this]() {
+                Label("Enter a new name for the selected item:");
+                Spacing(6);
+                TextInput("Name", &m_dialogName, 320.0f);
+            },
+            "Rename", "", "Cancel");
+        if (r == DialogResult::Primary) {
+            m_statusText = "Renamed to: " + m_dialogName;
+        } else if (r == DialogResult::Close) {
+            m_statusText = "Rename cancelled";
+        }
+    }
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- TeachingTip ---
+    Label("TeachingTip", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    Button("Feature button", Icons::Lightbulb);
+    Rect tipTarget(ctx->lastItemPos, ctx->lastItemSize);
+    if (TeachingTip("demo_teaching_tip", tipTarget, "New feature!",
+                    "This button now does something amazing. Try it out.",
+                    "Got it")) {
+        m_statusText = "TeachingTip acknowledged";
+    }
+
+    // TODO brief 17/18: SelectableText, HyperlinkButton, AutoSuggestBox,
+    // TokenizingTextBox, PasswordBox, MarkdownView not integrated yet.
+}
+
+// --- Tab 7: Feedback & Status (brief 15) ------------------------------------
+
+void App::BuildFeedback() {
+    // --- InfoBar (4 severities) ---
+    Label("InfoBar", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    InfoBar("ib_info", InfoSeverity::Informational, "Heads up",
+            "This is an informational message with extra context.", false);
+    Spacing(4);
+    InfoBar("ib_success", InfoSeverity::Success, "Saved",
+            "Your changes were saved successfully.", true);
+    Spacing(4);
+    InfoBar("ib_warning", InfoSeverity::Warning, "Low disk space",
+            "You are running low on storage. Consider freeing some space.",
+            true, "Manage");
+    Spacing(4);
+    InfoBar("ib_error", InfoSeverity::Error, "Upload failed",
+            "The file could not be uploaded. Check your connection and retry.",
+            true, "Retry");
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- Toast ---
+    Label("Toast notifications", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    BeginHorizontal(8.0f);
+    if (Button("Info toast")) {
+        ToastOptions opts;
+        opts.severity = InfoSeverity::Informational;
+        opts.durationSec = 4.0f;
+        ShowToast("Notification", "An informational toast (#" +
+                  std::to_string(++m_toastCounter) + ")", opts);
+    }
+    if (Button("Success toast")) {
+        ToastOptions opts;
+        opts.severity = InfoSeverity::Success;
+        ShowToast("Done", "Operation completed successfully.", opts);
+    }
+    if (Button("Action toast")) {
+        ToastOptions opts;
+        opts.severity = InfoSeverity::Warning;
+        opts.durationSec = 6.0f;
+        opts.actionText = "Undo";
+        opts.onAction = [this]() { m_statusText = "Toast action: Undo"; };
+        ShowToast("Item deleted", "The item was moved to trash.", opts);
+    }
+    EndHorizontal();
+    Label("Toasts stack in the lower-right corner (RenderToasts in the loop).",
+          std::nullopt, TypographyStyle::Caption, true);
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- ProgressRing ---
+    Label("ProgressRing", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    BeginHorizontal(24.0f);
+    BeginVertical(2.0f);
+    Label("Determinate", std::nullopt, TypographyStyle::Caption);
+    ProgressRing("pr_determinate", 48.0f, m_progressValue);
+    EndVertical();
+    BeginVertical(2.0f);
+    Label("Indeterminate", std::nullopt, TypographyStyle::Caption);
+    ProgressRing("pr_indeterminate", 48.0f, -1.0f);
+    EndVertical();
+    EndHorizontal();
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- Badge ---
+    Label("Badge", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    BeginHorizontal(40.0f);
+    IconLabel(Icons::Bell, 28.0f);
+    Badge(7);
+    IconLabel(Icons::Mail, 28.0f);
+    Badge(128); // shows "99+"
+    IconLabel(Icons::User, 28.0f);
+    Badge(0, true); // dot only
+    EndHorizontal();
+
+    Spacing(16);
+    Separator();
+    Spacing(8);
+
+    // --- Skeleton ---
+    Label("Skeleton placeholders", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    BeginHorizontal(12.0f);
+    Skeleton(Vec2(64, 64), 8.0f); // avatar block
+    BeginVertical(6.0f);
+    SkeletonText(3, 16.0f, 0.6f);
+    EndVertical();
+    EndHorizontal();
+}
+
+// --- Tab 8: Collections (brief 16) ------------------------------------------
+
+void App::BuildCollections() {
+    // --- GridView ---
+    Label("GridView", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    GridView("demo_gridview", 30, Vec2(110, 80), [](int index) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "Tile %d", index + 1);
+        if (BeginPanel(std::string("gv_tile_") + std::to_string(index), Vec2(0, 0))) {
+            Label(buf, std::nullopt, TypographyStyle::Caption);
+            EndPanel();
+        }
+    }, 8.0f, 0.0f);
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- DataGrid (one editable column) ---
+    Label("DataGrid", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    std::vector<DataColumn> cols;
+    {
+        DataColumn c0; c0.header = "Name";   c0.width = 120.0f; c0.editable = true;  c0.type = DataColumn::Type::Text;   cols.push_back(c0);
+        DataColumn c1; c1.header = "Team";   c1.width = 130.0f; c1.editable = false; c1.type = DataColumn::Type::Choice; c1.choices = {"Engineering","Design","Marketing","Sales","Support"}; cols.push_back(c1);
+        DataColumn c2; c2.header = "Score";  c2.width = 80.0f;  c2.editable = true;  c2.type = DataColumn::Type::Number; cols.push_back(c2);
+        DataColumn c3; c3.header = "Active"; c3.width = 70.0f;  c3.editable = true;  c3.type = DataColumn::Type::Bool;   cols.push_back(c3);
+    }
+    DataGridResult dgr = DataGrid(
+        "demo_datagrid", cols, (int)m_gridRows.size(),
+        [this](int row, int col) -> std::string {
+            if (row >= 0 && row < (int)m_gridRows.size() &&
+                col >= 0 && col < (int)m_gridRows[row].size())
+                return m_gridRows[row][col];
+            return "";
+        },
+        [this](int row, int col, const std::string& newVal) {
+            if (row >= 0 && row < (int)m_gridRows.size() &&
+                col >= 0 && col < (int)m_gridRows[row].size())
+                m_gridRows[row][col] = newVal;
+        });
+    if (dgr.editedRow >= 0) {
+        m_statusText = "DataGrid edited row " + std::to_string(dgr.editedRow) +
+                       " col " + std::to_string(dgr.editedCol);
+    }
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- Pagination ---
+    Label("Pagination", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    int page = Pagination("demo_pagination", 42, &m_paginationPage);
+    Label("Current page: " + std::to_string(page + 1) + " of 42",
+          std::nullopt, TypographyStyle::Caption);
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- ExpanderList (accordion) ---
+    Label("ExpanderList (accordion)", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    static const char* faqQ[] = {"What is FluentGUI?", "Is it cross-platform?",
+                                 "Which backends?", "How is licensing?"};
+    static const char* faqA[] = {
+        "An immediate-mode UI library with Fluent Design styling.",
+        "Yes, it runs on Windows, Linux and macOS via SDL3.",
+        "OpenGL and Vulkan are both supported.",
+        "See the repository for license details."};
+    ExpanderList("demo_expanderlist", 4,
+                 [](int i) { return std::string(faqQ[i]); },
+                 [](int i) { LabelWrapped(faqA[i], 480.0f); },
+                 true);
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- FlipView ---
+    Label("FlipView / Carousel", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    int flip = FlipView("demo_flipview", 4, [](int index) {
+        char buf[48];
+        snprintf(buf, sizeof(buf), "Slide %d / 4", index + 1);
+        if (BeginPanel(std::string("flip_page_") + std::to_string(index), Vec2(420, 160))) {
+            Label(buf, std::nullopt, TypographyStyle::Title);
+            Spacing(4);
+            Label("Swipe with the arrows or dots below.");
+            EndPanel();
+        }
+    }, &m_flipIndex);
+    Label("Page index: " + std::to_string(flip), std::nullopt, TypographyStyle::Caption);
+}
+
+// --- Tab 9: Layout primitives (brief 19) ------------------------------------
+
+void App::BuildLayout() {
+    // --- WrapPanel ---
+    Label("WrapPanel (resize the window to reflow)", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    BeginWrapPanel("demo_wrap", 8.0f, 8.0f);
+    static const char* chips[] = {"Design", "Engineering", "Marketing", "Sales",
+                                  "Support", "Finance", "Legal", "Research",
+                                  "Operations", "Product", "Security", "QA"};
+    for (int i = 0; i < 12; i++) {
+        Button(chips[i], ButtonSize::Small);
+    }
+    EndWrapPanel();
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- UniformGrid ---
+    Label("UniformGrid (4 columns)", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    BeginUniformGrid("demo_uniform", 4, 8.0f);
+    for (int i = 0; i < 8; i++) {
+        char buf[24];
+        snprintf(buf, sizeof(buf), "Cell %d", i + 1);
+        if (BeginPanel(std::string("ug_cell_") + std::to_string(i), Vec2(0, 60))) {
+            Label(buf, std::nullopt, TypographyStyle::Caption);
+            EndPanel();
+        }
+        if (i < 7)
+            UniformGridNextCell();
+    }
+    EndUniformGrid();
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- Breakpoint readout ---
+    Label("Responsive Breakpoint", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    Breakpoint bp = CurrentBreakpoint();
+    const char* bpName = "Small";
+    switch (bp) {
+    case Breakpoint::Small:  bpName = "Small (< 640)";   break;
+    case Breakpoint::Medium: bpName = "Medium (< 1008)"; break;
+    case Breakpoint::Large:  bpName = "Large (< 1366)";  break;
+    case Breakpoint::XLarge: bpName = "XLarge (>= 1366)"; break;
+    }
+    Label(std::string("Current breakpoint: ") + bpName, std::nullopt,
+          TypographyStyle::BodyStrong);
+
+    Spacing(12);
+    Separator();
+    Spacing(8);
+
+    // --- Canvas (absolute positioning) ---
+    Label("Canvas (absolute positioning)", std::nullopt, TypographyStyle::Subtitle);
+    Spacing(4);
+    BeginCanvas("demo_canvas", Vec2(440, 200));
+    CanvasChild(Vec2(20, 20), [this]() {
+        if (Button("Top-left", Icons::Home))
+            m_statusText = "Canvas: top-left";
+    });
+    CanvasChild(Vec2(280, 80), [this]() {
+        if (Button("Center-right", Icons::Star))
+            m_statusText = "Canvas: center-right";
+    });
+    CanvasChild(Vec2(120, 150), [this]() {
+        Label("Free-floating label", std::nullopt, TypographyStyle::Caption);
+    });
+    EndCanvas();
+}
+
+// --- Tab 10: Navigation (brief 13) ------------------------------------------
+
+void App::BuildNavigation() {
+    // Sidebar navigation items with sub-items and a badge.
+    std::vector<NavItem> navItems = {
+        {"home",     "Home",     Icons::Home,     0, {}},
+        {"mail",     "Mail",     Icons::Mail,     5, {}},
+        {"docs",     "Documents", Icons::Folder,  0, {
+            {"recent",  "Recent",    Icons::FileText, 0, {}},
+            {"shared",  "Shared",    Icons::User,     2, {}},
+        }},
+        {"media",    "Media",    Icons::Image,    0, {}},
+    };
+    std::vector<NavItem> footerItems = {
+        {"settings", "Settings", Icons::Settings, 0, {}},
+    };
+
+    BeginHorizontal(12.0f);
+
+    // Left: NavigationView. Returns the currently selected key.
+    std::string sel = NavigationView("demo_nav", navItems, &m_selectedNavKey,
+                                     NavDisplayMode::Expanded, footerItems);
+    // Drive the page frame from the sidebar selection.
+    if (sel != m_navFrame.current && !sel.empty()) {
+        NavigateTo(m_navFrame, sel);
+        m_statusText = "Navigated to: " + sel;
+    }
+
+    // Right: content area with CommandBar + Breadcrumb + NavFrame history.
+    BeginVertical(8.0f);
+
+    // CommandBar with primary + secondary (overflow) commands.
+    std::vector<CommandItem> primaryCmds = {
+        {"New",     Icons::Plus,     [this]() { m_statusText = "Cmd: New"; },     true, true},
+        {"Save",    Icons::Save,     [this]() { m_statusText = "Cmd: Save"; },    true, true},
+        {"Share",   Icons::Upload,   [this]() { m_statusText = "Cmd: Share"; },   true, true},
+    };
+    std::vector<CommandItem> secondaryCmds = {
+        {"Settings", Icons::Settings, [this]() { m_statusText = "Cmd: Settings"; }, false, true},
+        {"Help",     Icons::CircleHelp, [this]() { m_statusText = "Cmd: Help"; },   false, true},
+    };
+    CommandBar("demo_cmdbar", primaryCmds, secondaryCmds);
+
+    Spacing(4);
+
+    // BreadcrumbBar reflecting the current page.
+    std::vector<std::string> crumbs = {"Workspace", "Library", m_navFrame.current};
+    int clicked = BreadcrumbBar("demo_breadcrumb", crumbs);
+    if (clicked >= 0) {
+        m_statusText = "Breadcrumb #" + std::to_string(clicked) + " clicked";
+    }
+
+    Spacing(4);
+
+    // NavFrame back/forward history controls.
+    BeginHorizontal(8.0f);
+    if (Button("Back", Icons::ChevronRight)) {
+        if (NavigateBack(m_navFrame)) {
+            m_selectedNavKey = m_navFrame.current;
+            m_statusText = "Back to: " + m_navFrame.current;
+        }
+    }
+    if (Button("Forward", Icons::ChevronRight)) {
+        if (NavigateForward(m_navFrame)) {
+            m_selectedNavKey = m_navFrame.current;
+            m_statusText = "Forward to: " + m_navFrame.current;
+        }
+    }
+    EndHorizontal();
+
+    Spacing(8);
+
+    // The "page" content itself.
+    if (BeginPanel("nav_page_content", Vec2(0, 240))) {
+        Label("Page: " + m_navFrame.current, std::nullopt, TypographyStyle::Title);
+        Spacing(6);
+        Label("Back stack: " + std::to_string(m_navFrame.backStack.size()) +
+              "   Forward stack: " + std::to_string(m_navFrame.forwardStack.size()),
+              std::nullopt, TypographyStyle::Caption);
+        Spacing(6);
+        Label("Select an item in the sidebar to navigate. The frame keeps a "
+              "back/forward history.");
+        EndPanel();
+    }
+
+    EndVertical();
+
     EndHorizontal();
 }
