@@ -17,6 +17,7 @@ add_library(FluentUI
     UI/WidgetHelpers.cpp
     UI/BasicWidgets.cpp
     UI/InputWidgets.cpp
+    UI/SignatureControls.cpp
     UI/ContainerWidgets.cpp
     UI/LayoutPrimitives.cpp
     UI/ListWidgets.cpp

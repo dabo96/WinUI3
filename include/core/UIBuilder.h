@@ -27,6 +27,10 @@ enum class InfoSeverity : int;
 // brief 16: collection types (defined in UI/Widgets.h).
 struct DataColumn;
 struct DataGridResult;
+// brief 14: signature-control types (defined in UI/Widgets.h). Forward declared
+// so the sugar signatures compile without pulling the full Widgets.h here.
+struct CommandItem;
+enum class DialogResult;
 
 class UIBuilder {
 public:
@@ -214,6 +218,33 @@ public:
     int flipView(const std::string& id, int itemCount,
                  std::function<void(UIBuilder&, int index)> itemBuilder,
                  int* currentIndex = nullptr);
+
+    // ─── BRIEF 14: Signature controls (sugar) ───────────────────────────────
+    bool toggleSwitch(const std::string& label, bool* value,
+                      const std::string& onText = "", const std::string& offText = "");
+    // Expander: builds `content` only while expanded (EndExpander handled here).
+    void expander(const std::string& id, const std::string& header,
+                  std::function<void(UIBuilder&)> content,
+                  uint32_t icon = 0, bool* expanded = nullptr);
+    int splitButton(const std::string& label, uint32_t icon,
+                    std::function<void()> onPrimary,
+                    const std::vector<CommandItem>& menu);
+    void dropDownButton(const std::string& label, uint32_t icon,
+                        const std::vector<CommandItem>& menu);
+    bool numberBox(const std::string& label, double* value,
+                   double min = -1e308, double max = 1e308, double step = 1.0,
+                   const char* format = "%.0f");
+    bool teachingTip(const std::string& id, const Rect& targetRect,
+                     const std::string& title, const std::string& body,
+                     const std::string& actionText = "");
+    DialogResult contentDialog(const std::string& id, bool* open,
+                               const std::string& title,
+                               std::function<void(UIBuilder&)> body,
+                               const std::string& primaryText = "OK",
+                               const std::string& secondaryText = "",
+                               const std::string& closeText = "Cancel");
+    bool rating(const std::string& id, int* value, int maxStars = 5,
+                bool allowHalf = false);
 
     // --- Context access ---
     UIContext* context() { return ctx; }

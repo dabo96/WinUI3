@@ -383,6 +383,75 @@ bool IsFlyoutOpen(const std::string& id);
 void MenuFlyout(const std::string& id, const Rect& anchorRect,
                 const std::vector<MenuEntry>& entries);
 
+// === Signature controls (brief 14, sections 1-4, 7-9) ========================
+
+/// On/off pill switch (distinct from Checkbox). Track ~40×20 (DPI-scaled), white
+/// circular thumb animated from one end to the other (floatStates[AnimSlot(id,0)]
+/// 0→1), accent track when ON. Optional on/off status text to the right; the
+/// `label` is drawn as a header above. State: `value` or boolStates[id].
+/// Role: CheckBox/Switch. @return true when the value toggles.
+bool ToggleSwitch(const std::string& label, bool* value,
+                  const std::string& onText = "", const std::string& offText = "",
+                  std::optional<Vec2> pos = std::nullopt);
+
+/// Expander: a collapsible card with a header (icon + title + chevron). The body
+/// between Begin/End is built only when expanded (call EndExpander only if this
+/// returns true). The body height animates/clips open (collapse snaps; brief 10
+/// motion degraded). State: `expanded` or boolStates[id]. Role: Group.
+bool BeginExpander(const std::string& id, const std::string& header,
+                   uint32_t icon = 0, bool* expanded = nullptr);
+void EndExpander();
+
+/// SplitButton: primary action zone + dropdown chevron zone (two hit-rects). The
+/// chevron opens a MenuFlyout anchored to the button. @return 1 if the primary
+/// action was invoked, 2 if the menu was opened, 0 otherwise.
+int SplitButton(const std::string& label, uint32_t icon,
+                std::function<void()> onPrimary,
+                const std::vector<CommandItem>& menu);
+
+/// DropDownButton: a single button that opens a MenuFlyout when pressed.
+void DropDownButton(const std::string& label, uint32_t icon,
+                    const std::vector<CommandItem>& menu);
+
+/// NumberBox: numeric field with +/- spinners and validation (distinct from
+/// DragFloat/SliderInt). Reuses the internal TextInput for editing; parses on
+/// Enter/blur, clamps to [min,max], reformats with `format`. Spinners repeat when
+/// held; the mouse wheel over the field steps ±step. State buffer in stringStates.
+/// Role: Slider/SpinButton. @return true when the value changes.
+bool NumberBox(const std::string& label, double* value,
+               double min = -1e308, double max = 1e308, double step = 1.0,
+               const char* format = "%.0f", std::optional<Vec2> pos = std::nullopt);
+
+/// TeachingTip / coachmark: a popover with a "beak" pointing at targetRect, for
+/// onboarding. Built on BeginFlyout. Shows until the user closes it (the "seen"
+/// state is persisted by id in boolStates). @return true when the action button
+/// (actionText, if non-empty) is pressed.
+bool TeachingTip(const std::string& id, const Rect& targetRect,
+                 const std::string& title, const std::string& body,
+                 const std::string& actionText = "");
+
+/// Result of a standardized ContentDialog (brief 14 section 9).
+enum class DialogResult { None, Primary, Secondary, Close };
+
+/// ContentDialog: a standardized dialog over the existing Modal (scrim + z=Dialog)
+/// with title + arbitrary body + standard buttons and a result. Primary button is
+/// accented (initial focus); Esc = Close, Enter = Primary; focus is trapped to the
+/// dialog's controls. Call each frame while `open`; when it returns != None it
+/// sets `*open = false`. Role: Dialog.
+DialogResult ContentDialog(const std::string& id, bool* open,
+                           const std::string& title,
+                           std::function<void()> body,
+                           const std::string& primaryText = "OK",
+                           const std::string& secondaryText = "",
+                           const std::string& closeText = "Cancel");
+
+/// RatingControl: N star glyphs (Lucide) with hover preview, click to set and
+/// keyboard arrows. With allowHalf, `*value` counts half-stars (0..2*maxStars),
+/// otherwise whole stars (0..maxStars). State: `value` or intStates[id]. Role:
+/// Slider; accessibleValue = "X of N". @return true when the value changes.
+bool RatingControl(const std::string& id, int* value, int maxStars = 5,
+                   bool allowHalf = false);
+
 // ─── Lists ──────────────────────────────────────────────────────────────────
 
 /// Single-selection list view.
