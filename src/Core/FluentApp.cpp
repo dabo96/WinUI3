@@ -168,8 +168,11 @@ void AppWindow::routeEvent(const SDL_Event& e) {
         // Update DPI for this window
         updateDPIScale();
     } else if (e.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED ||
+               e.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED ||
                e.type == SDL_EVENT_WINDOW_MOVED) {
-        // Window moved to different monitor or display scale changed
+        // brief 18.2: window moved/crossed to a different monitor or its display
+        // scale changed → recompute the per-monitor DPI for THIS window. MSDF text
+        // re-scales without re-rasterizing; immediate-mode re-layouts next frame.
         updateDPIScale();
     } else if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
         open_ = false;
@@ -423,6 +426,7 @@ SDL_WindowID FluentApp::getEventWindowID(const SDL_Event& e) {
         case SDL_EVENT_WINDOW_MAXIMIZED:
         case SDL_EVENT_WINDOW_RESTORED:
         case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+        case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
             return e.window.windowID;
         case SDL_EVENT_KEY_DOWN:
         case SDL_EVENT_KEY_UP:
@@ -482,10 +486,11 @@ void FluentApp::run() {
                     SDL_GetWindowSize(window_, &w, &h);
                     ctx_->renderer.SetViewport(w, h);
                     if (enableDPI_) updateDPIScale();
-                } else if (e.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED) {
+                } else if (e.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED ||
+                           e.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED) {
                     if (enableDPI_) updateDPIScale();
                 } else if (e.type == SDL_EVENT_WINDOW_MOVED) {
-                    // Window moved — may have crossed to a different monitor with different DPI
+                    // brief 18.2: moved — may have crossed to a monitor with a different DPI
                     if (enableDPI_) updateDPIScale();
                 } else {
                     ctx_->input.ProcessEvent(e);
@@ -644,7 +649,8 @@ void FluentApp::processEvent(const SDL_Event& e) {
         SDL_GetWindowSize(window_, &w, &h);
         ctx_->renderer.SetViewport(w, h);
         if (enableDPI_) updateDPIScale();
-    } else if (e.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED) {
+    } else if (e.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED ||
+               e.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED) {
         if (enableDPI_) updateDPIScale();
     } else if (e.type == SDL_EVENT_WINDOW_MOVED) {
         if (enableDPI_) updateDPIScale();
