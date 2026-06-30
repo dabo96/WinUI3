@@ -131,6 +131,7 @@ namespace FluentUI {
         // Accent colors used by widgets (sliders, checkboxes, tabs, etc.)
         Color accentColor = Color(0.0f, 0.47f, 0.84f, 1.0f);       // Primary accent (default: Fluent Blue)
         Color sliderFillColor = Color(0.0f, 0.0f, 0.0f, 0.0f);     // Slider fill override; if alpha=0, falls back to accentColor
+        Color shadowColor = Color(0.0f, 0.0f, 0.0f, 1.0f);         // Brief 11: themed drop-shadow tint (alpha scales per-layer opacity)
 
         Typography typography;
         ButtonStyle button;

@@ -114,6 +114,11 @@ public:
   // fades the whole shadow (e.g. for tooltip fade-in). Draw BEFORE the fill.
   void DrawElevationShadow(const Vec2 &pos, const Vec2 &size, float cornerRadius,
                            float z, float opacityScale = 1.0f);
+  // Inner / inset shadow (brief 11): darkens INSIDE the rect, stronger near the
+  // inner edges (for pressed buttons and recessed inputs). sigma is the penumbra
+  // in logical px. Draw AFTER the element's own fill so it sits on top.
+  void DrawInsetShadow(const Vec2 &pos, const Vec2 &size, float cornerRadius,
+                       float sigma, const Color &color);
   void DrawRectGradient(const Vec2 &pos, const Vec2 &size,
                         const Color &topLeft, const Color &topRight,
                         const Color &bottomLeft, const Color &bottomRight);
@@ -214,6 +219,12 @@ public:
   // DrawRectFilled/DrawRect. Consumed (reset to 0) after that single rect, so a
   // widget marks each surface it wants to react to the cursor.
   void SetNextRevealIntensity(float intensity) { nextRevealIntensity = intensity; }
+
+  // Themed shadow color (brief 11). DrawElevationShadow tints every drop shadow
+  // with this color; its alpha scales the per-layer opacity. Set per theme (e.g.
+  // black in light mode, a cooler/softer black in dark mode).
+  void SetShadowColor(const Color &c) { shadowColor = c; }
+  const Color &GetShadowColor() const { return shadowColor; }
 
   // Phase C6 (eyedropper): read a single pixel from the framebuffer.
   Color ReadPixel(int x, int y);
@@ -363,6 +374,8 @@ private:
   float revealCursor[3] = {0.0f, 0.0f, 0.0f};
   // Per-rect reveal intensity, consumed by the next DrawRectFilled/DrawRect.
   float nextRevealIntensity = 0.0f;
+  // Themed drop-shadow color (brief 11); alpha scales the per-layer opacity.
+  Color shadowColor = Color(0.0f, 0.0f, 0.0f, 1.0f);
 
   // Optimización: límites de batch para evitar reallocaciones grandes
   static constexpr size_t MAX_QUAD_VERTICES = 10000; // ~2500 quads

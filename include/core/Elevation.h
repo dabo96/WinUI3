@@ -47,12 +47,38 @@ namespace FluentUI {
         // compacta (tipo difuminado de lápiz pegado al elemento). La caída
         // (kFalloff>1 en DrawRectShadow) concentra lo oscuro junto al borde y deja
         // una cola tenue: con pico alto se lee como un borde casi negro difuminado.
+        // DEPRECATED (brief 11): mono-layer curve kept for source compatibility.
+        // Prefer ParamsDual(z) which returns a key+ambient pair for a physically
+        // plausible shadow. DrawElevationShadow now uses ParamsDual.
+        [[deprecated("use ParamsDual(z) — key+ambient dual shadow (brief 11)")]]
         inline ShadowParams Params(float z) {
             if (z <= 0.0f) return {0.0f, 0.0f, 0.0f};
             float blur    = 1.5f + 1.5f * z;
             float offsetY = 0.5f * z;
             float opacity = std::min(0.70f, 0.18f + 0.13f * z);
             return {blur, offsetY, opacity};
+        }
+
+        // ── Key + ambient (brief 11) ───────────────────────────────────────
+        // Two layers per elevation level, matching how real soft shadows read:
+        //  - key:     tense, darker, offset downward (a directional light).
+        //  - ambient: wide, very soft, no offset (ambient occlusion-like halo).
+        // Now that the shader integrates a true gaussian (sigma == blur), the
+        // blur values below are sigmas in logical px. Calibrated against the
+        // legacy stack so Card/Flyout/Dialog read with similar depth.
+        struct DualShadow { ShadowParams key; ShadowParams ambient; };
+
+        inline DualShadow ParamsDual(float z) {
+            if (z <= 0.0f) return {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
+            ShadowParams key;      // tense, dark, shifted down (directional light)
+            key.blur    = 0.75f + 0.6f * z;                 // small sigma
+            key.offsetY = 0.4f * z;
+            key.opacity = std::min(0.40f, 0.10f + 0.08f * z);
+            ShadowParams amb;      // wide, very soft, no offset (ambient light)
+            amb.blur    = 2.0f + 2.2f * z;                  // large sigma
+            amb.offsetY = 0.0f;
+            amb.opacity = std::min(0.22f, 0.05f + 0.05f * z);
+            return {key, amb};
         }
 
         // Niveles de elevation estándar de Fluent Design (compat. heredada)

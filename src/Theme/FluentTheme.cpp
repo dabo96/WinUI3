@@ -149,6 +149,12 @@ namespace FluentUI {
             style.panel = MakePanelStyle(darkTheme);
             style.separator = MakeSeparatorStyle(darkTheme);
 
+            // Brief 11: themed drop-shadow tint. Light mode uses a solid black; dark
+            // mode keeps black but at a lower alpha so shadows read as a soft halo
+            // instead of a hard black smudge over already-dark surfaces.
+            style.shadowColor = darkTheme ? Color(0.0f, 0.0f, 0.0f, 0.55f)
+                                          : Color(0.0f, 0.0f, 0.0f, 1.0f);
+
             return style;
         }
     } // namespace

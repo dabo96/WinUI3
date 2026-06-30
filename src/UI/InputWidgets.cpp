@@ -1178,6 +1178,10 @@ bool TextInput(const std::string &label, std::string *value, float width,
 
   ctx->renderer.DrawRectFilled(fieldPos, fieldSize, bgColor,
                                panelStyle.cornerRadius);
+  // Brief 11: subtle inset shadow so the text field reads as recessed (sunken).
+  // Drawn AFTER the fill, clipped to the rounded interior.
+  ctx->renderer.DrawInsetShadow(fieldPos, fieldSize, panelStyle.cornerRadius, 2.0f,
+                                Color(0.0f, 0.0f, 0.0f, 0.16f));
   // Borde 1px visible salvo cuando el focus ring ya lo marca.
   if (!hasFocus) {
     ctx->renderer.DrawRect(fieldPos, fieldSize, InputFieldBorder(ctx, hover),
