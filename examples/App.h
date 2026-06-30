@@ -21,6 +21,12 @@ private:
     void BuildListsAndTrees();
     void BuildOverlays();
     void BuildThemeSettings();
+    // New widget showcases (briefs 13-16, 19)
+    void BuildControls();    // brief 14: ToggleSwitch, Expander, Split/DropDown, NumberBox, Rating, Flyout, ContentDialog, TeachingTip
+    void BuildFeedback();    // brief 15: InfoBar, Toast, ProgressRing, Badge, Skeleton
+    void BuildCollections(); // brief 16: GridView, DataGrid, Pagination, ExpanderList, FlipView
+    void BuildLayout();      // brief 19: WrapPanel, UniformGrid, Breakpoint, Canvas
+    void BuildNavigation();  // brief 13: NavigationView, NavFrame, CommandBar, BreadcrumbBar
 
     SDL_Window* window;
     FluentUI::UIContext* ctx;
@@ -87,4 +93,28 @@ private:
 
     // Status
     std::string m_statusText;
+
+    // --- Controls tab state (brief 14) ---
+    bool m_toggleWifi = true;
+    bool m_toggleBluetooth = false;
+    bool m_expanderOpen = true;
+    double m_numberBoxValue = 42.0;
+    int m_rating = 3;
+    int m_ratingHalf = 5; // half-star units (0..2*maxStars)
+    bool m_contentDialogOpen = false;
+    std::string m_dialogName;
+
+    // --- Feedback tab state (brief 15) ---
+    int m_toastCounter = 0;
+    bool m_showInfoBars = true;
+
+    // --- Collections tab state (brief 16) ---
+    int m_paginationPage = 0;
+    int m_flipIndex = 0;
+    // Mutable backing store for the editable DataGrid demo (rows x cols).
+    std::vector<std::vector<std::string>> m_gridRows;
+
+    // --- Navigation tab state (brief 13) ---
+    std::string m_selectedNavKey = "home";
+    FluentUI::NavFrame m_navFrame;
 };
