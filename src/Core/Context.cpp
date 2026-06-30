@@ -397,6 +397,9 @@ namespace FluentUI {
         // 120 logical px scaled by DPI.
         g_ctx->renderer.SetRevealCursor(
             Vec2(g_ctx->input.MouseX(), g_ctx->input.MouseY()), 120.0f * g_ctx->dpiScale);
+        // Brief 11: feed the themed shadow color so every elevation shadow this
+        // frame is tinted by the active theme (light: black; dark: softer black).
+        g_ctx->renderer.SetShadowColor(g_ctx->style.shadowColor);
         g_ctx->scrollConsumedThisFrame = false;
         g_ctx->mouseOverAnyWidgetLastFrame = g_ctx->mouseOverAnyWidget;
         g_ctx->mouseOverAnyWidget = false;

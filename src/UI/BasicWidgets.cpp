@@ -339,6 +339,14 @@ bool Button(const std::string &label, uint32_t iconCodepoint, const Vec2 &size, 
       ctx->renderer.DrawRect(btnPos, btnSize, borderColor, btnMat.radius);
     }
 
+    // Brief 11: a subtle inset shadow while pressed makes the button read as
+    // physically pushed in. Drawn AFTER the fill so it sits on top, clipped to
+    // the rounded interior.
+    if (pressed && enabled) {
+      ctx->renderer.DrawInsetShadow(btnPos, btnSize, btnMat.radius, 2.5f,
+                                    Color(0.0f, 0.0f, 0.0f, 0.22f));
+    }
+
     Vec2 contentPos(btnPos.x + buttonStyle.padding.x,
                     btnPos.y + buttonStyle.padding.y);
 

@@ -603,13 +603,41 @@ namespace FluentUI {
 
     void Renderer::DrawElevationShadow(const Vec2& pos, const Vec2& size, float cornerRadius, float z, float opacityScale) {
         if (z <= 0.0f || opacityScale <= 0.0f) return;
-        // Unified depth → shadow curve: a surface's z (depth) drives the
-        // penumbra spread, downward offset and peak opacity, so every floating
-        // element casts a shadow consistent with its place in the z-order.
-        Elevation::ShadowParams sp = Elevation::Params(z);
-        DrawRectShadow(pos, size, cornerRadius, sp.blur,
-                       Color(0.0f, 0.0f, 0.0f, sp.opacity * opacityScale),
-                       Vec2(0.0f, sp.offsetY));
+        // Brief 11: a surface's z (depth) drives TWO shadow layers — a wide soft
+        // ambient halo (no offset) and a tense darker key shadow (offset down) —
+        // both tinted by the themed shadowColor. Emitted ambient-first so the key
+        // sits on top. Both go to the same SDF batch (mode 1) → 2 instances, no
+        // extra draws. Drawn BEFORE the element's own fill.
+        Elevation::DualShadow ds = Elevation::ParamsDual(z);
+        const Color& sc = shadowColor;
+        auto emit = [&](const Elevation::ShadowParams& sp) {
+            if (sp.opacity <= 0.0f || sp.blur <= 0.0f) return;
+            DrawRectShadow(pos, size, cornerRadius, sp.blur,
+                           Color(sc.r, sc.g, sc.b, sc.a * sp.opacity * opacityScale),
+                           Vec2(0.0f, sp.offsetY));
+        };
+        emit(ds.ambient);
+        emit(ds.key);
+    }
+
+    // Brief 11: inner / inset shadow as a SINGLE SDF instance (mode 3). Darkens
+    // inside the rect, clipped to the rounded interior. Draw AFTER the fill.
+    void Renderer::DrawInsetShadow(const Vec2& pos, const Vec2& size, float cornerRadius,
+                                   float sigma, const Color& color) {
+        if (color.a <= 0.0f || sigma <= 0.0f || size.x <= 0.0f || size.y <= 0.0f) return;
+
+        EnsureBatchState(ShaderType::SDFRect, nullptr, Color(1,1,1,1));
+        if (sdfInstances.size() >= MAX_SDF_INSTANCES) FlushBatch();
+
+        SDFInstance s{};
+        s.cx = pos.x + size.x * 0.5f; s.cy = pos.y + size.y * 0.5f;
+        s.hx = size.x * 0.5f; s.hy = size.y * 0.5f;
+        s.radius = std::clamp(cornerRadius, 0.0f, std::min(s.hx, s.hy));
+        s.borderWidth = sigma * dpiScale; // alias = penumbra in physical px
+        s.softness = std::max(1.0f, dpiScale);
+        s.mode = 3.0f;
+        s.fillR = color.r; s.fillG = color.g; s.fillB = color.b; s.fillA = color.a;
+        sdfInstances.push_back(s);
     }
 
     // Brief 03: drop shadow as a SINGLE SDF instance (mode 1) with an exponential

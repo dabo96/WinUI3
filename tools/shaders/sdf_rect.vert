@@ -34,9 +34,16 @@ layout(location = 8) flat out vec2 vCenter;
 layout(location = 9) flat out float vReveal;
 
 void main() {
-    // Expand the quad to cover border + AA (and the penumbra for shadow mode:
-    // iParams.y is borderWidth for fills, blur for shadows — same field).
-    float pad = iParams.y + iParams.z + 2.0;
+    // Expand the quad to cover what each mode needs (brief 11). iParams.y is
+    // borderWidth for fills (mode 0) and sigma for shadow/inset (mode 1/3); the
+    // gaussian penumbra reaches ~3*sigma, so the shadow quad must grow by that or
+    // its tail gets clipped. mode 2 (acrylic-mask) only needs the AA softness.
+    float mode = iParams.w;
+    float pad;
+    if (mode > 0.5 && mode < 1.5)       pad = 3.0 * iParams.y + 2.0; // shadow
+    else if (mode > 2.5)                pad = 3.0 * iParams.y + 2.0; // inset
+    else if (mode > 1.5 && mode < 2.5)  pad = iParams.z + 2.0;       // acrylic-mask
+    else                                pad = iParams.y + iParams.z + 2.0; // fill
     vec2 local = aQuad * (iHalf + vec2(pad));
     vLocal   = local;
     vHalf    = iHalf;
