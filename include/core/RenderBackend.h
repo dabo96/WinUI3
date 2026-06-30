@@ -107,9 +107,32 @@ struct RenderVertex {
     float u = 0.0f, v = 0.0f; // Added UVs for general use
 };
 
+// Brief 24: backend capability flags. Optional features (render targets,
+// save/restore, copy, readpixel, instancing, acrylic, external textures) are
+// implemented by some backends and not others. Instead of calling a no-op stub
+// and getting a silent nullptr/transparent result, callers query
+// `backend->Supports(cap)` first and degrade gracefully when it is missing.
+enum class RenderCap : uint32_t {
+    RenderTargets   = 1u << 0,  // CreateRenderTarget/SetRenderTarget/GetRenderTargetTexture/DeleteRenderTarget
+    SaveRestore     = 1u << 1,  // SaveState/RestoreState
+    CopyTexture     = 1u << 2,  // CopyTexture
+    ReadPixel       = 1u << 3,  // ReadPixel (eyedropper, Phase C6)
+    Instancing      = 1u << 4,  // DrawSDFInstances (SDF pipeline, brief 01)
+    Acrylic         = 1u << 5,  // DrawAcrylicPanel real blur (brief 06)
+    ExternalTexture = 1u << 6,  // RegisterExternalTexture (engine viewport in UI)
+};
+
 class RenderBackend {
 public:
     virtual ~RenderBackend() = default;
+
+    // --- Capabilities (brief 24) ---
+    // Bitwise-OR of the RenderCap values this backend actually implements. Pure
+    // virtual so every backend (GL, Vulkan, DX11) must answer honestly.
+    virtual uint32_t Capabilities() const = 0;
+    // True if this backend implements the optional feature `c`. Optional methods
+    // below must only be called when the matching capability is reported.
+    bool Supports(RenderCap c) const { return (Capabilities() & static_cast<uint32_t>(c)) != 0; }
 
     // --- Initialization and Frame ---
     // The meaning of `existingContext` depends on the backend:
@@ -184,7 +207,8 @@ public:
     // --- Acrylic / Mica backdrop (brief 06) ---
     // True if the backend can capture+blur+composite real acrylic. When false the
     // Renderer falls back to DrawRectAcrylicFallback (flat tinted fills).
-    virtual bool SupportsAcrylic() const { return false; }
+    // Deprecated alias kept for source compatibility — prefer Supports(RenderCap::Acrylic).
+    bool SupportsAcrylic() const { return Supports(RenderCap::Acrylic); }
     // Composite one acrylic/mica panel. Called from Renderer::EndFrame at the panel's
     // place in draw order (so everything behind it is already on the framebuffer in
     // GL; in Vulkan the backdrop is captured at frame start — see VulkanBackend).

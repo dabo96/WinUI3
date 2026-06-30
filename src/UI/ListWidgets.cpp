@@ -471,6 +471,8 @@ bool BeginTreeView(const std::string &id, const Vec2 &size, std::optional<Vec2> 
 
   auto &state = ctx->treeViewStates[treeViewId];
   ctx->currentTreeViewId = treeViewId;
+  // brief 21: scope TreeNodes by the tree id (paired with widgetTree push/pop).
+  PushID(id.c_str());
 
   if (!state.initialized) {
     Vec2 avail = GetCurrentAvailableSpace(ctx);
@@ -573,6 +575,9 @@ void EndTreeView() {
   UIContext *ctx = GetContext();
   if (!ctx)
     return;
+
+  // brief 21: pop the scope pushed in BeginTreeView.
+  PopID();
 
   // Pop from widget tree (Phase 1)
   ctx->widgetTree.PopParent();
@@ -1172,6 +1177,8 @@ bool BeginTable(const std::string& id, std::vector<TableColumn>& columns,
   frame.clipPushed = true;
 
   ctx->tableStack.push_back(frame);
+  // brief 21: scope cell content by the table id (paired with tableStack).
+  PushID(id.c_str());
 
   // Set cursor to the first visible row position
   ctx->cursorPos = Vec2(tablePos.x,
@@ -1370,6 +1377,8 @@ void EndTable() {
 
   auto frame = ctx->tableStack.back();
   ctx->tableStack.pop_back();
+  // brief 21: pop the scope pushed in BeginTable.
+  PopID();
 
   // Phase C7: pop any pending per-cell clip from the last cell of the last row.
   if (frame.cellClipPushed) {

@@ -4,6 +4,7 @@
 #include "core/VulkanBackend.h"
 #include "core/SharedResourcePool.h"
 #include "Theme/FluentTheme.h"
+#include <cassert>
 
 namespace FluentUI {
 
@@ -407,6 +408,9 @@ namespace FluentUI {
         g_ctx->cursorPos = { 20.0f, 20.0f };
         g_ctx->lastItemPos = g_ctx->cursorPos;
         g_ctx->lastItemSize = { 0.0f, 0.0f };
+        // brief 21: defensively reset the ID scope stack at frame start so an
+        // unbalanced PushID/PopID in one frame can't leak a stale seed into the next.
+        g_ctx->idStack.clear();
         if (!g_ctx->input.IsMouseDown(0) && g_ctx->activeWidgetType == ActiveWidgetType::Slider) {
             g_ctx->activeWidgetId = 0;
             g_ctx->activeWidgetType = ActiveWidgetType::None;
@@ -575,6 +579,18 @@ namespace FluentUI {
 
     void Render() {
         if (!g_ctx || !g_ctx->initialized) return;
+
+        // brief 21: by the time the frame is submitted every PushID must have a
+        // matching PopID. A non-empty stack means a container or user scope leaked.
+#ifndef NDEBUG
+        if (!g_ctx->idStack.empty()) {
+            Log(LogLevel::Warning,
+                "brief21: ID scope stack not balanced at Render() (depth=%zu); "
+                "a PushID is missing its PopID.",
+                g_ctx->idStack.size());
+            assert(g_ctx->idStack.empty() && "Unbalanced PushID/PopID");
+        }
+#endif
 
         // Phase D: render the drag-drop floating preview on the overlay layer
         if (g_ctx->dragDrop.active && g_ctx->dragDrop.previewDrawCtx) {

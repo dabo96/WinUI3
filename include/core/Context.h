@@ -618,6 +618,15 @@ struct UIContext {
   std::vector<Vec2> offsetStack;
   std::vector<TabContentFrame> tabFrameStack;
 
+  // brief 21: ID scope stack. Each entry is a seed hash derived from the enclosing
+  // scope + a discriminant (container id / item index / pointer). GenerateId mixes
+  // the top-of-stack seed with the local label hash so duplicate labels in
+  // different scopes no longer collide in widget state. With the stack empty the
+  // seed is the djb2 base (5381) -> byte-identical IDs to pre-brief-21 behaviour,
+  // so persisted per-frame state is preserved.
+  std::vector<uint32_t> idStack;
+  uint32_t CurrentIdSeed() const { return idStack.empty() ? 5381u : idStack.back(); }
+
   // Deferred rendering for Menu dropdowns (to ensure they appear on top)
   struct DeferredMenuItem {
     enum class Type { Item, Separator };

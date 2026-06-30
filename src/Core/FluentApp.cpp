@@ -5,6 +5,7 @@
 #include "core/OpenGLBackend.h"
 #include "UI/Widgets.h"
 #include "Theme/FluentTheme.h"
+#include <SDL3/SDL_vulkan.h>
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
@@ -12,15 +13,37 @@
 
 namespace FluentUI {
 
+namespace {
+// brief 08/09: choose the OS-window creation flag for the active backend.
+//   - OpenGL → SDL_WINDOW_OPENGL.
+//   - Vulkan → SDL_WINDOW_VULKAN *only* when SDL was built with a Vulkan driver
+//     (so SDL_Vulkan_CreateSurface works). When SDL lacks Vulkan, the backend
+//     creates a native Win32 surface from the HWND, which needs no Vulkan flag;
+//     we keep SDL_WINDOW_OPENGL there to preserve the proven standalone path.
+// Mirrors VulkanBackend::CreateSurfaceForWindow's SDL-vs-native gate.
+Uint64 BackendWindowFlag() {
+    if (GetPreferredBackend() == RenderBackendType::Vulkan) {
+        if (SDL_Vulkan_LoadLibrary(nullptr)) {
+            uint32_t extCount = 0;
+            const char* const* exts = SDL_Vulkan_GetInstanceExtensions(&extCount);
+            if (exts && extCount > 0) return SDL_WINDOW_VULKAN;
+        }
+        // SDL has no Vulkan driver → native HWND surface path.
+    }
+    return SDL_WINDOW_OPENGL;
+}
+} // namespace
+
 // ===================== AppWindow (Secondary Windows) =====================
 
 AppWindow::AppWindow(const std::string& title, int width, int height,
                      SDL_Window* parentWindow, SDL_GLContext parentGLContext,
                      UIContext* parentCtx) {
-    // brief 09 Fase 1: create the OS window. (FluentApp is GL today, so the window
-    // is created GL-capable. A Vulkan FluentApp would create it with SDL_WINDOW_VULKAN.)
+    // brief 09 Fase 1: create the OS window with the flag matching the active
+    // backend (GL → SDL_WINDOW_OPENGL; Vulkan → SDL_WINDOW_VULKAN when SDL has a
+    // Vulkan driver, else a native-HWND-surface window). Same gate as the main window.
     window_ = SDL_CreateWindow(title.c_str(), width, height,
-                                SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+                                BackendWindowFlag() | SDL_WINDOW_RESIZABLE);
     if (!window_) {
         Log(LogLevel::Error, "AppWindow: Failed to create window: %s", SDL_GetError());
         return;
@@ -227,7 +250,7 @@ FluentApp::FluentApp(const std::string& title, const AppConfig& config)
         return;
     }
 
-    Uint64 flags = SDL_WINDOW_OPENGL;
+    Uint64 flags = BackendWindowFlag();
     if (config.resizable) flags |= SDL_WINDOW_RESIZABLE;
     flags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
 
@@ -378,7 +401,7 @@ void FluentApp::run() {
 
     while (running_) {
         // Ensure main window GL context is current at frame start
-        SDL_GL_MakeCurrent(window_, mainGLContext_);
+        if (mainGLContext_) SDL_GL_MakeCurrent(window_, mainGLContext_); // GL-only; null on Vulkan
         SetCurrentContext(ctx_);
 
         // Update main window input
@@ -443,7 +466,7 @@ void FluentApp::run() {
         }
 
         // Main window frame
-        SDL_GL_MakeCurrent(window_, mainGLContext_);
+        if (mainGLContext_) SDL_GL_MakeCurrent(window_, mainGLContext_); // GL-only; null on Vulkan
         SetCurrentContext(ctx_);
 
         NewFrame(dt);
@@ -477,7 +500,9 @@ void FluentApp::run() {
 
         RenderDeferredDropdowns();
         Render();
-        SDL_GL_SwapWindow(window_);
+        // Backend-agnostic present (same path as secondary windows): GL swaps this
+        // window's buffers; Vulkan already presented inside Render() (EndFrame).
+        ctx_->renderer.Present();
 
         // brief 09 Fase 3: update re-dock candidate / perform re-dock on release.
         updateFloatingRedock();
@@ -494,7 +519,7 @@ void FluentApp::run() {
         }
 
         // Restore main GL context after secondary windows
-        SDL_GL_MakeCurrent(window_, mainGLContext_);
+        if (mainGLContext_) SDL_GL_MakeCurrent(window_, mainGLContext_); // GL-only; null on Vulkan
         SetCurrentContext(ctx_);
 
         // FPS cap
@@ -573,7 +598,7 @@ void FluentApp::processEvent(const SDL_Event& e) {
 void FluentApp::beginFrame(float dt) {
     if (!initialized_ || !ctx_ || !window_) return;
 
-    SDL_GL_MakeCurrent(window_, mainGLContext_);
+    if (mainGLContext_) SDL_GL_MakeCurrent(window_, mainGLContext_); // GL-only; null on Vulkan
     SetCurrentContext(ctx_);
 
     ctx_->input.Update(window_);
@@ -636,14 +661,14 @@ bool FluentApp::loadLayout(const std::string& filepath) {
 
 AppWindow* FluentApp::createWindow(const std::string& title, int width, int height) {
     // Ensure main GL context is current before creating a child
-    SDL_GL_MakeCurrent(window_, mainGLContext_);
+    if (mainGLContext_) SDL_GL_MakeCurrent(window_, mainGLContext_); // GL-only; null on Vulkan
     SetCurrentContext(ctx_);
 
     std::unique_ptr<AppWindow> win(new AppWindow(title, width, height, window_, mainGLContext_, ctx_));
     if (!win->window()) return nullptr;
 
     // Double-check main GL context is current after window creation
-    SDL_GL_MakeCurrent(window_, mainGLContext_);
+    if (mainGLContext_) SDL_GL_MakeCurrent(window_, mainGLContext_); // GL-only; null on Vulkan
     SetCurrentContext(ctx_);
 
     AppWindow* ptr = win.get();

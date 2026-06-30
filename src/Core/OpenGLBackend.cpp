@@ -1080,6 +1080,17 @@ void OpenGLBackend::DrawAcrylicPanel(const AcrylicParams& p, const float* projec
     projectionDirty = true;
 }
 
+// Brief 24: the GL backend implements every optional feature except external
+// texture wrapping (RegisterExternalTexture is Vulkan-only so far).
+uint32_t OpenGLBackend::Capabilities() const {
+    return static_cast<uint32_t>(RenderCap::RenderTargets)
+         | static_cast<uint32_t>(RenderCap::SaveRestore)
+         | static_cast<uint32_t>(RenderCap::CopyTexture)
+         | static_cast<uint32_t>(RenderCap::ReadPixel)
+         | static_cast<uint32_t>(RenderCap::Instancing)
+         | static_cast<uint32_t>(RenderCap::Acrylic);
+}
+
 // Phase C6: read a single pixel from the default framebuffer.
 // Note: glReadPixels uses bottom-up Y; we flip from top-down widget Y.
 Color OpenGLBackend::ReadPixel(int x, int y) {

@@ -2,6 +2,7 @@
 #include "core/FileDialog.h"
 #include <cstdio>
 #include <algorithm>
+#include <memory>
 
 using namespace FluentUI;
 
@@ -151,6 +152,40 @@ static void BuildMenuBar(UIBuilder& ui, FluentApp& app, EditorState& state) {
             if (ui.menuItem("Dark Theme")) { state.currentTheme = 0; app.enableDarkMode(true); }
             if (ui.menuItem("Light Theme")) { state.currentTheme = 1; app.enableDarkMode(false); }
             if (ui.menuItem("High Contrast")) { state.currentTheme = 2; app.setTheme(GetHighContrastStyle()); }
+        });
+
+        // Multi-window validation (briefs 08/09): open a secondary window that
+        // SHARES the device + font atlas with the main window. If its text renders
+        // crisply, the atlas was NOT re-baked (brief 08 Part C). On Vulkan this also
+        // exercises FluentApp::run's backend-agnostic window/present path (gap #3).
+        ui.menu("Window", [&](UIBuilder& ui) {
+            if (ui.menuItem("Nueva ventana (compartida)")) {
+                static int s_winCount = 0;
+                std::string title = "Ventana secundaria " + std::to_string(++s_winCount);
+                AppWindow* w = app.createWindow(title, 640, 420);
+                if (w) {
+                    auto clicks = std::make_shared<int>(0);
+                    w->root([clicks, title](UIBuilder& ui) {
+                        ui.spacing(8);
+                        ui.label(title, TypographyStyle::Title);
+                        ui.spacing(4);
+                        ui.label("Comparte device + atlas de fuentes con la ventana principal.",
+                                 TypographyStyle::Body);
+                        ui.label("Si este texto se ve nitido, el atlas NO se re-horneo (brief 08 C).",
+                                 TypographyStyle::Caption);
+                        ui.separator();
+                        ui.spacing(4);
+                        if (ui.button("Click aqui", {120, 30})) (*clicks)++;
+                        ui.label("Clicks en esta ventana: " + std::to_string(*clicks),
+                                 TypographyStyle::BodyStrong);
+                    });
+                    state.consoleMessages.push_back({ConsoleMessage::Info,
+                        "Abierta '" + title + "' (multi-ventana)", state.playTime});
+                } else {
+                    state.consoleMessages.push_back({ConsoleMessage::Error,
+                        "createWindow devolvio null", state.playTime});
+                }
+            }
         });
 
         ui.menu("Help", [&](UIBuilder& ui) {
@@ -578,4 +613,22 @@ void BuildEditorUI(UIBuilder& ui, FluentApp& app, EditorState& state) {
 
     // Modals
     BuildModals(ui, state);
+
+    // #5 demo: a floating Acrylic panel over the viewport so the captured backdrop
+    // (blur in phase 2; raw tinted backdrop in phase 1) is clearly visible. Real
+    // Acrylic on Vulkan now; flat tinted fallback on other backends. Floating
+    // (reserveLayoutSpace=false) + explicit pos so it overlays the 3D viewport grid.
+    if (BeginPanel("acrylic_demo", Vec2(300, 200), /*reserveLayoutSpace=*/false,
+                   /*useAcrylic=*/true, /*acrylicOpacity=*/0.6f,
+                   /*pos=*/Vec2(480.0f, 150.0f))) {
+        ui.label("Acrylic Panel (#5)", TypographyStyle::Subtitle);
+        ui.label("Fondo capturado + tint + ruido,", TypographyStyle::Caption);
+        ui.label("recortado al rounded-rect.", TypographyStyle::Caption);
+        ui.spacing(8);
+        if (ui.button("Boton de prueba", {180, 32})) {
+            state.consoleMessages.push_back({ConsoleMessage::Info,
+                "Click dentro del panel acrylic", state.playTime});
+        }
+    }
+    EndPanel();
 }

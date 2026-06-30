@@ -891,27 +891,26 @@ bool TextInput(const std::string &label, std::string *value, float width,
     else if (ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_C)) {
       if (HasSelection()) {
         std::string selected = textRef.substr(SelectionStart(), SelectionEnd() - SelectionStart());
-        SDL_SetClipboardText(selected.c_str());
+        ctx->input.SetClipboardText(selected);
       }
     }
     // Ctrl+X: Cut
     else if (ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_X)) {
       if (HasSelection()) {
         std::string selected = textRef.substr(SelectionStart(), SelectionEnd() - SelectionStart());
-        SDL_SetClipboardText(selected.c_str());
+        ctx->input.SetClipboardText(selected);
         DeleteSelection();
         valueChanged = true;
       }
     }
     // Ctrl+V: Paste
     else if (ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_V)) {
-      const char* clip = SDL_GetClipboardText();
-      if (clip && clip[0] != '\0') {
+      std::string clipStr = ctx->input.GetClipboardText();
+      if (!clipStr.empty()) {
         if (HasSelection()) {
           DeleteSelection();
           valueChanged = true;
         }
-        std::string clipStr(clip);
         // In single-line mode, replace newlines with spaces
         if (!multiline) {
           for (char& c : clipStr) {

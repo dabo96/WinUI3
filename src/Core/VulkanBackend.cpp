@@ -107,6 +107,11 @@ bool VulkanBackend::Init(void* windowHandle, void* existingContext) {
             if (!CreatePipelines())              { Shutdown(); return false; }
             if (!CreateDynamicBuffers())         { Shutdown(); return false; }
             if (!CreateSamplerAndDescriptorInfra()) { Shutdown(); return false; }
+            // #5: best-effort real acrylic (own swapchain → capturable backdrop).
+            if (!CreateAcrylicResources()) {
+                Log(LogLevel::Warning, "Vulkan: acrylic resources failed — using flat fallback");
+                DestroyAcrylicResources();
+            }
             if (!CreateSyncAndCommands())        { Shutdown(); return false; } // command + upload pools, frame sync
             Log(LogLevel::Info, "Vulkan backend initialized (shared device, own swapchain)");
             return true;
@@ -216,6 +221,12 @@ bool VulkanBackend::Init(void* windowHandle, void* existingContext) {
     if (!CreateDynamicBuffers())    { Shutdown(); return false; }
     VKDBG("CreateSamplerAndDescriptorInfra...");
     if (!CreateSamplerAndDescriptorInfra()) { Shutdown(); return false; }
+    // #5: real acrylic is best-effort — on failure SupportsAcrylic() stays false
+    // and the Renderer uses the flat fallback. Never aborts backend init.
+    if (!CreateAcrylicResources()) {
+        Log(LogLevel::Warning, "Vulkan: acrylic resources failed — using flat fallback");
+        DestroyAcrylicResources();
+    }
     VKDBG("CreateSyncAndCommands...");
     if (!CreateSyncAndCommands())   { Shutdown(); return false; }
 
@@ -1128,6 +1139,20 @@ void* VulkanBackend::CreateTexture(int width, int height, const void* data, bool
     return t;
 }
 
+// Brief 24: Vulkan implements render targets (brief 05), save/restore, copy,
+// external-texture wrapping and the instanced SDF pipeline. ReadPixel has no
+// framebuffer readback yet, so it's omitted. Acrylic (#5) is a RUNTIME capability:
+// reported only while `acrylicReady` (own swapchain to capture the backdrop).
+uint32_t VulkanBackend::Capabilities() const {
+    uint32_t caps = static_cast<uint32_t>(RenderCap::RenderTargets)
+                  | static_cast<uint32_t>(RenderCap::SaveRestore)
+                  | static_cast<uint32_t>(RenderCap::CopyTexture)
+                  | static_cast<uint32_t>(RenderCap::Instancing)
+                  | static_cast<uint32_t>(RenderCap::ExternalTexture);
+    if (acrylicReady) caps |= static_cast<uint32_t>(RenderCap::Acrylic);
+    return caps;
+}
+
 void* VulkanBackend::RegisterExternalTexture(void* nativeView, void* samplerHandle, int layout) {
     if (!nativeView) {
         Log(LogLevel::Error, "Vulkan: RegisterExternalTexture called with null VkImageView");
@@ -1335,6 +1360,11 @@ void VulkanBackend::BeginFrame(const Color& clearColor) {
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(currentCmd, &bi);
 
+    // #5: the content-behind capture happens lazily inside the main pass at the first
+    // acrylic panel (CaptureBehindAndBlur breaks/resumes the pass). Just arm it here.
+    backdropCapturedThisFrame = false;
+    blurReady = false;
+
     VkClearValue clear{};
     clear.color = {{clearColor.r, clearColor.g, clearColor.b, clearColor.a}};
     VkRenderPassBeginInfo rbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -1364,6 +1394,8 @@ void VulkanBackend::EndFrame() {
     }
     if (!currentCmd) return; // frame was skipped
 
+    // Ends whichever main pass is active: the original CLEAR pass, or the loadOp=LOAD
+    // pass we resumed after an acrylic content-behind capture. Both finalLayout=PRESENT_SRC.
     vkCmdEndRenderPass(currentCmd);
     vkEndCommandBuffer(currentCmd);
 
@@ -1926,6 +1958,474 @@ void VulkanBackend::DeleteRenderTarget(void* target) {
     DestroyRenderTarget(rt);
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Acrylic / Mica (#5) — backdrop capture + composite
+// ───────────────────────────────────────────────────────────────────────────
+// Phase 1: SupportsAcrylic()=true + capture the swapchain into a half-res backdrop
+// at EndFrame, composite the RAW (unblurred) backdrop + tint + luminosity + noise
+// during the main pass. Phase 2 inserts the dual-Kawase blur before the composite.
+
+// Push-constant block — must match acrylic_composite.vert/.frag exactly (124 bytes).
+namespace { struct AcrylicPC {
+    float projection[16]; // 0
+    float tint[4];        // 64
+    float center[2];      // 80
+    float halfSize[2];    // 88
+    float screenSize[2];  // 96
+    float radius;         // 104
+    float soft;           // 108
+    float tintOpacity;    // 112
+    float lumOpacity;     // 116
+    float noiseAmount;    // 120
+}; } // 124 bytes
+
+bool VulkanBackend::CreateAcrylicResources() {
+    // The content-behind capture breaks/resumes the main VkRenderPass, so it requires
+    // a classic render pass (not dynamic rendering). Standalone + shared-device window
+    // both use a VkRenderPass, so this holds; engine-shared dynamic mode keeps fallback.
+    if (useDynamicRendering || renderPass == VK_NULL_HANDLE) {
+        Log(LogLevel::Info, "Vulkan: acrylic disabled (needs a classic swapchain render pass)");
+        return false;
+    }
+    // Shader modules (composite + blur).
+    acrylicCompVert = MakeShaderModule(ShadersVK::AcrylicComposite_Vert, ShadersVK::AcrylicComposite_VertSize);
+    acrylicCompFrag = MakeShaderModule(ShadersVK::AcrylicComposite_Frag, ShadersVK::AcrylicComposite_FragSize);
+    blurVert        = MakeShaderModule(ShadersVK::Blur_Vert,       ShadersVK::Blur_VertSize);
+    kawaseDownFrag  = MakeShaderModule(ShadersVK::KawaseDown_Frag, ShadersVK::KawaseDown_FragSize);
+    kawaseUpFrag    = MakeShaderModule(ShadersVK::KawaseUp_Frag,   ShadersVK::KawaseUp_FragSize);
+    if (!acrylicCompVert || !acrylicCompFrag || !blurVert || !kawaseDownFrag || !kawaseUpFrag)
+        return false;
+
+    // Descriptor set layout: 2 combined image samplers (binding0=blur, binding1=noise).
+    VkDescriptorSetLayoutBinding binds[2]{};
+    for (int i = 0; i < 2; ++i) {
+        binds[i].binding = i;
+        binds[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        binds[i].descriptorCount = 1;
+        binds[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    VkDescriptorSetLayoutCreateInfo dlci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    dlci.bindingCount = 2;
+    dlci.pBindings = binds;
+    VK_FAIL(vkCreateDescriptorSetLayout(device, &dlci, nullptr, &acrylicSetLayout), "create acrylic set layout");
+
+    VkPushConstantRange pcr{};
+    pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    pcr.offset = 0;
+    pcr.size = sizeof(AcrylicPC);
+    VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    plci.setLayoutCount = 1;
+    plci.pSetLayouts = &acrylicSetLayout;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &pcr;
+    VK_FAIL(vkCreatePipelineLayout(device, &plci, nullptr, &acrylicLayout), "create acrylic pipeline layout");
+
+    // Phase 2: kawase pipeline layout — 1 sampler (reuse texSetLayout) + 8-byte push
+    // (vec2 uHalfpixel, fragment). The kawase pipelines themselves are created lazily
+    // (CreateKawasePipelines) once a compatible offscreen RT exists.
+    {
+        VkPushConstantRange kpcr{};
+        kpcr.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        kpcr.offset = 0; kpcr.size = sizeof(float) * 2;
+        VkPipelineLayoutCreateInfo kplci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        kplci.setLayoutCount = 1; kplci.pSetLayouts = &texSetLayout;
+        kplci.pushConstantRangeCount = 1; kplci.pPushConstantRanges = &kpcr;
+        VK_FAIL(vkCreatePipelineLayout(device, &kplci, nullptr, &kawaseLayout), "create kawase pipeline layout");
+    }
+
+    // Composite pipeline: no vertex buffer (positions from gl_VertexIndex), triangle
+    // strip (4 verts), standard alpha blend, dynamic viewport/scissor.
+    {
+        VkPipelineShaderStageCreateInfo stages[2]{};
+        stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        stages[0].module = acrylicCompVert; stages[0].pName = "main";
+        stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        stages[1].module = acrylicCompFrag; stages[1].pName = "main";
+
+        VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+        VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+        vp.viewportCount = 1; vp.scissorCount = 1;
+        VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        rs.polygonMode = VK_POLYGON_MODE_FILL; rs.cullMode = VK_CULL_MODE_NONE;
+        rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; rs.lineWidth = 1.0f;
+        VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        ms.rasterizationSamples = sampleCount;
+        VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+        VkPipelineColorBlendAttachmentState cba{};
+        cba.blendEnable = VK_TRUE;
+        cba.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        cba.colorBlendOp = VK_BLEND_OP_ADD;
+        cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        cba.alphaBlendOp = VK_BLEND_OP_ADD;
+        cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                             VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        cb.attachmentCount = 1; cb.pAttachments = &cba;
+        VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dynci{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+        dynci.dynamicStateCount = 2; dynci.pDynamicStates = dynStates;
+
+        VkGraphicsPipelineCreateInfo gpci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        gpci.stageCount = 2; gpci.pStages = stages;
+        gpci.pVertexInputState = &vi; gpci.pInputAssemblyState = &ia;
+        gpci.pViewportState = &vp; gpci.pRasterizationState = &rs;
+        gpci.pMultisampleState = &ms; gpci.pDepthStencilState = &ds;
+        gpci.pColorBlendState = &cb; gpci.pDynamicState = &dynci;
+        gpci.layout = acrylicLayout; gpci.subpass = 0;
+
+        VkPipelineRenderingCreateInfo prci{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+        VkFormat colorFmt = colorFormat;
+        if (useDynamicRendering) {
+            prci.colorAttachmentCount = 1; prci.pColorAttachmentFormats = &colorFmt;
+            prci.depthAttachmentFormat = depthFormat; prci.stencilAttachmentFormat = stencilFormat;
+            gpci.pNext = &prci; gpci.renderPass = VK_NULL_HANDLE;
+        } else {
+            gpci.renderPass = renderPass;
+        }
+        VK_FAIL(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &gpci, nullptr, &pipeAcrylicComposite),
+                "create acrylic composite pipeline");
+    }
+
+    // Dedicated descriptor pool + one persistent set for the composite (2 samplers).
+    {
+        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
+        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pci.maxSets = 1; pci.poolSizeCount = 1; pci.pPoolSizes = &ps;
+        VK_FAIL(vkCreateDescriptorPool(device, &pci, nullptr, &acrylicDescriptorPool), "create acrylic desc pool");
+        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        ai.descriptorPool = acrylicDescriptorPool;
+        ai.descriptorSetCount = 1; ai.pSetLayouts = &acrylicSetLayout;
+        VK_FAIL(vkAllocateDescriptorSets(device, &ai, &acrylicDescriptor), "alloc acrylic desc set");
+    }
+
+    // Resume pass: same single-color-attachment layout as the swapchain pass but
+    // loadOp=LOAD (preserve the content-behind we already drew) and initialLayout
+    // COLOR_ATTACHMENT (the capture leaves the swapchain image there). finalLayout
+    // PRESENT_SRC so EndFrame can present normally.
+    {
+        VkAttachmentDescription color{};
+        color.format = colorFormat;
+        color.samples = sampleCount;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        color.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.finalLayout   = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        VkAttachmentReference colorRef{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription sub{};
+        sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        sub.colorAttachmentCount = 1; sub.pColorAttachments = &colorRef;
+        VkSubpassDependency dep{};
+        dep.srcSubpass = VK_SUBPASS_EXTERNAL; dep.dstSubpass = 0;
+        dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dep.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+        VkRenderPassCreateInfo rpci{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+        rpci.attachmentCount = 1; rpci.pAttachments = &color;
+        rpci.subpassCount = 1; rpci.pSubpasses = &sub;
+        rpci.dependencyCount = 1; rpci.pDependencies = &dep;
+        VK_FAIL(vkCreateRenderPass(device, &rpci, nullptr, &acrylicLoadPass), "create acrylic load pass");
+    }
+
+    acrylicReady = true;
+    Log(LogLevel::Info, "Vulkan: acrylic resources created (content-behind capture + dual-Kawase)");
+    return true;
+}
+
+void VulkanBackend::EnsureBackdropRT(int w, int h) {
+    int hw = std::max(1, w / 2);
+    int hh = std::max(1, h / 2);
+    if (backdropRT && backdropRT->width == hw && backdropRT->height == hh) return;
+    if (backdropRT) {
+        DeleteRenderTarget(backdropRT); // drains the device (rare: only on resize)
+        backdropRT = nullptr;
+    }
+    backdropRT = static_cast<VkRenderTarget*>(CreateRenderTarget(hw, hh));
+    backdropValid = false;                 // contents undefined until first capture
+    acrylicDescBlurView = VK_NULL_HANDLE;  // force descriptor rewrite
+}
+
+// One dual-Kawase pass into `dst`, sampling `src`, recorded INLINE on the current
+// command buffer (only valid while the main render pass is ended — see CaptureBehindAndBlur).
+void VulkanBackend::InlineKawasePass(VkRenderTarget* dst, VkRenderTarget* src, bool down) {
+    if (!dst || !src || !dst->framebuffer || !dst->pass || !src->sampleTex) return;
+    VkClearValue clear{}; clear.color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+    VkRenderPassBeginInfo rbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rbi.renderPass = dst->pass;          // offscreen pass: CLEAR, finalLayout SHADER_READ
+    rbi.framebuffer = dst->framebuffer;
+    rbi.renderArea = {{0, 0}, {static_cast<uint32_t>(dst->width), static_cast<uint32_t>(dst->height)}};
+    rbi.clearValueCount = 1; rbi.pClearValues = &clear;
+    vkCmdBeginRenderPass(currentCmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+
+    VkViewport vp{0.0f, 0.0f, static_cast<float>(dst->width), static_cast<float>(dst->height), 0.0f, 1.0f};
+    VkRect2D sc{{0, 0}, {static_cast<uint32_t>(dst->width), static_cast<uint32_t>(dst->height)}};
+    vkCmdSetViewport(currentCmd, 0, 1, &vp);
+    vkCmdSetScissor(currentCmd, 0, 1, &sc);
+
+    float hp[2] = { 0.5f / static_cast<float>(src->width), 0.5f / static_cast<float>(src->height) };
+    vkCmdBindPipeline(currentCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, down ? pipeKawaseDown : pipeKawaseUp);
+    vkCmdPushConstants(currentCmd, kawaseLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(hp), hp);
+    vkCmdBindDescriptorSets(currentCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, kawaseLayout,
+                            0, 1, &src->sampleTex->descriptor, 0, nullptr);
+    vkCmdDraw(currentCmd, 3, 1, 0, 0); // fullscreen triangle
+    vkCmdEndRenderPass(currentCmd);
+    dst->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+}
+
+// Capture what is BEHIND the acrylic panel (everything drawn so far this frame) and
+// blur it — all on the current command buffer, in submission order, so it reflects the
+// live content. Breaks the main pass, blits the in-progress swapchain to backdropRT,
+// runs the dual-Kawase chain, then resumes the main pass with loadOp=LOAD.
+void VulkanBackend::CaptureBehindAndBlur() {
+    if (!acrylicReady || !currentCmd || swapchain == VK_NULL_HANDLE) return;
+    const int sw = static_cast<int>(swapExtent.width);
+    const int sh = static_cast<int>(swapExtent.height);
+    EnsureBackdropRT(sw, sh);
+    if (!backdropRT) return;
+    EnsureBlurChain(backdropRT->width, backdropRT->height);
+    if (!blurResult || blurChain.size() < 3) return;
+    if (!pipeKawaseDown && !CreateKawasePipelines(blurChain[0])) return;
+
+    VkImage swap = swapImages[currentImageIndex];
+
+    // End the main (CLEAR) pass: the swapchain now holds the content-behind, PRESENT_SRC.
+    vkCmdEndRenderPass(currentCmd);
+
+    auto swapBarrier = [&](VkImageLayout oldL, VkImageLayout newL, VkAccessFlags srcA, VkAccessFlags dstA,
+                           VkPipelineStageFlags srcS, VkPipelineStageFlags dstS) {
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.oldLayout = oldL; b.newLayout = newL;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = swap; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        b.srcAccessMask = srcA; b.dstAccessMask = dstA;
+        vkCmdPipelineBarrier(currentCmd, srcS, dstS, 0, 0, nullptr, 0, nullptr, 1, &b);
+    };
+
+    // Blit content-behind → backdropRT (downscale, linear).
+    swapBarrier(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    TransitionImageLayout(currentCmd, backdropRT->image, backdropRT->layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    VkImageBlit blit{};
+    blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    blit.srcOffsets[1] = {sw, sh, 1};
+    blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    blit.dstOffsets[1] = {backdropRT->width, backdropRT->height, 1};
+    vkCmdBlitImage(currentCmd, swap, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   backdropRT->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+    TransitionImageLayout(currentCmd, backdropRT->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    backdropRT->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    // Restore the swapchain image to COLOR_ATTACHMENT for the loadOp=LOAD resume.
+    swapBarrier(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+
+    // Dual-Kawase: down (backdrop→L0→L1→L2) then up (→L1→L0→blurResult).
+    InlineKawasePass(blurChain[0], backdropRT,   true);
+    InlineKawasePass(blurChain[1], blurChain[0], true);
+    InlineKawasePass(blurChain[2], blurChain[1], true);
+    InlineKawasePass(blurChain[1], blurChain[2], false);
+    InlineKawasePass(blurChain[0], blurChain[1], false);
+    InlineKawasePass(blurResult,   blurChain[0], false);
+
+    // Resume the main pass (LOAD preserves the content-behind) so the composite and the
+    // rest of the frame draw on top.
+    VkRenderPassBeginInfo rbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rbi.renderPass = acrylicLoadPass;
+    rbi.framebuffer = framebuffers[currentImageIndex];
+    rbi.renderArea = {{0, 0}, swapExtent};
+    rbi.clearValueCount = 0;
+    vkCmdBeginRenderPass(currentCmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+    SetFullViewportAndScissor();
+    ApplyScissor();
+
+    backdropValid = true;
+    blurReady = true;
+}
+
+bool VulkanBackend::CreateKawasePipelines(VkRenderTarget* compatibleRT) {
+    if (pipeKawaseDown && pipeKawaseUp) return true;
+    if (!blurVert || !kawaseDownFrag || !kawaseUpFrag || !kawaseLayout) return false;
+
+    auto makeKawase = [&](VkShaderModule frag) -> VkPipeline {
+        VkPipelineShaderStageCreateInfo stages[2]{};
+        stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT; stages[0].module = blurVert; stages[0].pName = "main";
+        stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = frag; stages[1].pName = "main";
+
+        VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; // blur.vert builds a fullscreen triangle
+        VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+        vp.viewportCount = 1; vp.scissorCount = 1;
+        VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        rs.polygonMode = VK_POLYGON_MODE_FILL; rs.cullMode = VK_CULL_MODE_NONE;
+        rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; rs.lineWidth = 1.0f;
+        VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT; // offscreen RTs are single-sample
+        VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+        VkPipelineColorBlendAttachmentState cba{};
+        cba.blendEnable = VK_FALSE; // blur passes overwrite their target
+        cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                             VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        cb.attachmentCount = 1; cb.pAttachments = &cba;
+        VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dynci{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+        dynci.dynamicStateCount = 2; dynci.pDynamicStates = dynStates;
+
+        VkGraphicsPipelineCreateInfo gpci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        gpci.stageCount = 2; gpci.pStages = stages;
+        gpci.pVertexInputState = &vi; gpci.pInputAssemblyState = &ia;
+        gpci.pViewportState = &vp; gpci.pRasterizationState = &rs;
+        gpci.pMultisampleState = &ms; gpci.pDepthStencilState = &ds;
+        gpci.pColorBlendState = &cb; gpci.pDynamicState = &dynci;
+        gpci.layout = kawaseLayout; gpci.subpass = 0;
+        VkPipelineRenderingCreateInfo prci{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+        VkFormat colorFmt = colorFormat;
+        if (useDynamicRendering) {
+            prci.colorAttachmentCount = 1; prci.pColorAttachmentFormats = &colorFmt;
+            gpci.pNext = &prci; gpci.renderPass = VK_NULL_HANDLE;
+        } else {
+            gpci.renderPass = compatibleRT->pass; // offscreen passes are all compatible
+        }
+        VkPipeline pipe = VK_NULL_HANDLE;
+        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &gpci, nullptr, &pipe) != VK_SUCCESS) {
+            Log(LogLevel::Error, "Vulkan: failed to create kawase pipeline");
+            return VK_NULL_HANDLE;
+        }
+        return pipe;
+    };
+
+    pipeKawaseDown = makeKawase(kawaseDownFrag);
+    pipeKawaseUp   = makeKawase(kawaseUpFrag);
+    return pipeKawaseDown && pipeKawaseUp;
+}
+
+void VulkanBackend::EnsureBlurChain(int bw, int bh) {
+    // blurResult at backdrop resolution; 3 chain levels at /2, /4, /8 for the
+    // down/up dual-Kawase ping-pong.
+    if (blurResult && blurResult->width == bw && blurResult->height == bh && blurChain.size() == 3) return;
+    for (auto* rt : blurChain) if (rt) DeleteRenderTarget(rt); // drains device (resize only)
+    blurChain.clear();
+    if (blurResult) { DeleteRenderTarget(blurResult); blurResult = nullptr; }
+    blurResult = static_cast<VkRenderTarget*>(CreateRenderTarget(bw, bh));
+    for (int i = 1; i <= 3; ++i) {
+        int w = std::max(1, bw >> i), h = std::max(1, bh >> i);
+        if (auto* rt = static_cast<VkRenderTarget*>(CreateRenderTarget(w, h))) blurChain.push_back(rt);
+    }
+    blurReady = false;
+}
+
+void VulkanBackend::DrawAcrylicPanel(const AcrylicParams& p, const float* projectionMatrix) {
+    if (!acrylicReady || !currentCmd) return;
+    if (p.w <= 0.0f || p.h <= 0.0f) return;
+
+    // On the first acrylic panel of the frame, capture+blur the content drawn so far
+    // (= what's behind this panel) by breaking and resuming the main pass. Later panels
+    // reuse that blur. If the capture failed, bail (no flat fallback at this layer).
+    if (!backdropCapturedThisFrame) {
+        CaptureBehindAndBlur();
+        backdropCapturedThisFrame = true;
+    }
+    if (!blurReady || !blurResult || !blurResult->sampleTex) return;
+
+    VkImageView blurView = blurResult->sampleTex->view;
+    auto* noise = static_cast<VulkanTexture*>(p.noiseTex);
+    VkImageView noiseView = (noise && noise->view) ? noise->view : blurView;
+
+    if (acrylicDescBlurView != blurView || acrylicDescNoiseTex != p.noiseTex) {
+        VkDescriptorImageInfo imgs[2]{};
+        imgs[0].sampler = sampler; imgs[0].imageView = blurView;
+        imgs[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imgs[1].sampler = sampler; imgs[1].imageView = noiseView;
+        imgs[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkWriteDescriptorSet w[2]{};
+        for (int i = 0; i < 2; ++i) {
+            w[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            w[i].dstSet = acrylicDescriptor; w[i].dstBinding = i;
+            w[i].descriptorCount = 1;
+            w[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            w[i].pImageInfo = &imgs[i];
+        }
+        vkUpdateDescriptorSets(device, 2, w, 0, nullptr);
+        acrylicDescBlurView = blurView;
+        acrylicDescNoiseTex = p.noiseTex;
+    }
+
+    AcrylicPC pc{};
+    std::memcpy(pc.projection, projectionMatrix, sizeof(pc.projection));
+    // Tint: linearize when the target is sRGB (parity with the vertex-color path).
+    if (srgbTarget) {
+        pc.tint[0] = SrgbToLinear(p.tintR); pc.tint[1] = SrgbToLinear(p.tintG); pc.tint[2] = SrgbToLinear(p.tintB);
+    } else {
+        pc.tint[0] = p.tintR; pc.tint[1] = p.tintG; pc.tint[2] = p.tintB;
+    }
+    pc.tint[3] = 1.0f;
+    pc.center[0] = p.x + p.w * 0.5f; pc.center[1] = p.y + p.h * 0.5f;
+    pc.halfSize[0] = p.w * 0.5f;     pc.halfSize[1] = p.h * 0.5f;
+    pc.screenSize[0] = static_cast<float>(swapExtent.width);
+    pc.screenSize[1] = static_cast<float>(swapExtent.height);
+    pc.radius = p.cornerRadius;
+    pc.soft = std::max(1.0f, p.dpiScale);
+    pc.tintOpacity = p.tintOpacity;
+    pc.lumOpacity = p.luminosityOpacity;
+    pc.noiseAmount = p.noiseAmount;
+
+    vkCmdBindPipeline(currentCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeAcrylicComposite);
+    vkCmdPushConstants(currentCmd, acrylicLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(pc), &pc);
+    vkCmdBindDescriptorSets(currentCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, acrylicLayout,
+                            0, 1, &acrylicDescriptor, 0, nullptr);
+    // Keep the current viewport/scissor (panel clip already applied by the batch path);
+    // the shader masks to the rounded rect. Draw the 4-vertex strip.
+    vkCmdDraw(currentCmd, 4, 1, 0, 0);
+}
+
+void VulkanBackend::DestroyAcrylicResources() {
+    // backdropRT / blurResult / blurChain are tracked in renderTargets (CreateRenderTarget
+    // pushes them); remove them here so Shutdown's renderTargets loop won't double-free them.
+    auto dropRT = [&](VkRenderTarget*& rt) {
+        if (!rt) return;
+        auto it = std::find(renderTargets.begin(), renderTargets.end(), rt);
+        if (it != renderTargets.end()) renderTargets.erase(it);
+        DestroyRenderTarget(rt);
+        rt = nullptr;
+    };
+    for (auto* rt : blurChain) { VkRenderTarget* tmp = rt; dropRT(tmp); }
+    blurChain.clear();
+    dropRT(blurResult);
+    dropRT(backdropRT);
+    if (kawaseLayout) { vkDestroyPipelineLayout(device, kawaseLayout, nullptr); kawaseLayout = VK_NULL_HANDLE; }
+    blurReady = false;
+    if (acrylicDescriptorPool) { vkDestroyDescriptorPool(device, acrylicDescriptorPool, nullptr); acrylicDescriptorPool = VK_NULL_HANDLE; }
+    acrylicDescriptor = VK_NULL_HANDLE;
+    if (pipeAcrylicComposite) { vkDestroyPipeline(device, pipeAcrylicComposite, nullptr); pipeAcrylicComposite = VK_NULL_HANDLE; }
+    if (pipeKawaseDown) { vkDestroyPipeline(device, pipeKawaseDown, nullptr); pipeKawaseDown = VK_NULL_HANDLE; }
+    if (pipeKawaseUp)   { vkDestroyPipeline(device, pipeKawaseUp, nullptr);   pipeKawaseUp = VK_NULL_HANDLE; }
+    if (acrylicLayout)    { vkDestroyPipelineLayout(device, acrylicLayout, nullptr); acrylicLayout = VK_NULL_HANDLE; }
+    if (acrylicSetLayout) { vkDestroyDescriptorSetLayout(device, acrylicSetLayout, nullptr); acrylicSetLayout = VK_NULL_HANDLE; }
+    if (acrylicLoadPass)  { vkDestroyRenderPass(device, acrylicLoadPass, nullptr); acrylicLoadPass = VK_NULL_HANDLE; }
+    auto destroyMod = [&](VkShaderModule& m){ if (m) { vkDestroyShaderModule(device, m, nullptr); m = VK_NULL_HANDLE; } };
+    destroyMod(acrylicCompVert); destroyMod(acrylicCompFrag);
+    destroyMod(blurVert); destroyMod(kawaseDownFrag); destroyMod(kawaseUpFrag);
+    acrylicReady = false;
+    backdropValid = false;
+    backdropCapturedThisFrame = false;
+}
+
 void VulkanBackend::SaveState() {
     SavedState s;
     s.rt = currentRT;
@@ -1977,6 +2477,9 @@ void VulkanBackend::Shutdown() {
         vkFreeCommandBuffers(device, uploadPool, 1, &offscreenCmd);
         offscreenCmd = VK_NULL_HANDLE;
     }
+    // #5: tear down acrylic resources first (removes backdropRT from renderTargets).
+    DestroyAcrylicResources();
+
     for (auto* rt : renderTargets) DestroyRenderTarget(rt);
     renderTargets.clear();
     currentRT = nullptr;

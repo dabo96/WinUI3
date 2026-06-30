@@ -44,6 +44,18 @@ uint32_t GenerateId(const char *str);
 uint32_t GenerateId(const char *prefix, const char *str);
 uint32_t GenerateId(const char *a, const char *b, const char *c);
 
+// brief 21: ID scope stack (ImGui-style PushID/PopID). Push a new scope seed
+// derived from the current seed + a discriminant; subsequent GenerateId() calls
+// (i.e. all widgets) mix that seed in, so identical labels under different scopes
+// get distinct IDs without "##" suffixes. Containers push/pop automatically; user
+// code calls PushID(index) when iterating items with repeated labels. Must be
+// balanced (every PushID paired with a PopID); a debug assert at end-of-frame
+// catches leaks.
+void PushID(const char *str);
+void PushID(int i);
+void PushID(const void *ptr);
+void PopID();
+
 // Issue 8: Shared UTF-8 decoder (defined in Renderer.cpp)
 std::uint32_t DecodeUTF8(const char*& ptr, const char* end);
 

@@ -48,6 +48,27 @@ bool InputState::HasComposition() const
     return textInputData && !textInputData->compositionText.empty();
 }
 
+void InputState::SetClipboardText(const std::string& utf8)
+{
+    SDL_SetClipboardText(utf8.c_str());
+}
+
+std::string InputState::GetClipboardText()
+{
+    char* clip = SDL_GetClipboardText();
+    std::string result;
+    if (clip) {
+        result = clip;
+        SDL_free(clip);
+    }
+    return result;
+}
+
+bool InputState::HasClipboardText()
+{
+    return SDL_HasClipboardText();
+}
+
 void InputState::Update(SDL_Window* window)
 {
     keysPressed.fill(false);
@@ -64,13 +85,23 @@ void InputState::Update(SDL_Window* window)
     prevMouseX = mouseX;
     prevMouseY = mouseY;
 
-    // En SDL3, obtener la posición actual del mouse cada frame
-    // Esto asegura que siempre tengamos la posición correcta, incluso sin eventos
+    // En SDL3, obtener la posición actual del mouse cada frame asegura que siempre
+    // tengamos la posición correcta, incluso sin eventos. PERO SDL_GetMouseState
+    // devuelve coords relativas a la ventana CON FOCO de ratón: en multi-ventana,
+    // si el ratón está sobre OTRA ventana, aplicarlas aquí provoca hover fantasma
+    // (la ventana sin foco "cree" que el cursor está dentro). Solo refrescamos la
+    // posición cuando ESTA ventana tiene el foco del ratón; si no, mandamos el
+    // cursor fuera para que el hover se limpie.
     if (window) {
-        float mouseXPos, mouseYPos;
-        SDL_GetMouseState(&mouseXPos, &mouseYPos);
-        mouseX = mouseXPos;
-        mouseY = mouseYPos;
+        if (SDL_GetMouseFocus() == window) {
+            float mouseXPos, mouseYPos;
+            SDL_GetMouseState(&mouseXPos, &mouseYPos);
+            mouseX = mouseXPos;
+            mouseY = mouseYPos;
+        } else {
+            mouseX = -1000.0f;
+            mouseY = -1000.0f;
+        }
     }
     
     mouseDX = mouseX - prevMouseX;

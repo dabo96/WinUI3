@@ -4,6 +4,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstring>
+#include <cstdint>
 
 namespace FluentUI {
 
@@ -352,6 +353,20 @@ uint32_t AnimSlot(uint32_t widgetId, uint32_t slot) {
   return widgetId + SLOT_OFFSET_BASE * (slot + 1);
 }
 
+// brief 21: djb2 mix of a NUL-terminated string into an existing hash seed.
+// Extracted from the GenerateId overloads so PushID and GenerateId share the
+// exact same mixing function. NOTE (compat): with seed == 5381 (the djb2 base,
+// which is also CurrentIdSeed() when the scope stack is empty) the output bytes
+// are IDENTICAL to the pre-brief-21 inline loop, so persisted per-frame widget
+// state keyed by these IDs is preserved.
+static inline uint32_t HashStr(uint32_t h, const char *s) {
+  int c;
+  while ((c = *s++)) {
+    h = ((h << 5) + h) + c;
+  }
+  return h;
+}
+
 // Helper to register hash with GC tracking
 // Perf 1.2: Only register base ID — animation slots registered lazily via RegisterAnimSlots
 static uint32_t RegisterHash(uint32_t hash) {
@@ -374,47 +389,73 @@ void RegisterAnimSlots(uint32_t widgetId) {
   }
 }
 
+// brief 21: current scope seed, null-safe (5381 == djb2 base when no context or
+// empty scope stack, which keeps the hash byte-identical to the old constant).
+static inline uint32_t CurrentSeed() {
+  UIContext *ctx = GetContext();
+  return ctx ? ctx->CurrentIdSeed() : 5381u;
+}
+
+// brief 21: all overloads now start from the current scope seed (CurrentIdSeed())
+// instead of the bare 5381 constant, and chain HashStr. When the scope stack is
+// empty CurrentIdSeed() == 5381, so the mixing order is unchanged and the hash
+// bytes are identical to the previous implementation.
 uint32_t GenerateId(const char *str) {
-  uint32_t hash = 5381;
-  int c;
-  while ((c = *str++)) {
-    hash = ((hash << 5) + hash) + c;
-  }
+  uint32_t hash = CurrentSeed();
+  hash = HashStr(hash, str);
   return RegisterHash(hash);
 }
 
 // Issue 14: Two-part GenerateId without string concatenation
 uint32_t GenerateId(const char *prefix, const char *str) {
-  uint32_t hash = 5381;
-  int c;
-  const char* p = prefix;
-  while ((c = *p++)) {
-    hash = ((hash << 5) + hash) + c;
-  }
-  p = str;
-  while ((c = *p++)) {
-    hash = ((hash << 5) + hash) + c;
-  }
+  uint32_t hash = CurrentSeed();
+  hash = HashStr(hash, prefix);
+  hash = HashStr(hash, str);
   return RegisterHash(hash);
 }
 
 // Issue 14: Three-part GenerateId without string concatenation
 uint32_t GenerateId(const char *a, const char *b, const char *c_str) {
-  uint32_t hash = 5381;
-  int c;
-  const char* p = a;
-  while ((c = *p++)) {
-    hash = ((hash << 5) + hash) + c;
-  }
-  p = b;
-  while ((c = *p++)) {
-    hash = ((hash << 5) + hash) + c;
-  }
-  p = c_str;
-  while ((c = *p++)) {
-    hash = ((hash << 5) + hash) + c;
-  }
+  uint32_t hash = CurrentSeed();
+  hash = HashStr(hash, a);
+  hash = HashStr(hash, b);
+  hash = HashStr(hash, c_str);
   return RegisterHash(hash);
+}
+
+// brief 21: ID scope stack push/pop. Each push derives a new seed from the
+// current top (CurrentIdSeed()) mixed with the discriminant, so scopes nest.
+void PushID(const char *str) {
+  UIContext *ctx = GetContext();
+  if (ctx) ctx->idStack.push_back(HashStr(ctx->CurrentIdSeed(), str));
+}
+
+void PushID(int i) {
+  UIContext *ctx = GetContext();
+  if (ctx) {
+    uint32_t h = ctx->CurrentIdSeed();
+    h = ((h << 5) + h) + static_cast<uint32_t>(i);
+    ctx->idStack.push_back(h);
+  }
+}
+
+void PushID(const void *ptr) {
+  UIContext *ctx = GetContext();
+  if (ctx) {
+    uint32_t h = ctx->CurrentIdSeed();
+    // Mix the pointer bits in 32-bit chunks via the same djb2 step.
+    uintptr_t v = reinterpret_cast<uintptr_t>(ptr);
+    while (v) {
+      h = ((h << 5) + h) + static_cast<uint32_t>(v & 0xFFu);
+      v >>= 8;
+    }
+    ctx->idStack.push_back(h);
+  }
+}
+
+void PopID() {
+  UIContext *ctx = GetContext();
+  if (ctx && !ctx->idStack.empty()) ctx->idStack.pop_back();
 }
 
 void DrawScrollbar(UIContext *ctx, const Vec2 &barPos, const Vec2 &barSize,

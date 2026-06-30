@@ -8,6 +8,7 @@ add_executable(FluentUITests
     test_dock_system.cpp
     test_gpu_integration.cpp
     test_widgets_comprehensive.cpp
+    test_material_serialization.cpp
 )
 
 target_link_libraries(FluentUITests PRIVATE

@@ -77,7 +77,12 @@ public:
     // AcrylicComposite_Vert / AcrylicComposite_Frag. This is a 1-frame-stale backdrop
     // (fine for Acrylic/Mica) and must be checked with the validation layers, so it is
     // deliberately deferred rather than shipped unvalidated.
-    bool SupportsAcrylic() const override { return false; }
+    // #5: real Acrylic/Mica via content-behind capture. Whether it's active is a
+    // RUNTIME capability (acrylicReady) — reported dynamically by Capabilities()
+    // below, so SupportsAcrylic()/Supports(RenderCap::Acrylic) reflect the real state.
+    // --- Capabilities (brief 24) ---
+    uint32_t Capabilities() const override;
+    void DrawAcrylicPanel(const AcrylicParams& params, const float* projectionMatrix) override;
 
     // --- Render targets / SaveState (brief 05) ---
     void* CreateRenderTarget(int width, int height) override;
@@ -174,6 +179,35 @@ private:
     VkPipeline pipeLines = VK_NULL_HANDLE;
     VkPipeline pipeSDF   = VK_NULL_HANDLE; // instanced SDF rounded rect (brief 01)
 
+    // ── Acrylic/Mica (#5) — backdrop capture + dual-Kawase + composite ──────
+    // 1-frame-stale backdrop: blit the swapchain image to backdropRT at EndFrame,
+    // blur it at the next BeginFrame (phase 2), composite during the main pass.
+    VkShaderModule acrylicCompVert = VK_NULL_HANDLE;
+    VkShaderModule acrylicCompFrag = VK_NULL_HANDLE;
+    VkShaderModule blurVert        = VK_NULL_HANDLE; // phase 2 (fullscreen triangle)
+    VkShaderModule kawaseDownFrag  = VK_NULL_HANDLE; // phase 2
+    VkShaderModule kawaseUpFrag    = VK_NULL_HANDLE; // phase 2
+    VkDescriptorSetLayout acrylicSetLayout = VK_NULL_HANDLE; // 2 samplers: blur + noise
+    VkPipelineLayout      acrylicLayout    = VK_NULL_HANDLE; // 124-byte push range
+    VkPipeline            pipeAcrylicComposite = VK_NULL_HANDLE;
+    VkPipeline            pipeKawaseDown = VK_NULL_HANDLE; // phase 2
+    VkPipeline            pipeKawaseUp   = VK_NULL_HANDLE; // phase 2
+    VkPipelineLayout      kawaseLayout   = VK_NULL_HANDLE; // 1 sampler + 8-byte push (phase 2)
+    bool                  blurReady      = false;          // blurResult holds a valid blur this frame
+    // Correct capture (content-BEHIND): we break the main pass at the first acrylic
+    // panel, blit the in-progress swapchain (= what's behind the panel), blur it, then
+    // resume the main pass with loadOp=LOAD to composite on top. acrylicLoadPass is that
+    // resume pass; backdropCapturedThisFrame guards so we only do it once per frame.
+    VkRenderPass acrylicLoadPass = VK_NULL_HANDLE;
+    bool         backdropCapturedThisFrame = false;
+    // backdropRT / blurResult / blurChain are declared after the VkRenderTarget struct (below).
+    VkDescriptorSet       acrylicDescriptor     = VK_NULL_HANDLE; // binding0=backdrop/blur, binding1=noise
+    VkDescriptorPool      acrylicDescriptorPool = VK_NULL_HANDLE;
+    void*                 acrylicDescNoiseTex   = nullptr; // last noise bound (rewrite on change)
+    VkImageView           acrylicDescBlurView   = VK_NULL_HANDLE; // last blur view bound
+    bool                  backdropValid = false; // a capture from last frame exists
+    bool                  acrylicReady  = false; // composite resources created OK
+
     // Static unit-quad geometry for the SDF pipeline (binding 0 + index buffer).
     VkBuffer       sdfQuadVbo    = VK_NULL_HANDLE;
     VkDeviceMemory sdfQuadVboMem = VK_NULL_HANDLE;
@@ -253,6 +287,9 @@ private:
     };
     std::vector<VkRenderTarget*> renderTargets;
     VkRenderTarget* currentRT = nullptr;             // nullptr = swapchain/engine target
+    VkRenderTarget* backdropRT = nullptr;            // #5: half-res captured backdrop for acrylic
+    VkRenderTarget* blurResult = nullptr;            // #5 phase 2: final dual-Kawase blur (composite samples this)
+    std::vector<VkRenderTarget*> blurChain;          // #5 phase 2: ping-pong down/up buffers
 
     // Offscreen recording. In BOTH modes the main target's render pass stays
     // active across UI draws (standalone begins the swapchain pass in BeginFrame;
@@ -311,6 +348,17 @@ private:
     void EndRTPass();                 // end the active RT pass (classic/dynamic)
     void FlushOffscreen();            // submit offscreenCmd, fence-wait, restore mainCmd
     void DestroyRenderTarget(VkRenderTarget* rt); // assumes device idle
+
+    // Acrylic helpers (#5).
+    bool CreateAcrylicResources();       // shaders + layouts + composite/blur pipelines + load pass
+    void DestroyAcrylicResources();
+    void EnsureBackdropRT(int w, int h); // (re)create half-res backdrop target
+    void EnsureBlurChain(int w, int h);            // (re)create ping-pong blur targets
+    bool CreateKawasePipelines(VkRenderTarget* compatibleRT); // lazy, needs a compatible offscreen pass
+    // Break the main pass, blit the content-behind, dual-Kawase blur it (all inline on
+    // the current command buffer, in order), then resume the main pass with loadOp=LOAD.
+    void CaptureBehindAndBlur();
+    void InlineKawasePass(VkRenderTarget* dst, VkRenderTarget* src, bool down);
     void RecordDraw(ShaderType type, const RenderVertex* vertices, size_t vertexCount,
                     const unsigned int* indices, size_t indexCount,
                     void* textureHandle, const float* projectionMatrix,

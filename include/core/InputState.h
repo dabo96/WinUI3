@@ -50,6 +50,12 @@ public:
   const std::vector<std::string>& DroppedFiles() const { return droppedFiles; }
   bool HasDroppedFiles() const { return !droppedFiles.empty(); }
 
+  // OS clipboard helpers (platform-centralized). UTF-8 in/out.
+  // Brief 18.1: reusable by TextInput/SelectableText/PasswordBox/NumberBox.
+  void SetClipboardText(const std::string& utf8);  // SDL_SetClipboardText
+  std::string GetClipboardText();                   // SDL_GetClipboardText (frees with SDL_free)
+  bool HasClipboardText();                           // SDL_HasClipboardText
+
 public:
   bool anyKeyPressed = false;
 

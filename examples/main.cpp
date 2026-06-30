@@ -5,8 +5,9 @@
 using namespace FluentUI;
 
 // Set to 1 to run the widget gallery (App) on the standalone Vulkan backend.
-// Set to 0 to run the engine-editor example (EngineEditor) on OpenGL via FluentApp.
-#define RUN_WIDGET_GALLERY_VULKAN 1
+// Set to 0 to run the engine-editor example (EngineEditor) via FluentApp — now on
+// Vulkan, with multi-window validation (menu Window → "Nueva ventana (compartida)").
+#define RUN_WIDGET_GALLERY_VULKAN 0
 
 #if RUN_WIDGET_GALLERY_VULKAN
 int main(int, char**) {
@@ -18,6 +19,11 @@ int main(int, char**) {
 }
 #else
 int main(int, char**) {
+    // gap #3 validation: drive FluentApp::run on Vulkan. Must be set BEFORE the
+    // FluentApp ctor creates the window (it picks SDL_WINDOW_VULKAN vs OPENGL from
+    // the preferred backend). Comment this line out to fall back to OpenGL.
+    SetPreferredBackend(RenderBackendType::Vulkan);
+
     FluentApp app("FluentUI Engine Editor", {1400, 900, true, true, 60, true});
 
     EditorState editorState;

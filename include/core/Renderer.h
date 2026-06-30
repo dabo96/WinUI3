@@ -11,6 +11,7 @@
 #include "core/FontMSDF.h"
 #include "core/MSDFGenerator.h"
 #include "core/FontManager.h"
+#include "core/SharedResourcePool.h" // complete type: FontOwner() dereferences it
 #include <memory>
 #include <iostream>
 
@@ -166,6 +167,10 @@ public:
   bool LoadFont(const std::string &filepath, int pixelHeight);
   bool IsFontLoaded() const { return fontLoaded; }
   Vec2 MeasureText(const std::string &text, float fontSize = 16.0f);
+  // Mide el texto envolviendo por palabra dentro de maxWidth. Devuelve {ancho real usado, alto total}.
+  Vec2 MeasureTextWrapped(const std::string& text, float maxWidth, float fontSize = 0.0f);
+  // Dibuja el texto envuelto por palabra dentro de maxWidth desde pos (top-left).
+  void DrawTextWrapped(const Vec2& pos, const std::string& text, const Color& color, float maxWidth, float fontSize = 0.0f);
   // Métricas del font activo (en proporción al fontSize). Se usan para
   // centrar verticalmente texto dentro de un campo: el ascender devuelve
   // el offset desde pos.y hasta la baseline, así el centro visual del
@@ -185,8 +190,10 @@ public:
                         const std::string& fontName, float fontSize = 16.0f);
   Vec2 MeasureTextWithFont(const std::string& text, const std::string& fontName, float fontSize = 16.0f);
 
-  // Font manager access
-  FontManager& GetFontManager() { return fontManager; }
+  // Font manager access. In a multi-window shared-device setup this routes to the
+  // device-owner's manager so fonts registered from any window land in the single
+  // shared atlas (brief 08 Part C — fonts are not re-baked per window).
+  FontManager& GetFontManager() { return FontOwner()->fontManager; }
 
   // Utilidades
   void SetViewport(int width, int height);
@@ -218,6 +225,26 @@ private:
   RenderBackend* backend = nullptr;
   // brief 08 Part C: shared per-device resource pool (null = standalone).
   SharedResourcePool* sharedPool = nullptr;
+
+  // brief 08 Part C: font-resource ownership. The first Renderer bound to a pool
+  // bakes and OWNS the font atlases (bitmap, icon, static + dynamic MSDF) and the
+  // FontManager; secondary Renderers on the same device adopt those GPU handles
+  // and route every glyph lookup/generation through the owner, so the atlas is
+  // never rebuilt per window. true for standalone and for the device-owner.
+  bool ownsFontResources = true;
+  // The Renderer that physically owns the font GPU resources (the pool's origin,
+  // or `this` when standalone / when we are the origin).
+  Renderer* FontOwner() const {
+    return (sharedPool && sharedPool->originRenderer) ? sharedPool->originRenderer
+                                                      : const_cast<Renderer*>(this);
+  }
+  // The effective static-MSDF font (owner's). Null before fonts are initialized.
+  FontMSDF* ActiveMSDF() const { return FontOwner()->msdfFont.get(); }
+  // The effective multi-font manager (owner's).
+  FontManager& FontMgr() { return FontOwner()->fontManager; }
+  // Shared-device init for a secondary Renderer: skips font baking and adopts the
+  // owner's atlas handles. Implemented in Renderer.cpp.
+  bool InitShared(RenderBackend* backend);
   Vec2 viewportSize = {800.0f, 600.0f};
   RenderLayer currentLayer = RenderLayer::Default;
   // Phase A4: DPI scale used to size the AA fringe (1 physical pixel always).
@@ -296,6 +323,11 @@ private:
   const Glyph* GetOrGenerateMSDFGlyph(std::uint32_t codepoint);
   bool GenerateMSDFGlyph(std::uint32_t codepoint);
   float GetKerning(std::uint32_t left, std::uint32_t right) const;
+  // Word-wrap helpers (shared by Measure/DrawTextWrapped). LineAdvancePx returns
+  // the vertical advance per line matching DrawText's multiline stepping.
+  float LineAdvancePx(float fontSize);
+  std::vector<std::string> WrapTextLines(const std::string& text, float maxWidth,
+                                         float fontSize, float& outMaxWidth);
   bool EnsureAtlasSpace(int glyphWidth, int glyphHeight, int& outX, int& outY);
   bool EnsureDynamicMSDFAtlasSpace(int glyphWidth, int glyphHeight, int& outX, int& outY);
 

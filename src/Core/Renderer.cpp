@@ -108,15 +108,22 @@ namespace FluentUI {
             if (sharedPool->refCount > 0) sharedPool->refCount--;
             sharedPool = nullptr;
         }
-        // Destroy font objects first while backend is still valid
-        fontManager.Shutdown();
-        msdfFont.reset();
-        msdfGenerator.reset();
-        ClearGlyphs();
-        if (fontFace) { FT_Done_Face(fontFace); fontFace = nullptr; }
-        if (ftLibrary) { FT_Done_FreeType(ftLibrary); ftLibrary = nullptr; }
-        if (fontAtlasTexture && backend) backend->DeleteTexture(fontAtlasTexture);
-        if (dynamicMSDFAtlasTexture && backend) backend->DeleteTexture(dynamicMSDFAtlasTexture);
+        // brief 08 Part C: only the font-resource owner frees the font GPU objects.
+        // A secondary Renderer merely referenced the owner's handles — freeing them
+        // here would double-free the owner's atlases.
+        if (ownsFontResources) {
+            // Destroy font objects first while backend is still valid
+            fontManager.Shutdown();
+            msdfFont.reset();
+            msdfGenerator.reset();
+            ClearGlyphs();
+            if (fontFace) { FT_Done_Face(fontFace); fontFace = nullptr; }
+            if (iconFontFace) { FT_Done_Face(iconFontFace); iconFontFace = nullptr; }
+            if (ftLibrary) { FT_Done_FreeType(ftLibrary); ftLibrary = nullptr; }
+            if (fontAtlasTexture && backend) backend->DeleteTexture(fontAtlasTexture);
+            if (dynamicMSDFAtlasTexture && backend) backend->DeleteTexture(dynamicMSDFAtlasTexture);
+        }
+        // blueNoiseTexture is per-renderer (created lazily by this instance), always ours.
         if (blueNoiseTexture && backend) backend->DeleteTexture(blueNoiseTexture);
         fontAtlasTexture = nullptr; dynamicMSDFAtlasTexture = nullptr; blueNoiseTexture = nullptr;
         backend = nullptr;
@@ -139,20 +146,61 @@ namespace FluentUI {
 
     bool Renderer::Init(RenderBackend* backend, SharedResourcePool* pool) {
         sharedPool = pool;
+        // brief 08 Part C: if the pool already has a device-owner, we are a SECONDARY
+        // Renderer on the same GL context / Vulkan device. Do NOT bake our own font
+        // atlases — adopt the owner's GPU handles and route glyph work through it.
+        if (pool && pool->originRenderer && pool->originRenderer != this) {
+            bool ok = InitShared(backend);
+            if (ok) pool->refCount++;
+            return ok;
+        }
         bool ok = Init(backend);
         if (ok && sharedPool) {
-            // brief 08 Part C: the first Renderer bound to a pool becomes the
-            // device-owner and publishes its atlas handles so secondary windows
-            // (same GL context / Vulkan device) can reference the same GPU memory.
-            if (!sharedPool->originRenderer) {
-                sharedPool->originRenderer = this;
-                sharedPool->fontAtlasTexture = fontAtlasTexture;
-                sharedPool->dynamicMSDFAtlasTexture = dynamicMSDFAtlasTexture;
-                sharedPool->msdf = msdfFont.get();
-            }
+            // First Renderer bound to the pool becomes the device-owner and publishes
+            // its atlas handles so secondary windows can reference the same GPU memory.
+            sharedPool->originRenderer = this;
+            sharedPool->fontAtlasTexture = fontAtlasTexture;
+            sharedPool->dynamicMSDFAtlasTexture = dynamicMSDFAtlasTexture;
+            sharedPool->msdf = msdfFont.get();
             sharedPool->refCount++;
         }
         return ok;
+    }
+
+    bool Renderer::InitShared(RenderBackend* backend) {
+        this->backend = backend;
+        if (!this->backend) return false;
+        ownsFontResources = false; // we reference the owner's font GPU resources
+
+        // Per-renderer (non-font) setup — identical to the head of Init(backend).
+        InitTrigTables();
+        memset(cachedProjection, 0, sizeof(cachedProjection));
+        cachedProjection[0]  = 2.0f / viewportSize.x;
+        cachedProjection[5]  = -2.0f / viewportSize.y;
+        cachedProjection[10] = -1.0f;
+        cachedProjection[12] = -1.0f;
+        cachedProjection[13] = 1.0f;
+        cachedProjection[15] = 1.0f;
+
+        // Adopt the owner's shared GPU atlas handles (valid on the shared device /
+        // GL context). These are NOT owned here — Shutdown must not free them.
+        Renderer* o = sharedPool->originRenderer;
+        fontAtlasTexture        = o->fontAtlasTexture;
+        dynamicMSDFAtlasTexture = o->dynamicMSDFAtlasTexture;
+        atlasWidth = o->atlasWidth; atlasHeight = o->atlasHeight;
+        dynamicAtlasWidth = o->dynamicAtlasWidth; dynamicAtlasHeight = o->dynamicAtlasHeight;
+        // Mirror bitmap-font metrics so the (delegated) fallback text paths agree.
+        fontLoaded      = o->fontLoaded;
+        fontPixelHeight = o->fontPixelHeight;
+        fontAscent      = o->fontAscent;
+        fontDescent     = o->fontDescent;
+        fontLineHeight  = o->fontLineHeight;
+        iconFontLoaded      = o->iconFontLoaded;
+        iconFontPixelHeight = o->iconFontPixelHeight;
+        iconFontAscent      = o->iconFontAscent;
+        // msdfFont / fontFace / iconFontFace / fontManager stay null/empty here: the
+        // owner is the single writer, reached via FontOwner()/ActiveMSDF()/FontMgr().
+        return true;
     }
 
     bool Renderer::Init(RenderBackend* backend) {
@@ -282,6 +330,19 @@ namespace FluentUI {
     Color Renderer::ReadPixel(int x, int y) {
         FlushBatch();
         if (!backend) return Color(0, 0, 0, 0);
+        // Brief 24: gate on the capability so an unsupported backend (e.g. Vulkan,
+        // which has no framebuffer readback yet) reports the gap once instead of
+        // silently returning a transparent pixel that callers misread as "black".
+        if (!backend->Supports(RenderCap::ReadPixel)) {
+            static bool warned = false;
+            if (!warned) {
+                warned = true;
+                Log(LogLevel::Warning,
+                    "ReadPixel unsupported on the active backend (no RenderCap::ReadPixel); "
+                    "eyedropper / pixel readback is disabled.");
+            }
+            return Color(0, 0, 0, 0);
+        }
         return backend->ReadPixel(x, y);
     }
 
@@ -618,7 +679,7 @@ namespace FluentUI {
         if (size.x <= 0.0f || size.y <= 0.0f) return;
 
         // No real-blur backend → flat fallback (keeps the panel readable everywhere).
-        if (!backend || !backend->SupportsAcrylic()) {
+        if (!backend || !backend->Supports(RenderCap::Acrylic)) {
             DrawRectAcrylicFallback(pos, size, tintColor, cornerRadius, opacity);
             return;
         }
@@ -641,7 +702,7 @@ namespace FluentUI {
             p.mica = 1;
         } else {
             p.tintOpacity = std::clamp(0.10f + 0.10f * opacity, 0.0f, 1.0f);
-            p.luminosityOpacity = 0.85f;
+            p.luminosityOpacity = 0.6f; // less desaturation → keep more of the backdrop's color
             p.noiseAmount = 0.03f;
             p.blurPasses = (blurAmount > 0.0f)
                          ? std::clamp(static_cast<int>(blurAmount / 10.0f + 0.5f), 1, 5)
@@ -845,13 +906,14 @@ namespace FluentUI {
     void Renderer::DrawText(const Vec2& pos, const std::string& text, const Color& color, float fontSize) {
         if (!backend) return;
 
-        if (msdfFont && msdfFont->IsLoaded()) {
+        FontMSDF* mf = ActiveMSDF(); // shared static-MSDF atlas (owner's in multi-window)
+        if (mf && mf->IsLoaded()) {
             // Issue 1: Only flush if shader/texture/color state actually changes
-            EnsureBatchState(ShaderType::MSDF, msdfFont->GetTextureHandle(), color);
+            EnsureBatchState(ShaderType::MSDF, mf->GetTextureHandle(), color);
 
-            float scale = fontSize / msdfFont->GetEmSize();
-            float baseline = pos.y + msdfFont->GetAscender() * fontSize;
-            if (msdfFont->GetAscender() <= 0.0f) baseline = pos.y + fontSize * 0.8f;
+            float scale = fontSize / mf->GetEmSize();
+            float baseline = pos.y + mf->GetAscender() * fontSize;
+            if (mf->GetAscender() <= 0.0f) baseline = pos.y + fontSize * 0.8f;
 
             float xpos = pos.x;
             const char* ptr = text.data(); const char* end = ptr + text.size();
@@ -859,15 +921,15 @@ namespace FluentUI {
             while (ptr < end) {
                 uint32_t cp = DecodeUTF8(ptr, end);
                 if (cp == 0) break;
-                if (cp == '\n') { xpos = pos.x; baseline += fontSize * msdfFont->GetLineHeight(); continue; }
-                const FontMSDF::Glyph* g = msdfFont->GetGlyph(cp);
+                if (cp == '\n') { xpos = pos.x; baseline += fontSize * mf->GetLineHeight(); continue; }
+                const FontMSDF::Glyph* g = mf->GetGlyph(cp);
 
                 if (g) {
                     float x0 = std::round(xpos + g->bearing.x * scale); float y0 = baseline - g->bearing.y * scale;
                     float w = g->planeBounds.x * scale; float h = g->planeBounds.y * scale;
                     if (w > 0 && h > 0) {
                         // Issue 5: Use 4 vertices + 6 indices instead of 6 vertices
-                        if (quadVertices.size() + 4 > MAX_QUAD_VERTICES - 4) FlushBatch(ShaderType::MSDF, msdfFont->GetTextureHandle(), color);
+                        if (quadVertices.size() + 4 > MAX_QUAD_VERTICES - 4) FlushBatch(ShaderType::MSDF, mf->GetTextureHandle(), color);
                         unsigned int base = static_cast<unsigned int>(quadVertices.size());
                         quadVertices.push_back({x0,y0,1,1,1,1,g->uv0.x,g->uv0.y});
                         quadVertices.push_back({x0+w,y0,1,1,1,1,g->uv1.x,g->uv0.y});
@@ -917,6 +979,8 @@ namespace FluentUI {
     }
 
     bool Renderer::LoadFont(const std::string& filepath, int pixelHeight) {
+        // Secondary renderer: load into the owner's shared atlas instead.
+        if (!ownsFontResources) return FontOwner()->LoadFont(filepath, pixelHeight);
         std::filesystem::path resolved = ResolveResourcePath(filepath);
         if (resolved.empty()) return false;
         if (FT_New_Face(ftLibrary, resolved.string().c_str(), 0, &fontFace)) return false;
@@ -931,15 +995,16 @@ namespace FluentUI {
     }
 
     Vec2 Renderer::MeasureText(const std::string& text, float fontSize) {
-        if (msdfFont && msdfFont->IsLoaded()) {
-            float scale = fontSize / msdfFont->GetEmSize(); float currentW = 0.0f, maxW = 0.0f;
-            float totalH = fontSize * msdfFont->GetLineHeight();
+        FontMSDF* mf = ActiveMSDF();
+        if (mf && mf->IsLoaded()) {
+            float scale = fontSize / mf->GetEmSize(); float currentW = 0.0f, maxW = 0.0f;
+            float totalH = fontSize * mf->GetLineHeight();
             const char* ptr = text.data(); const char* end = ptr + text.size();
             while (ptr < end) {
                 uint32_t cp = DecodeUTF8(ptr, end);
                 if (cp == 0) break;
-                if (cp == '\n') { maxW = std::max(maxW, currentW); currentW = 0.0f; totalH += fontSize * msdfFont->GetLineHeight(); continue; }
-                const FontMSDF::Glyph* g = msdfFont->GetGlyph(cp);
+                if (cp == '\n') { maxW = std::max(maxW, currentW); currentW = 0.0f; totalH += fontSize * mf->GetLineHeight(); continue; }
+                const FontMSDF::Glyph* g = mf->GetGlyph(cp);
                 if (g) currentW += g->advance * scale; else currentW += fontSize * 0.3f;
             }
             return {std::max(maxW, currentW), totalH};
@@ -958,9 +1023,89 @@ namespace FluentUI {
         return {std::max(maxW, currentW), totalH};
     }
 
+    // Vertical advance per line, consistent with DrawText's multiline stepping
+    // and MeasureText's per-line height. Routes through ActiveMSDF() so secondary
+    // renderers (shared-device, brief 08) use the owner's font metrics.
+    float Renderer::LineAdvancePx(float fontSize) {
+        FontMSDF* mf = ActiveMSDF();
+        if (mf && mf->IsLoaded()) return fontSize * mf->GetLineHeight();
+        if (fontLoaded) {
+            float scale = fontSize / fontPixelHeight;
+            return (fontLineHeight > 0 ? fontLineHeight : fontPixelHeight) * scale;
+        }
+        return fontSize;
+    }
+
+    // Break text into lines, wrapping by word within maxWidth and honoring
+    // explicit '\n'. Reuses MeasureText/GetGlyphAdvance for sizing (no rasterizing
+    // here). outMaxWidth receives the widest resulting line.
+    std::vector<std::string> Renderer::WrapTextLines(const std::string& text, float maxWidth,
+                                                     float fontSize, float& outMaxWidth) {
+        std::vector<std::string> lines;
+        outMaxWidth = 0.0f;
+        const float spaceW = GetGlyphAdvance(' ', fontSize);
+        size_t start = 0;
+        while (start <= text.size()) {
+            size_t nl = text.find('\n', start);
+            std::string paragraph = (nl == std::string::npos)
+                                        ? text.substr(start)
+                                        : text.substr(start, nl - start);
+            std::string line;
+            float lineW = 0.0f;
+            bool anyWord = false;
+            size_t wstart = 0;
+            while (wstart <= paragraph.size()) {
+                size_t sp = paragraph.find(' ', wstart);
+                std::string word = (sp == std::string::npos)
+                                       ? paragraph.substr(wstart)
+                                       : paragraph.substr(wstart, sp - wstart);
+                if (!word.empty()) {
+                    float wordW = MeasureText(word, fontSize).x;
+                    if (!anyWord) {
+                        line = word; lineW = wordW; anyWord = true;
+                    } else if (lineW + spaceW + wordW <= maxWidth) {
+                        line += ' '; line += word; lineW += spaceW + wordW;
+                    } else {
+                        lines.push_back(line);
+                        outMaxWidth = std::max(outMaxWidth, lineW);
+                        line = word; lineW = wordW;
+                    }
+                }
+                if (sp == std::string::npos) break;
+                wstart = sp + 1;
+            }
+            lines.push_back(line);
+            outMaxWidth = std::max(outMaxWidth, lineW);
+            if (nl == std::string::npos) break;
+            start = nl + 1;
+        }
+        return lines;
+    }
+
+    Vec2 Renderer::MeasureTextWrapped(const std::string& text, float maxWidth, float fontSize) {
+        if (fontSize <= 0.0f) fontSize = 16.0f;
+        float maxW = 0.0f;
+        std::vector<std::string> lines = WrapTextLines(text, maxWidth, fontSize, maxW);
+        return { maxW, LineAdvancePx(fontSize) * static_cast<float>(lines.size()) };
+    }
+
+    void Renderer::DrawTextWrapped(const Vec2& pos, const std::string& text, const Color& color,
+                                   float maxWidth, float fontSize) {
+        if (fontSize <= 0.0f) fontSize = 16.0f;
+        float maxW = 0.0f;
+        std::vector<std::string> lines = WrapTextLines(text, maxWidth, fontSize, maxW);
+        float lineH = LineAdvancePx(fontSize);
+        float y = pos.y;
+        for (const std::string& ln : lines) {
+            if (!ln.empty()) DrawText(Vec2(pos.x, y), ln, color, fontSize);
+            y += lineH;
+        }
+    }
+
     float Renderer::GetFontAscender() const {
-        if (msdfFont && msdfFont->IsLoaded()) {
-            return msdfFont->GetAscender();
+        FontMSDF* mf = ActiveMSDF();
+        if (mf && mf->IsLoaded()) {
+            return mf->GetAscender();
         }
         // Fallback razonable para fonts típicos (sans-serif estándar).
         return 0.8f;
@@ -968,9 +1113,10 @@ namespace FluentUI {
 
     // Issue 8: Public glyph advance accessor
     float Renderer::GetGlyphAdvance(uint32_t codepoint, float fontSize) {
-        if (msdfFont && msdfFont->IsLoaded()) {
-            float scale = fontSize / msdfFont->GetEmSize();
-            const FontMSDF::Glyph* g = msdfFont->GetGlyph(codepoint);
+        FontMSDF* mf = ActiveMSDF();
+        if (mf && mf->IsLoaded()) {
+            float scale = fontSize / mf->GetEmSize();
+            const FontMSDF::Glyph* g = mf->GetGlyph(codepoint);
             if (g) return g->advance * scale;
             return fontSize * 0.3f;
         }
@@ -982,6 +1128,8 @@ namespace FluentUI {
     }
 
     const Renderer::Glyph* Renderer::GetGlyph(uint32_t cp) {
+        // Secondary renderer: the owner is the sole writer of the shared bitmap atlas.
+        if (!ownsFontResources) return FontOwner()->GetGlyph(cp);
         auto it = glyphCache.find(cp); if (it != glyphCache.end() && it->second.valid) return &it->second;
         if (LoadGlyph(cp)) return &glyphCache[cp];
         return nullptr;
@@ -1005,6 +1153,8 @@ namespace FluentUI {
 
     // ─── Icon Font (secondary) ─────────────────────────────────────────────
     bool Renderer::LoadIconFont(const std::string& filepath, int pixelHeight) {
+        // Secondary renderer: load into the owner's shared atlas instead.
+        if (!ownsFontResources) return FontOwner()->LoadIconFont(filepath, pixelHeight);
         std::filesystem::path resolved = ResolveResourcePath(filepath);
         if (resolved.empty()) {
             Log(LogLevel::Error, "Icon font not found: %s", filepath.c_str());
@@ -1039,6 +1189,8 @@ namespace FluentUI {
     }
 
     const Renderer::Glyph* Renderer::GetIconGlyph(uint32_t cp) {
+        // Secondary renderer: icon glyphs live in the owner's shared bitmap atlas.
+        if (!ownsFontResources) return FontOwner()->GetIconGlyph(cp);
         auto it = iconGlyphCache.find(cp);
         if (it != iconGlyphCache.end() && it->second.valid) return &it->second;
         if (LoadIconGlyph(cp)) return &iconGlyphCache[cp];
@@ -1078,6 +1230,8 @@ namespace FluentUI {
     }
 
     const Renderer::Glyph* Renderer::GetOrGenerateMSDFGlyph(uint32_t cp) {
+        // Secondary renderer: the owner is the sole writer of the shared dynamic atlas.
+        if (!ownsFontResources) return FontOwner()->GetOrGenerateMSDFGlyph(cp);
         auto it = dynamicMSDFGlyphCache.find(cp);
         if (it != dynamicMSDFGlyphCache.end() && it->second.valid) {
             it->second.lastAccessFrame = glyphCacheFrame; // Perf R6: touch for LRU
@@ -1508,7 +1662,7 @@ namespace FluentUI {
     // --- Multi-font DrawText (Phase 5) ---
     void Renderer::DrawTextWithFont(const Vec2& pos, const std::string& text, const Color& color,
                                      const std::string& fontName, float fontSize) {
-        auto* font = fontManager.GetFont(fontName);
+        auto* font = FontMgr().GetFont(fontName);
         if (!font || !font->loaded || !font->atlasTexture) {
             // Fallback to default rendering
             DrawText(pos, text, color, fontSize);
@@ -1531,7 +1685,7 @@ namespace FluentUI {
                 baseline += font->lineHeight * scale;
                 continue;
             }
-            auto* g = fontManager.GetGlyph(font, cp);
+            auto* g = FontMgr().GetGlyph(font, cp);
             if (!g) {
                 penX += fontSize * 0.3f;
                 continue;
@@ -1556,7 +1710,7 @@ namespace FluentUI {
     }
 
     Vec2 Renderer::MeasureTextWithFont(const std::string& text, const std::string& fontName, float fontSize) {
-        return fontManager.MeasureText(fontName, text, fontSize);
+        return FontMgr().MeasureText(fontName, text, fontSize);
     }
 
 } // namespace FluentUI

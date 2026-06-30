@@ -51,8 +51,10 @@ public:
                           const float* projectionMatrix,
                           const float* revealCursor = nullptr) override;
 
+    // --- Capabilities (brief 24) ---
+    uint32_t Capabilities() const override;
+
     // --- Acrylic / Mica backdrop (brief 06) ---
-    bool SupportsAcrylic() const override { return true; }
     void DrawAcrylicPanel(const AcrylicParams& params, const float* projectionMatrix) override;
 
     // --- Render Targets / FBO (Phase 5) ---

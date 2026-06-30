@@ -1159,6 +1159,8 @@ void BeginGrid(const std::string& id, int columns, float rowHeight) {
   grid.totalHeight = 0.0f;
 
   ctx->gridStack.push_back(grid);
+  // brief 21: scope grid cell content by the grid id (paired with gridStack).
+  PushID(id.c_str());
 
   // Position cursor at first cell (row 0, col 0)
   ctx->cursorPos = grid.gridOrigin;
@@ -1206,6 +1208,8 @@ void EndGrid() {
 
   auto grid = ctx->gridStack.back();
   ctx->gridStack.pop_back();
+  // brief 21: pop the scope pushed in BeginGrid.
+  PopID();
 
   // Account for the last row (which wasn't committed by GridNextCell wrapping)
   // Check if any cells were emitted in the current (last) row

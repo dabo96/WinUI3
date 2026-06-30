@@ -291,6 +291,10 @@ bool BeginPanel(const std::string &id, uint32_t iconCodepoint, const Vec2 &desir
     BeginVertical(ctx->style.spacing, Vec2(std::max(0.0f, cw - sbReserve), 0.0f), Vec2(0,0));
     frameCtx.layoutPushed = true;
     ctx->panelStack.push_back(frameCtx);
+    // brief 21: scope child widgets by the panel id so identical labels in
+    // different panels get distinct ids (no "##" suffix needed). Pushed only on
+    // the content-rendering path (BeginPanel returned true → EndPanel will run).
+    PushID(id.c_str());
   } else if (!state.useAbsolutePos && reserveLayoutSpace) {
     AdvanceCursor(ctx, state.minimized ? Vec2(state.size.x, titleHeight) : state.size);
   }
@@ -307,6 +311,8 @@ void EndPanel() {
 
   PanelFrameContext frameCtx = ctx->panelStack.back();
   ctx->panelStack.pop_back();
+  // brief 21: pop the scope pushed in BeginPanel (paired with panelStack).
+  PopID();
   auto it = ctx->panelStates.find(frameCtx.id);
   if (it == ctx->panelStates.end()) return;
   auto &state = it->second;
@@ -887,12 +893,21 @@ static bool BeginTabViewImpl(const std::string &id, int *activeTab,
   BeginVertical(ctx->style.spacing, layoutSize, Vec2(0,0));
   
   ctx->tabFrameStack.push_back({tabViewId, contentPos, contentSize, ctx->cursorPos});
+  // brief 21: scope tab content by tabview id AND the active tab index, so the
+  // same label used on two different tabs gets distinct ids. Two pushes → two
+  // pops in EndTabView (paired with tabFrameStack).
+  PushID(id.c_str());
+  PushID(state.activeTab);
   return true;
 }
 
 void EndTabView() {
   UIContext *ctx = GetContext();
   if (!ctx || ctx->tabFrameStack.empty()) return;
+
+  // brief 21: pop the (id, activeTab) scope pushed in BeginTabViewImpl.
+  PopID();
+  PopID();
 
   // Pop from widget tree (Phase 1)
   ctx->widgetTree.PopParent();

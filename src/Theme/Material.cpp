@@ -2,6 +2,10 @@
 #include "Theme/Material.h"
 #include "Theme/FluentTheme.h"
 #include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <sstream>
 
 namespace FluentUI {
 
@@ -136,6 +140,108 @@ SDFInstance MakeInstance(const Vec2& pos, const Vec2& size,
     }
     s.revealIntensity = m.revealIntensity;
     return s;
+}
+
+// ── Serialization ────────────────────────────────────────────────────────────
+namespace {
+
+// Color → "#RRGGBBAA". (Color::ToUint32 packs ABGR, so we format channels by hand.)
+std::string ColorToHex(const Color& c) {
+    auto byte = [](float v) {
+        return static_cast<int>(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
+    };
+    char buf[10];
+    std::snprintf(buf, sizeof(buf), "#%02X%02X%02X%02X",
+                  byte(c.r), byte(c.g), byte(c.b), byte(c.a));
+    return std::string(buf);
+}
+
+// Tolerant scalar finder: locate "key" and return the text after its ':' up to
+// the next ',' or '}'. Returns false if the key is absent.
+bool FindValue(const std::string& json, const char* key, std::string& out) {
+    std::string needle = std::string("\"") + key + "\"";
+    size_t k = json.find(needle);
+    if (k == std::string::npos) return false;
+    size_t colon = json.find(':', k + needle.size());
+    if (colon == std::string::npos) return false;
+    size_t i = colon + 1;
+    while (i < json.size() && (json[i] == ' ' || json[i] == '\t' ||
+                               json[i] == '\n' || json[i] == '\r')) ++i;
+    size_t end = i;
+    while (end < json.size() && json[end] != ',' && json[end] != '}' &&
+           json[end] != '\n' && json[end] != '\r') ++end;
+    out = json.substr(i, end - i);
+    // trim trailing whitespace
+    while (!out.empty() && (out.back() == ' ' || out.back() == '\t')) out.pop_back();
+    return !out.empty();
+}
+
+void ParseFloat(const std::string& json, const char* key, float& dst) {
+    std::string v;
+    if (FindValue(json, key, v)) dst = std::strtof(v.c_str(), nullptr);
+}
+
+void ParseBool(const std::string& json, const char* key, bool& dst) {
+    std::string v;
+    if (FindValue(json, key, v)) dst = (v.find("true") != std::string::npos);
+}
+
+void ParseColor(const std::string& json, const char* key, Color& dst) {
+    std::string v;
+    if (!FindValue(json, key, v)) return;
+    size_t q1 = v.find('"');
+    size_t q2 = (q1 == std::string::npos) ? std::string::npos : v.find('"', q1 + 1);
+    if (q1 != std::string::npos && q2 != std::string::npos) {
+        dst = Color::FromHex(v.substr(q1, q2 - q1 + 1).c_str());
+    }
+}
+
+} // namespace
+
+std::string MaterialToJson(const FluentMaterial& m) {
+    std::ostringstream os;
+    os << "{\n";
+    os << "  \"fill\": \""              << ColorToHex(m.fill)   << "\",\n";
+    os << "  \"border\": \""            << ColorToHex(m.border) << "\",\n";
+    os << "  \"borderWidth\": "         << m.borderWidth        << ",\n";
+    os << "  \"radius\": "              << m.radius             << ",\n";
+    os << "  \"elevationZ\": "          << m.elevationZ         << ",\n";
+    os << "  \"revealIntensity\": "     << m.revealIntensity    << ",\n";
+    os << "  \"acrylic\": "             << (m.acrylic ? "true" : "false") << ",\n";
+    os << "  \"tintOpacity\": "         << m.tintOpacity        << ",\n";
+    os << "  \"luminosityOpacity\": "   << m.luminosityOpacity  << "\n";
+    os << "}\n";
+    return os.str();
+}
+
+FluentMaterial MaterialFromJson(const std::string& json) {
+    FluentMaterial m; // start from defaults; absent keys keep them
+    ParseColor(json, "fill",   m.fill);
+    ParseColor(json, "border", m.border);
+    ParseFloat(json, "borderWidth",       m.borderWidth);
+    ParseFloat(json, "radius",            m.radius);
+    ParseFloat(json, "elevationZ",        m.elevationZ);
+    ParseFloat(json, "revealIntensity",   m.revealIntensity);
+    ParseBool (json, "acrylic",           m.acrylic);
+    ParseFloat(json, "tintOpacity",       m.tintOpacity);
+    ParseFloat(json, "luminosityOpacity", m.luminosityOpacity);
+    return m;
+}
+
+bool SaveMaterial(const std::string& filepath, const FluentMaterial& m) {
+    std::ofstream f(filepath, std::ios::binary);
+    if (!f) return false;
+    f << MaterialToJson(m);
+    return static_cast<bool>(f);
+}
+
+bool LoadMaterial(const std::string& filepath, FluentMaterial& out) {
+    std::ifstream f(filepath, std::ios::binary);
+    if (!f) return false;
+    std::stringstream ss;
+    ss << f.rdbuf();
+    out = MaterialFromJson(ss.str());
+    return true;
 }
 
 } // namespace FluentUI

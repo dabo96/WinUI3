@@ -16,6 +16,7 @@
 #include "Theme/Style.h"
 #include "core/Elevation.h"
 #include "core/RenderBackend.h" // SDFInstance
+#include <string>
 
 namespace FluentUI {
 
@@ -93,5 +94,20 @@ FluentMaterial ResolvePanelMaterial(const PanelStyle& ps, WidgetState state);
 // to preserve batching and reveal-consume semantics.
 SDFInstance MakeInstance(const Vec2& pos, const Vec2& size,
                          const FluentMaterial& m, float dpiScale);
+
+// ── Serialization (brief 07, optional / data-driven) ─────────────────────────
+// FluentMaterial is POD, so we expose a minimal JSON round-trip. No JSON library
+// dependency (matching LayoutSerializer's no-dep philosophy): the object is flat,
+// colors are written as "#RRGGBBAA" hex strings (hand-editable), the rest as
+// numbers/bools. Lets themes / per-widget styles live in data files.
+//
+// MaterialFromJson is tolerant: unknown keys are ignored and absent keys keep
+// the FluentMaterial default, so files survive forward/backward field changes.
+std::string    MaterialToJson(const FluentMaterial& m);
+FluentMaterial MaterialFromJson(const std::string& json);
+
+// File helpers (return false on I/O failure; parse errors fall back to defaults).
+bool SaveMaterial(const std::string& filepath, const FluentMaterial& m);
+bool LoadMaterial(const std::string& filepath, FluentMaterial& out);
 
 } // namespace FluentUI

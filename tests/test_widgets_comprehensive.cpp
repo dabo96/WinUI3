@@ -18,6 +18,7 @@
 #include "Math/Color.h"
 #include "Theme/Style.h"
 #include "Theme/FluentTheme.h"
+#include <set>
 
 using namespace FluentUI;
 using Catch::Matchers::WithinAbs;
@@ -2376,4 +2377,79 @@ TEST_CASE("Widgets accept Icons::* values without cast", "[icons][catalog]") {
     gpu.endFrame();
 
     SUCCEED();
+}
+
+// ============================================================================
+// brief 21: ID scope stack (PushID / PopID)
+// ============================================================================
+
+TEST_CASE("ID stack: PushID changes the generated id, PopID restores it", "[id][brief21]") {
+    GPUFixture gpu;
+    if (!gpu.valid) { SKIP("No GL context"); return; }
+
+    gpu.beginFrame();
+    uint32_t base = GenerateId("widget");
+    PushID("scopeA");
+    uint32_t scoped = GenerateId("widget");
+    PopID();
+    uint32_t restored = GenerateId("widget");
+    gpu.endFrame();
+
+    REQUIRE(scoped != base);       // scope perturbs the id
+    REQUIRE(restored == base);     // PopID restores the seed exactly
+    REQUIRE(gpu.ctx->idStack.empty()); // balanced
+}
+
+TEST_CASE("ID stack: same label in different scopes yields distinct ids", "[id][brief21]") {
+    GPUFixture gpu;
+    if (!gpu.valid) { SKIP("No GL context"); return; }
+
+    gpu.beginFrame();
+    PushID("p1");
+    uint32_t a = GenerateId("BTN:", "Accept");
+    PopID();
+    PushID("p2");
+    uint32_t b = GenerateId("BTN:", "Accept");
+    PopID();
+    gpu.endFrame();
+
+    REQUIRE(a != b);
+}
+
+TEST_CASE("ID stack: int and pointer discriminants disambiguate list items", "[id][brief21]") {
+    GPUFixture gpu;
+    if (!gpu.valid) { SKIP("No GL context"); return; }
+
+    gpu.beginFrame();
+    std::set<uint32_t> ids;
+    for (int i = 0; i < 8; ++i) {
+        PushID(i);
+        ids.insert(GenerateId("BTN:", "Delete")); // same label every row
+        PopID();
+    }
+    gpu.endFrame();
+
+    REQUIRE(ids.size() == 8); // every row got a distinct id
+}
+
+TEST_CASE("ID stack: two panels with the same button label are independent", "[id][brief21][gpu]") {
+    GPUFixture gpu;
+    if (!gpu.valid) { SKIP("No GL context"); return; }
+
+    gpu.beginFrame();
+    uint32_t idA = 0, idB = 0;
+    if (BeginPanel("panelA", Vec2(200, 100))) {
+        idA = GenerateId("BTN:", "Accept");
+        EndPanel();
+    }
+    if (BeginPanel("panelB", Vec2(200, 100))) {
+        idB = GenerateId("BTN:", "Accept");
+        EndPanel();
+    }
+    gpu.endFrame();
+
+    REQUIRE(idA != 0);
+    REQUIRE(idB != 0);
+    REQUIRE(idA != idB);                 // independent state, no "##" suffix needed
+    REQUIRE(gpu.ctx->idStack.empty());   // panels auto push/pop are balanced
 }

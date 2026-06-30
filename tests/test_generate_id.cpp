@@ -57,3 +57,33 @@ TEST_CASE("GenerateId prefix collision avoidance", "[id]") {
     uint32_t b = GenerateId("PANEL:", "ok");
     REQUIRE(a != b);
 }
+
+// brief 21: with no active context (empty ID scope stack) GenerateId must still
+// produce the exact legacy djb2 hash (seed 5381), so IDs persisted across frames
+// by pre-brief-21 code stay byte-identical.
+static uint32_t LegacyDjb2(const char* s) {
+    uint32_t h = 5381;
+    int c;
+    while ((c = *s++)) h = ((h << 5) + h) + c;
+    return h;
+}
+
+TEST_CASE("GenerateId byte-compatible with legacy djb2 (empty scope)", "[id][brief21]") {
+    REQUIRE(GenerateId("test_widget") == LegacyDjb2("test_widget"));
+    REQUIRE(GenerateId("panel_main") == LegacyDjb2("panel_main"));
+    // Two-part: equivalent to djb2 of the concatenation.
+    REQUIRE(GenerateId("PANEL:", "main") == LegacyDjb2("PANEL:main"));
+    // Three-part: equivalent to djb2 of the full concatenation.
+    REQUIRE(GenerateId("A", "B", "C") == LegacyDjb2("ABC"));
+}
+
+// brief 21: PushID/PopID are no-ops without an active context, so GenerateId is
+// unchanged here (state is owned by UIContext). Scoping behaviour with a live
+// context is covered in test_widgets_comprehensive.cpp.
+TEST_CASE("PushID/PopID without context leave GenerateId unchanged", "[id][brief21]") {
+    uint32_t base = GenerateId("widget");
+    PushID("scope");          // no-op: no context
+    REQUIRE(GenerateId("widget") == base);
+    PopID();                  // no-op
+    REQUIRE(GenerateId("widget") == base);
+}

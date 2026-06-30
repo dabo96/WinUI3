@@ -22,6 +22,10 @@ public:
     DX11Backend() = default;
     ~DX11Backend() override = default;
 
+    // --- Capabilities (brief 24) ---
+    // Skeleton backend: implements none of the optional features yet.
+    uint32_t Capabilities() const override { return 0; }
+
     bool Init(void* windowHandle, void* existingContext = nullptr) override;
     void Shutdown() override;
     void BeginFrame(const Color& clearColor) override;
