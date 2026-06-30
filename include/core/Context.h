@@ -3,6 +3,7 @@
 #include "Animation.h"
 #include "Math/Color.h"
 #include "Math/Vec2.h"
+#include "Math/Rect.h"
 #include "InputState.h"
 #include "Renderer.h"
 #include "RippleEffect.h"
@@ -493,6 +494,25 @@ struct UIContext {
   std::unordered_map<uint32_t, ContextMenuState> contextMenuStates;
   uint32_t activeContextMenuId = 0; // ID del context menu activo
   bool insideContextMenu = false;  // true entre BeginContextMenu/EndContextMenu
+
+  // === Flyout state (brief 14) ===
+  // Estado del Flyout genérico (popup anclado con contenido arbitrario). v1
+  // single-open como ComboBox: solo uno abierto a la vez (activeFlyoutId).
+  struct FlyoutState {
+    bool open = false;
+    Vec2 position{0.0f, 0.0f};      // Top-left dibujado en pantalla (frame anterior)
+    Vec2 measuredSize{0.0f, 0.0f};  // Tamaño total de la card medido el frame anterior
+    Rect anchor;                    // anchorRect del último BeginFlyout
+    // Estado del padre guardado para restaurar en EndFlyout.
+    Vec2 savedCursorPos{0.0f, 0.0f};
+    Vec2 savedLastItemPos{0.0f, 0.0f};
+    Vec2 savedLastItemSize{0.0f, 0.0f};
+    std::vector<Renderer::ClipRect> savedClipStack;
+    size_t savedLayoutStackSize = 0;
+  };
+  std::unordered_map<uint32_t, FlyoutState> flyoutStates;
+  uint32_t activeFlyoutId = 0;   // Flyout abierto (0 = ninguno): captura input
+  bool insideFlyout = false;     // true entre BeginFlyout/EndFlyout (contenido exento)
 
   struct ListViewState {
     int selectedItem = -1;

@@ -1,6 +1,7 @@
 #pragma once
 #include "Math/Vec2.h"
 #include "Math/Color.h"
+#include "Math/Rect.h"
 #include "UI/Layout.h"
 #include "Theme/Style.h"
 #include <string>
@@ -12,6 +13,9 @@ namespace FluentUI {
 
 // Forward declarations
 struct UIContext;
+// brief 14: MenuEntry defined in UI/Widgets.h. Forward declared so the
+// menuFlyout sugar compiles without pulling Widgets.h into this header.
+struct MenuEntry;
 // brief 19: responsive breakpoint enum (defined in UI/Widgets.h). Opaque enum
 // declaration (fixed underlying type int) so the sugar signatures below compile
 // without pulling the full Widgets.h into this header.
@@ -117,6 +121,12 @@ public:
     void contextMenu(const std::string& id, std::function<void(UIBuilder&)> content);
     void modal(const std::string& id, const std::string& title, bool* open,
                const Vec2& size, std::function<void(UIBuilder&)> content);
+    // brief 14: generic anchored popup. Open/close it with OpenFlyout/CloseFlyout;
+    // `content` is built only while the flyout is open.
+    void flyout(const std::string& id, const Rect& anchorRect,
+                std::function<void(UIBuilder&)> content);
+    void menuFlyout(const std::string& id, const Rect& anchorRect,
+                    const std::vector<MenuEntry>& entries);
 
     // --- Grid layout ---
     void grid(const std::string& id, int columns, int itemCount,

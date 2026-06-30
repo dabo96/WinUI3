@@ -1,6 +1,7 @@
 #pragma once
 #include "Math/Vec2.h"
 #include "Math/Color.h"
+#include "Math/Rect.h"
 #include "UI/Layout.h"
 #include "UI/Icons.h"
 #include "Theme/Style.h"
@@ -326,6 +327,60 @@ bool BeginModal(const std::string &id, const std::string &title, bool *open, con
 /// Modal dialog with a leading icon glyph in its header. @param iconCodepoint 0 = no icon.
 bool BeginModal(const std::string &id, const std::string &title, uint32_t iconCodepoint, bool *open, const Vec2 &size = Vec2(400, 300));
 void EndModal();
+
+// === Flyout & command types (brief 14) ===
+// Lightweight command descriptor used by command surfaces (SplitButton,
+// DropDownButton, CommandBar, …). NOTE: named CommandItem (not Command) to avoid
+// colliding with UndoSystem.h's Command.
+struct CommandItem {
+    std::string label;
+    uint32_t icon = 0;
+    std::function<void()> onInvoke;
+    bool isPrimary = true;
+    bool enabled = true;
+};
+
+// Preferred placement of a Flyout relative to its anchor rect. The actual side
+// may flip if the preferred side does not fit in the viewport.
+enum class FlyoutPlacement {
+    Bottom,
+    Top,
+    Left,
+    Right,
+    BottomEdgeAlignedLeft,
+    BottomEdgeAlignedRight,
+    TopEdgeAlignedLeft,
+};
+
+// One entry of a MenuFlyout. `submenu` nesting is reserved for a later revision
+// (v1 renders top-level entries only).
+struct MenuEntry {
+    std::string label;
+    uint32_t icon = 0;
+    std::string accelerator;       ///< Shortcut text shown right-aligned (e.g. "Ctrl+S").
+    bool checkable = false;
+    bool checked = false;
+    bool separator = false;        ///< When true, drawn as a divider; other fields ignored.
+    bool enabled = true;
+    std::vector<MenuEntry> submenu; ///< Reserved (TODO): nested submenu entries.
+    std::function<void()> onInvoke;
+};
+
+/// Generic anchored popup with arbitrary content. Open/close by id with
+/// OpenFlyout/CloseFlyout. @return true while open (build content between
+/// BeginFlyout/EndFlyout). Single-open (like ComboBox); flips and clamps to the
+/// viewport. anchorRect is the screen rect of the element it is anchored to.
+bool BeginFlyout(const std::string& id, const Rect& anchorRect,
+                 FlyoutPlacement placement = FlyoutPlacement::Bottom);
+void EndFlyout();
+void OpenFlyout(const std::string& id);
+void CloseFlyout(const std::string& id);
+bool IsFlyoutOpen(const std::string& id);
+
+/// Menu popup built on BeginFlyout: icon/label/accelerator rows, checkable items,
+/// separators and keyboard navigation (arrows/Enter/Esc). Submenus are TODO.
+void MenuFlyout(const std::string& id, const Rect& anchorRect,
+                const std::vector<MenuEntry>& entries);
 
 // ─── Lists ──────────────────────────────────────────────────────────────────
 

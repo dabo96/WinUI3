@@ -176,6 +176,15 @@ inline bool IsMouseInputBlocked(UIContext *ctx) {
                   ctx->openMenuDropdownSize)) {
     return true;
   }
+  // Flyout abierto (brief 14): bloqueo solo bajo el rect del flyout, igual que el
+  // combo. Su propio contenido queda exento vía insideFlyout.
+  if (ctx->activeFlyoutId != 0 && !ctx->insideFlyout) {
+    auto it = ctx->flyoutStates.find(ctx->activeFlyoutId);
+    if (it != ctx->flyoutStates.end() &&
+        PointInRect(Vec2(mx, my), it->second.position, it->second.measuredSize)) {
+      return true;
+    }
+  }
   return false;
 }
 

@@ -309,6 +309,21 @@ void UIBuilder::modal(const std::string& id, const std::string& title, bool* ope
     EndModal();
 }
 
+void UIBuilder::flyout(const std::string& id, const Rect& anchorRect,
+                       std::function<void(UIBuilder&)> content) {
+    // EndFlyout only when open: BeginFlyout returning false leaves no flyout scope
+    // (and could otherwise act on an unrelated active flyout).
+    if (BeginFlyout(id, anchorRect)) {
+        if (content) content(*this);
+        EndFlyout();
+    }
+}
+
+void UIBuilder::menuFlyout(const std::string& id, const Rect& anchorRect,
+                           const std::vector<MenuEntry>& entries) {
+    MenuFlyout(id, anchorRect, entries);
+}
+
 // --- Grid layout ---
 
 void UIBuilder::grid(const std::string& id, int columns, int itemCount,
