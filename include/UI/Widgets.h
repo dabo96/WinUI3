@@ -383,11 +383,6 @@ bool IsFlyoutOpen(const std::string& id);
 void MenuFlyout(const std::string& id, const Rect& anchorRect,
                 const std::vector<MenuEntry>& entries);
 
-// brief 13: App shell & navegación (NavigationView, NavFrame, CommandBar,
-// BreadcrumbBar, TitleBar). Incluido aquí — tras CommandItem/MenuEntry — porque
-// CommandBar reusa CommandItem y la overflow usa MenuFlyout.
-#include "UI/NavigationWidgets.h"
-
 // === Signature controls (brief 14, sections 1-4, 7-9) ========================
 
 /// On/off pill switch (distinct from Checkbox). Track ~40×20 (DPI-scaled), white
@@ -812,3 +807,9 @@ void MarkdownView(const std::string& id, const std::string& markdown,
 void MarkdownRegisterImage(const std::string& url, void* textureHandle, Vec2 size);
 
 } // namespace FluentUI
+
+// brief 13: App shell & navegación (NavigationView, NavFrame, CommandBar,
+// BreadcrumbBar, TitleBar). Incluido FUERA del namespace (NavigationWidgets.h
+// abre su propio `namespace FluentUI`); va tras la definición completa de
+// CommandItem/MenuEntry para que CommandBar pueda usar std::vector<CommandItem>.
+#include "UI/NavigationWidgets.h"
