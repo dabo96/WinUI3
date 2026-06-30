@@ -816,14 +816,6 @@ bool BeginFlyout(const std::string &id, const Rect &anchorRect,
   uint32_t flyoutId = GenerateId("FLYOUT:", id.c_str());
   auto &state = ctx->flyoutStates[flyoutId];
 
-  if (!state.open) {
-    if (ctx->activeFlyoutId == flyoutId) {
-      ctx->activeFlyoutId = 0;
-      ctx->insideFlyout = false;
-    }
-    return false;
-  }
-
   state.anchor = anchorRect;
   Vec2 viewport = ctx->renderer.GetViewportSize();
   const PanelStyle &panelStyle = ctx->style.panel;
@@ -832,31 +824,40 @@ bool BeginFlyout(const std::string &id, const Rect &anchorRect,
   bool known = state.measuredSize.x >= 1.0f && state.measuredSize.y >= 1.0f;
 
   // Cierre por click-fuera (usando el rect dibujado el frame anterior) o Esc.
-  Vec2 mouse(ctx->input.MouseX(), ctx->input.MouseY());
-  if (known) {
-    Rect flyRect(state.position, state.measuredSize);
-    bool pressedOutside =
-        (ctx->input.IsMousePressed(0) || ctx->input.IsMousePressed(2)) &&
-        !flyRect.Contains(mouse) && !anchorRect.Contains(mouse);
-    if (pressedOutside) {
-      state.open = false;
-      if (ctx->activeFlyoutId == flyoutId)
-        ctx->activeFlyoutId = 0;
-      ctx->insideFlyout = false;
-      return false;
+  // brief 10 Part D: ya NO se hace return inmediato — se baja state.open y la
+  // transición de salida (fade+scale) la conduce BeginPresence más abajo.
+  if (state.open) {
+    Vec2 mouse(ctx->input.MouseX(), ctx->input.MouseY());
+    if (known) {
+      Rect flyRect(state.position, state.measuredSize);
+      bool pressedOutside =
+          (ctx->input.IsMousePressed(0) || ctx->input.IsMousePressed(2)) &&
+          !flyRect.Contains(mouse) && !anchorRect.Contains(mouse);
+      if (pressedOutside)
+        state.open = false;
     }
+    if (ctx->input.IsKeyPressed(SDL_SCANCODE_ESCAPE))
+      state.open = false;
   }
-  if (ctx->input.IsKeyPressed(SDL_SCANCODE_ESCAPE)) {
-    state.open = false;
-    if (ctx->activeFlyoutId == flyoutId)
+
+  // brief 10 Part D: presence drives the enter (0→1) / exit (1→0) fade. While the
+  // overlay is logically open shouldDraw==true; after a close it stays true until
+  // the exit fade finishes, so the card keeps being re-drawn (fading out) instead
+  // of vanishing. The 0..1 factor scales both opacity (PushOpacity) and a subtle
+  // pop-scale around the card center.
+  PresenceResult pres = BeginPresence(ctx, flyoutId, state.open);
+  if (!pres.shouldDraw) {
+    if (ctx->activeFlyoutId == flyoutId) {
       ctx->activeFlyoutId = 0;
-    ctx->insideFlyout = false;
+      ctx->insideFlyout = false;
+    }
     return false;
   }
 
-  // Single-open: este flyout captura el input este frame.
+  // Single-open: este flyout captura input solo mientras está abierto (durante la
+  // salida sigue dibujándose pero no bloquea el fondo con interacción).
   ctx->activeFlyoutId = flyoutId;
-  ctx->insideFlyout = true;
+  ctx->insideFlyout = state.open;
 
   // Posición: si el tamaño es conocido, posicionamos con flip/clamp. En el primer
   // frame (tamaño desconocido) usamos una estimación y dejamos el contenido en el
@@ -879,18 +880,30 @@ bool BeginFlyout(const std::string &id, const Rect &anchorRect,
   while (!ctx->renderer.GetClipStack().empty())
     ctx->renderer.PopClipRect();
 
+  // brief 10 Part D: fade the entire overlay (card + content) by the presence
+  // factor. PushOpacity here, PopOpacity in EndFlyout — balanced because EndFlyout
+  // only runs when BeginFlyout returned true (shouldDraw).
+  ctx->renderer.PushOpacity(pres.t);
+
   // Fondo: card con sombra (z=Flyout). Solo cuando el tamaño es conocido para
   // evitar un flash a pantalla completa el primer frame.
   if (known) {
+    // brief 10 Part D: subtle pop-scale (0.97→1.0) of the card chrome around its
+    // center. Content keeps its layout size (full content scaling in immediate mode
+    // is out of scope) — the fade carries most of the motion.
+    float s = 0.97f + 0.03f * pres.t;
+    Vec2 cardCenter(pos.x + cardSize.x * 0.5f, pos.y + cardSize.y * 0.5f);
+    Vec2 sSize(cardSize.x * s, cardSize.y * s);
+    Vec2 sPos(cardCenter.x - sSize.x * 0.5f, cardCenter.y - sSize.y * 0.5f);
     Color cardBg = panelStyle.background;
     cardBg.a = 1.0f;
-    ctx->renderer.DrawRectFilled(pos, cardSize, cardBg, panelStyle.cornerRadius);
-    ctx->renderer.DrawRectWithElevation(pos, cardSize, cardBg,
+    ctx->renderer.DrawRectFilled(sPos, sSize, cardBg, panelStyle.cornerRadius);
+    ctx->renderer.DrawRectWithElevation(sPos, sSize, cardBg,
                                         panelStyle.cornerRadius,
                                         Elevation::Z::Flyout);
     Color border = FluentColors::BorderDark;
     border.a = 0.7f;
-    ctx->renderer.DrawRect(pos, cardSize, border, panelStyle.cornerRadius);
+    ctx->renderer.DrawRect(sPos, sSize, border, panelStyle.cornerRadius);
   }
 
   // Guardar estado del padre para EndFlyout.
@@ -936,6 +949,9 @@ void EndFlyout() {
   // Quitar clip del contenido + salir de la capa de overlay.
   ctx->renderer.PopClipRect();
   ctx->renderer.SetLayer(RenderLayer::Default);
+
+  // brief 10 Part D: cerrar el scope de opacidad abierto en BeginFlyout.
+  ctx->renderer.PopOpacity();
 
   // Restaurar estado del padre.
   ctx->cursorPos = state.savedCursorPos;

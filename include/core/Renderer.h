@@ -268,7 +268,8 @@ private:
   ShaderType currentBatchShader = ShaderType::Basic;
   void* currentBatchTexture = nullptr;
   Color currentBatchTextColor{1,1,1,1};
-  void EnsureBatchState(ShaderType shader, void* texture, const Color& color);
+  // brief 10 Part D: color by value so a PushOpacity scope can scale its alpha.
+  void EnsureBatchState(ShaderType shader, void* texture, Color color);
 
   std::vector<RenderBatch> layerBatches[(int)RenderLayer::Count];
 
@@ -395,10 +396,27 @@ private:
 
   std::vector<ClipRect> clipStack;
 
+  // brief 10 Part D: global opacity multiplier (product of the PushOpacity stack).
+  // 1.0 = opaque (no effect), so existing draws are byte-identical when unused.
+  float globalAlpha_ = 1.0f;
+  std::vector<float> opacityStack_;
+
 public:
   void PushClipRect(const Vec2& pos, const Vec2& size);
   void PopClipRect();
   const std::vector<ClipRect>& GetClipStack() const { return clipStack; }
+
+  // ─── brief 10 Part D — global opacity scope (overlay fade) ──────────────────
+  // PushOpacity(a) multiplies the alpha of everything emitted until the matching
+  // PopOpacity(). Nestable (alphas multiply). Used to fade managed overlays
+  // (Flyout/Menu/Tooltip/Modal/Dialog/Toast) on enter/exit. Applied to the SDF
+  // fill/border alpha (DrawRectFilled/DrawRect) and to the text/icon color in
+  // EnsureBatchState, which covers the visual bulk of an overlay. NOTE: lines,
+  // triangles and gradients are NOT scaled (rare in overlay chrome) — documented
+  // bound for brief 10.
+  void PushOpacity(float alpha);
+  void PopOpacity();
+  float CurrentOpacity() const { return globalAlpha_; }
 };
 
 } // namespace FluentUI

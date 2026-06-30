@@ -81,12 +81,52 @@ namespace FluentUI {
 #endif
     }
 
+    // brief 10 Part D: drive a managed overlay's enter/exit transition. The overlay
+    // calls this every frame passing active=open; see PresenceResult docs.
+    PresenceResult BeginPresence(UIContext* ctx, uint32_t nodeId, bool active,
+                                 float enterResponse, float exitResponse) {
+        if (!ctx) return { active ? 1.0f : 0.0f, active, false };
+        // Avoid creating an entry for an overlay that is closed and has no pending
+        // exit fade (the common "exists but not open" case queried every frame).
+        if (!active && ctx->presenceStates.find(nodeId) == ctx->presenceStates.end())
+            return { 0.0f, false, true };
+        auto& ps = ctx->presenceStates[nodeId];
+        ps.enterT.Update(ctx->deltaTime);
+
+        if (active) {
+            if (ps.exiting || !ps.everActive) {
+                if (!ps.everActive) ps.enterT.SetImmediate(0.0f);
+                ps.enterT.SetTarget(1.0f, enterResponse, EasingType::Decelerate);
+            }
+            ps.everActive = true;
+            ps.exiting = false;
+        } else {
+            if (!ps.exiting) {
+                ps.enterT.SetTarget(0.0f, exitResponse, EasingType::Accelerate);
+                ps.exiting = true;
+            }
+        }
+
+        float t = ps.enterT.Get();
+        bool shouldDraw = active || (t > 0.01f) || ps.enterT.IsAnimating();
+        if (!shouldDraw) {
+            ctx->presenceStates.erase(nodeId);
+            return { 0.0f, false, true };
+        }
+        return { std::clamp(t, 0.0f, 1.0f), true, ps.exiting };
+    }
+
     // brief 10 Part G: union of all active animation sources. Used by the host loop
     // to decide whether to idle (block on events) or render continuously.
     bool UIContext::AnyAnimationActive() const {
-        return !activeColorAnimIds.empty() || !activeFloatAnimIds.empty() ||
-               !activeRippleIds.empty() || !activeSpringColorIds.empty() ||
-               !activeSpringFloatIds.empty() || widgetTree.HasActiveAnimations();
+        if (!activeColorAnimIds.empty() || !activeFloatAnimIds.empty() ||
+            !activeRippleIds.empty() || !activeSpringColorIds.empty() ||
+            !activeSpringFloatIds.empty() || widgetTree.HasActiveAnimations())
+            return true;
+        // brief 10 Part D: a fading-in/out managed overlay keeps the loop awake.
+        for (const auto& kv : presenceStates)
+            if (kv.second.enterT.IsAnimating()) return true;
+        return false;
     }
 
     // Helper: initialize system cursors for a context

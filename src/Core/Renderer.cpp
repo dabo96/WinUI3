@@ -363,7 +363,23 @@ namespace FluentUI {
     }
 
     // Issue 1: EnsureBatchState — only flush when state actually changes
-    void Renderer::EnsureBatchState(ShaderType shader, void* texture, const Color& color) {
+    // brief 10 Part D: global opacity scope. Alphas multiply when nested.
+    void Renderer::PushOpacity(float alpha) {
+        opacityStack_.push_back(globalAlpha_);
+        globalAlpha_ = std::clamp(globalAlpha_ * alpha, 0.0f, 1.0f);
+    }
+    void Renderer::PopOpacity() {
+        if (opacityStack_.empty()) { globalAlpha_ = 1.0f; return; }
+        globalAlpha_ = opacityStack_.back();
+        opacityStack_.pop_back();
+    }
+
+    void Renderer::EnsureBatchState(ShaderType shader, void* texture, Color color) {
+        // brief 10 Part D: text/icon color travels through the shader uniform (the
+        // glyph quads are emitted white), so scaling color.a here fades all text and
+        // icons inside a PushOpacity scope. SDF/Basic state calls pass (1,1,1,1) and
+        // their real color lives in the instances/vertices (handled at those sites).
+        if (globalAlpha_ < 0.999f) color.a *= globalAlpha_;
         bool changed = currentBatchShader != shader || currentBatchTexture != texture ||
                        currentBatchTextColor.r != color.r || currentBatchTextColor.g != color.g ||
                        currentBatchTextColor.b != color.b || currentBatchTextColor.a != color.a;
@@ -571,7 +587,8 @@ namespace FluentUI {
         s.softness = std::max(1.0f, dpiScale);
         s.mode = 0.0f;
         s.fillA = 0.0f; // transparent fill → outline only
-        s.borderR = color.r; s.borderG = color.g; s.borderB = color.b; s.borderA = color.a;
+        s.borderR = color.r; s.borderG = color.g; s.borderB = color.b;
+        s.borderA = color.a * globalAlpha_; // brief 10 Part D: overlay fade
         s.revealIntensity = nextRevealIntensity; nextRevealIntensity = 0.0f;
         sdfInstances.push_back(s);
     }
@@ -591,7 +608,8 @@ namespace FluentUI {
         s.borderWidth = 0.0f;
         s.softness = std::max(1.0f, dpiScale);
         s.mode = 0.0f;
-        s.fillR = color.r; s.fillG = color.g; s.fillB = color.b; s.fillA = color.a;
+        s.fillR = color.r; s.fillG = color.g; s.fillB = color.b;
+        s.fillA = color.a * globalAlpha_; // brief 10 Part D: overlay fade
         s.revealIntensity = nextRevealIntensity; nextRevealIntensity = 0.0f;
         sdfInstances.push_back(s);
     }

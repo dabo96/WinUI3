@@ -355,6 +355,19 @@ struct UIContext {
   std::unordered_map<uint32_t, SpringValue<Color>> springColors;
   std::unordered_map<uint32_t, SpringValue<float>> springFloats;
 
+  // brief 10 Part D: presence tracker for managed overlays (enter/exit fade+scale).
+  // Immediate-mode can't observe "stopped emitting" from inside NewFrame (the next
+  // build hasn't run yet), so instead of inferring it from the retained tree's grace
+  // period, the overlay system drives it explicitly: it calls BeginPresence(id,
+  // active=open) EVERY frame. enterT animates 0→1 on appear and 1→0 on exit; the
+  // entry self-erases once it has fully faded out. See BeginPresence() below.
+  struct PresenceState {
+    AnimatedValue<float> enterT{0.0f}; // 0=hidden, 1=shown
+    bool everActive = false;
+    bool exiting = false;
+  };
+  std::unordered_map<uint32_t, PresenceState> presenceStates;
+
   // Perf 2.2: Track active animation IDs to avoid iterating all entries
   std::vector<uint32_t> activeColorAnimIds;
   std::vector<uint32_t> activeFloatAnimIds;
@@ -1055,6 +1068,19 @@ void Render();
 // Also declared in Animation.h (forward) so AnimatedValue/SpringValue can call it
 // without including Context.h (the Animation.h ↔ Context.h cycle).
 float MotionDuration(float base);
+// ─── brief 10 Part D — presence (enter/exit transitions) ─────────────────────
+// Result of BeginPresence: t is the 0..1 presence factor (fade/scale), shouldDraw
+// is false once a closed overlay has fully faded out (caller skips drawing and
+// teardown), exiting is true while fading out.
+struct PresenceResult { float t; bool shouldDraw; bool exiting; };
+// Drive a managed overlay's enter/exit transition. Call EVERY frame with active =
+// "is the overlay logically open". On the rising edge enterT animates 0→1
+// (Decelerate); when active turns false it animates 1→0 (Accelerate) and shouldDraw
+// stays true until the fade completes, so the overlay can keep re-drawing itself
+// during the exit. Wrap the overlay's draw in renderer.PushOpacity(result.t).
+PresenceResult BeginPresence(UIContext* ctx, uint32_t nodeId, bool active,
+                             float enterResponse = 0.20f, float exitResponse = 0.14f);
+
 // brief 10 Part B: seed g_ctx->motion.reduceMotion from the OS accessibility flag
 // (Windows: SPI_GETCLIENTAREAANIMATION). No-op / default false on other platforms.
 // Safe to call once after CreateContext(); FluentApp::run() calls it for you.
