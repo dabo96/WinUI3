@@ -27,6 +27,7 @@ private:
     void BuildCollections(); // brief 16: GridView, DataGrid, Pagination, ExpanderList, FlipView
     void BuildLayout();      // brief 19: WrapPanel, UniformGrid, Breakpoint, Canvas
     void BuildNavigation();  // brief 13: NavigationView, NavFrame, CommandBar, BreadcrumbBar
+    void BuildRichText();    // brief 17: SelectableText, HyperlinkButton, AutoSuggestBox, TokenizingTextBox, PasswordBox, MarkdownView
 
     SDL_Window* window;
     FluentUI::UIContext* ctx;
@@ -117,4 +118,9 @@ private:
     // --- Navigation tab state (brief 13) ---
     std::string m_selectedNavKey = "home";
     FluentUI::NavFrame m_navFrame;
+
+    // --- Rich Text tab state (brief 17) ---
+    std::string m_autoSuggestText;
+    std::string m_password;
+    std::vector<std::string> m_tokens;
 };
