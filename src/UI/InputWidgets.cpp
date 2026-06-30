@@ -851,6 +851,30 @@ bool TextInput(const std::string &label, std::string *value, float width,
                   ctx->activeWidgetType == ActiveWidgetType::TextInput;
   bool valueChanged = false;
 
+  // brief 18.4: per-field IME ownership. The focused field claims IME so text
+  // input + the candidate window follow focus instead of being globally on:
+  //   - on focus (idempotent): SDL_StartTextInput + position the candidate window
+  //     at the field rect (SDL_SetTextInputArea, refined to the caret while
+  //     composing below). Works for single- and multi-line fields alike.
+  //   - on blur of the field that owned IME: SDL_StopTextInput.
+  if (ctx->window) {
+    if (hasFocus) {
+      if (ctx->imeOwnerId != id) {
+        SDL_StartTextInput(ctx->window);
+        ctx->imeOwnerId = id;
+      }
+      SDL_Rect imeArea;
+      imeArea.x = static_cast<int>(fieldPos.x);
+      imeArea.y = static_cast<int>(fieldPos.y);
+      imeArea.w = static_cast<int>(fieldSize.x);
+      imeArea.h = static_cast<int>(fieldSize.y);
+      SDL_SetTextInputArea(ctx->window, &imeArea, 0);
+    } else if (ctx->imeOwnerId == id) {
+      SDL_StopTextInput(ctx->window);
+      ctx->imeOwnerId = 0;
+    }
+  }
+
   // Capture pre-edit state for undo (snapshot before any modifications)
   std::string preEditText = textRef;
   size_t preEditCaret = caret;

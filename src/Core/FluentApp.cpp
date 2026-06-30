@@ -127,7 +127,9 @@ AppWindow::AppWindow(const std::string& title, int width, int height,
     sharedGLContext_ = SDL_GL_GetCurrentContext();
 
     ctx_->renderer.SetViewport(width, height);
-    SDL_StartTextInput(window_);
+    // brief 18.4: IME is now claimed per text field on focus (see TextInput), not
+    // globally at startup, so the candidate window only appears over the focused
+    // field. Stale StopTextInput in the destructor is harmless if never started.
     open_ = true;
     updateDPIScale();
 
@@ -357,7 +359,7 @@ FluentApp::FluentApp(const std::string& title, const AppConfig& config)
         updateDPIScale();
     }
 
-    SDL_StartTextInput(window_);
+    // brief 18.4: text input is started per focused field (see TextInput), not globally.
     lastTime_ = SDL_GetTicks();
     initialized_ = true;
 }
@@ -397,7 +399,7 @@ FluentApp::FluentApp(SDL_Window* externalWindow, SDL_GLContext externalGLContext
         updateDPIScale();
     }
 
-    SDL_StartTextInput(window_);
+    // brief 18.4: text input is started per focused field (see TextInput), not globally.
     lastTime_ = SDL_GetTicks();
     initialized_ = true;
 }
