@@ -116,6 +116,29 @@ namespace FluentUI {
         return { std::clamp(t, 0.0f, 1.0f), true, ps.exiting };
     }
 
+    // brief 10 Part E: FLIP offset for an opt-in animated layout item.
+    Vec2 LayoutFlipOffset(UIContext* ctx, uint32_t itemId, const Vec2& currentPos,
+                          float response, float dampingRatio) {
+        if (!ctx) return Vec2(0.0f, 0.0f);
+        auto& fs = ctx->flipStates[itemId];
+        ctx->lastSeenFrame[itemId] = ctx->frame; // keep alive in the GC rotation
+        if (!fs.valid) {
+            fs.valid = true;
+            fs.prevPos = currentPos;
+            fs.offset.Configure(response, dampingRatio);
+            fs.offset.SetImmediate(Vec2(0.0f, 0.0f));
+            return Vec2(0.0f, 0.0f);
+        }
+        Vec2 delta = fs.prevPos - currentPos; // First - Last (Invert)
+        if (std::abs(delta.x) > 0.5f || std::abs(delta.y) > 0.5f) {
+            fs.offset.Nudge(delta);                  // seed the visual offset
+        }
+        fs.offset.Update(ctx->deltaTime);            // Play: decay offset → 0
+        fs.prevPos = currentPos;
+        // (wake handled by AnyAnimationActive scanning flipStates)
+        return fs.offset.Get();
+    }
+
     // brief 10 Part G: union of all active animation sources. Used by the host loop
     // to decide whether to idle (block on events) or render continuously.
     bool UIContext::AnyAnimationActive() const {
@@ -126,6 +149,9 @@ namespace FluentUI {
         // brief 10 Part D: a fading-in/out managed overlay keeps the loop awake.
         for (const auto& kv : presenceStates)
             if (kv.second.enterT.IsAnimating()) return true;
+        // brief 10 Part E: a sliding FLIP item keeps the loop awake.
+        for (const auto& kv : flipStates)
+            if (kv.second.offset.IsAnimating()) return true;
         return false;
     }
 
@@ -690,6 +716,7 @@ namespace FluentUI {
                 case 12: gcMap(g_ctx->colorPickerStates); break;
                 case 13: gcMap(g_ctx->springColors); break;  // brief 10 Part C
                 case 14: gcMap(g_ctx->springFloats); break;  // brief 10 Part C
+                case 15: gcMap(g_ctx->flipStates); break;    // brief 10 Part E
             }
 
             g_ctx->gcMapIndex = (g_ctx->gcMapIndex + 1) % UIContext::GC_MAP_COUNT;

@@ -368,6 +368,18 @@ struct UIContext {
   };
   std::unordered_map<uint32_t, PresenceState> presenceStates;
 
+  // brief 10 Part E: FLIP (First-Last-Invert-Play) layout animation state, keyed by
+  // a stable per-item id. prevPos is the item's last on-screen position; when it
+  // moves, `offset` is nudged by the delta and springs back to 0 so the item slides.
+  // Opt-in & explicit: a list/container that wants animated reordering calls
+  // LayoutFlipOffset(id, newPos) and adds the returned offset to its draw position.
+  struct FlipState {
+    Vec2 prevPos{0.0f, 0.0f};
+    bool valid = false;
+    SpringValue<Vec2> offset;
+  };
+  std::unordered_map<uint32_t, FlipState> flipStates;
+
   // Perf 2.2: Track active animation IDs to avoid iterating all entries
   std::vector<uint32_t> activeColorAnimIds;
   std::vector<uint32_t> activeFloatAnimIds;
@@ -879,9 +891,9 @@ struct UIContext {
 
   // GC for state maps — Issue 11: amortized rotation
   std::unordered_map<uint32_t, uint32_t> lastSeenFrame;
-  // brief 10 Part C: 13 -> 15 to fold springColors (case 13) and springFloats
-  // (case 14) into the amortized GC rotation.
-  static constexpr uint32_t GC_MAP_COUNT = 15;     // Total maps to GC
+  // brief 10 Part C/E: 13 -> 16 to fold springColors (case 13), springFloats
+  // (case 14) and flipStates (case 15) into the amortized GC rotation.
+  static constexpr uint32_t GC_MAP_COUNT = 16;     // Total maps to GC
   static constexpr uint32_t GC_ROTATE_INTERVAL = 10; // GC one map every N frames
   uint32_t gcMapIndex = 0;                           // Current map being GC'd
 
@@ -1080,6 +1092,14 @@ struct PresenceResult { float t; bool shouldDraw; bool exiting; };
 // during the exit. Wrap the overlay's draw in renderer.PushOpacity(result.t).
 PresenceResult BeginPresence(UIContext* ctx, uint32_t nodeId, bool active,
                              float enterResponse = 0.20f, float exitResponse = 0.14f);
+
+// brief 10 Part E: FLIP helper. Pass a stable per-item id and the item's freshly
+// computed top-left for this frame; returns the visual offset to ADD to the draw
+// position so the item slides from its previous position to the new one. The first
+// call for an id returns (0,0) and just records the position. Opt-in: containers
+// that want animated reorder/insert call this per visible child.
+Vec2 LayoutFlipOffset(UIContext* ctx, uint32_t itemId, const Vec2& currentPos,
+                      float response = 0.32f, float dampingRatio = 0.85f);
 
 // brief 10 Part B: seed g_ctx->motion.reduceMotion from the OS accessibility flag
 // (Windows: SPI_GETCLIENTAREAANIMATION). No-op / default false on other platforms.

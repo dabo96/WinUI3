@@ -276,6 +276,16 @@ namespace FluentUI {
         }
         void SetImmediate(const T& v) { current_ = v; target_ = v; velocity_ = Zero(); active_ = false; initialized_ = true; }
 
+        // brief 10 Part E (FLIP): inject an instantaneous offset into the current
+        // value while leaving target_ unchanged, preserving velocity_ so successive
+        // bumps compose naturally. With target_ == Zero() the spring then decays the
+        // offset back to 0, sliding an item from its old position to the new one.
+        void Nudge(const T& delta) {
+            if (!initialized_) { current_ = Zero(); target_ = Zero(); initialized_ = true; }
+            current_ = Add(current_, delta);
+            active_ = true;
+        }
+
         void Update(float dt) {
             if (!active_) return;
             dt = std::min(dt, 0.064f);                 // clamp a long frame
