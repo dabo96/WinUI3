@@ -14,6 +14,7 @@ add_library(FluentUI
     Core/Accessibility.cpp
     Core/FileDialog.cpp
     Core/DragDrop.cpp
+    Core/I18n.cpp
     UI/WidgetHelpers.cpp
     UI/BasicWidgets.cpp
     UI/InputWidgets.cpp
