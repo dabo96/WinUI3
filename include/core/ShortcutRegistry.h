@@ -1,6 +1,6 @@
 #pragma once
 #include "core/InputState.h"
-#include <SDL3/SDL.h>
+#include "core/UIKey.h"
 #include <string>
 #include <functional>
 #include <unordered_map>
@@ -16,7 +16,7 @@ enum ShortcutMod : uint16_t {
 };
 
 struct KeyCombo {
-    SDL_Scancode key = SDL_SCANCODE_UNKNOWN;
+    UIKey key = UIKey::Unknown;   // brief 20: platform-neutral key
     uint16_t modifiers = MOD_NONE;
 
     bool operator==(const KeyCombo& o) const {
@@ -44,14 +44,13 @@ public:
     // Fires callbacks for any shortcut whose key was pressed this frame
     // while the required modifiers are held.
     void ProcessFrame(const InputState& input) {
-        SDL_Keymod sdlMods = SDL_GetModState();
         uint16_t currentMods = 0;
-        if (sdlMods & SDL_KMOD_CTRL)  currentMods |= MOD_CTRL;
-        if (sdlMods & SDL_KMOD_SHIFT) currentMods |= MOD_SHIFT;
-        if (sdlMods & SDL_KMOD_ALT)   currentMods |= MOD_ALT;
+        if (input.CtrlDown())  currentMods |= MOD_CTRL;
+        if (input.ShiftDown()) currentMods |= MOD_SHIFT;
+        if (input.AltDown())   currentMods |= MOD_ALT;
 
         for (auto& [id, entry] : entries_) {
-            if (entry.combo.key == SDL_SCANCODE_UNKNOWN) continue;
+            if (entry.combo.key == UIKey::Unknown) continue;
             if (input.IsKeyPressed(entry.combo.key) && currentMods == entry.combo.modifiers) {
                 if (entry.callback) entry.callback();
             }
@@ -75,13 +74,7 @@ public:
         if (combo.modifiers & MOD_SHIFT) result += "Shift+";
         if (combo.modifiers & MOD_ALT)   result += "Alt+";
 
-        SDL_Keycode keycode = SDL_GetKeyFromScancode(combo.key, SDL_KMOD_NONE, false);
-        const char* name = SDL_GetKeyName(keycode);
-        if (name && name[0] != '\0') {
-            result += name;
-        } else {
-            result += "???";
-        }
+        result += UIKeyName(combo.key);
         return result;
     }
 

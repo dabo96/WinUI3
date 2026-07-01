@@ -5,7 +5,7 @@ using namespace FluentUI;
 
 TEST_CASE("ShortcutRegistry register and has", "[shortcuts]") {
     ShortcutRegistry reg;
-    KeyCombo combo{SDL_SCANCODE_S, MOD_CTRL};
+    KeyCombo combo{UIKey::S, MOD_CTRL};
 
     bool called = false;
     reg.Register("save", combo, [&]() { called = true; });
@@ -16,7 +16,7 @@ TEST_CASE("ShortcutRegistry register and has", "[shortcuts]") {
 
 TEST_CASE("ShortcutRegistry unregister", "[shortcuts]") {
     ShortcutRegistry reg;
-    reg.Register("save", {SDL_SCANCODE_S, MOD_CTRL}, []() {});
+    reg.Register("save", {UIKey::S, MOD_CTRL}, []() {});
     REQUIRE(reg.HasShortcut("save"));
 
     reg.Unregister("save");
@@ -25,14 +25,14 @@ TEST_CASE("ShortcutRegistry unregister", "[shortcuts]") {
 
 TEST_CASE("ShortcutRegistry GetShortcutText", "[shortcuts]") {
     ShortcutRegistry reg;
-    reg.Register("save", {SDL_SCANCODE_S, MOD_CTRL}, []() {});
+    reg.Register("save", {UIKey::S, MOD_CTRL}, []() {});
 
     std::string text = reg.GetShortcutText("save");
     REQUIRE_FALSE(text.empty());
 }
 
 TEST_CASE("ShortcutRegistry ComboToString", "[shortcuts]") {
-    KeyCombo combo{SDL_SCANCODE_S, MOD_CTRL};
+    KeyCombo combo{UIKey::S, MOD_CTRL};
     std::string text = ShortcutRegistry::ComboToString(combo);
     REQUIRE_FALSE(text.empty());
     // Should contain "Ctrl" and "S"
@@ -40,17 +40,17 @@ TEST_CASE("ShortcutRegistry ComboToString", "[shortcuts]") {
 }
 
 TEST_CASE("ShortcutRegistry ComboToString with multiple modifiers", "[shortcuts]") {
-    KeyCombo combo{SDL_SCANCODE_Z, static_cast<uint16_t>(MOD_CTRL | MOD_SHIFT)};
+    KeyCombo combo{UIKey::Z, static_cast<uint16_t>(MOD_CTRL | MOD_SHIFT)};
     std::string text = ShortcutRegistry::ComboToString(combo);
     REQUIRE(text.find("Ctrl") != std::string::npos);
     REQUIRE(text.find("Shift") != std::string::npos);
 }
 
 TEST_CASE("KeyCombo equality", "[shortcuts]") {
-    KeyCombo a{SDL_SCANCODE_A, MOD_CTRL};
-    KeyCombo b{SDL_SCANCODE_A, MOD_CTRL};
-    KeyCombo c{SDL_SCANCODE_B, MOD_CTRL};
-    KeyCombo d{SDL_SCANCODE_A, MOD_SHIFT};
+    KeyCombo a{UIKey::A, MOD_CTRL};
+    KeyCombo b{UIKey::A, MOD_CTRL};
+    KeyCombo c{UIKey::B, MOD_CTRL};
+    KeyCombo d{UIKey::A, MOD_SHIFT};
 
     REQUIRE(a == b);
     REQUIRE_FALSE(a == c);

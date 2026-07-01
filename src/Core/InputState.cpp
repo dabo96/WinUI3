@@ -32,6 +32,9 @@ SDL_Scancode ScancodeForUIKey(UIKey k) {
     if (k == UIKey::Num0) return SDL_SCANCODE_0;
     if (k >= UIKey::Num1 && k <= UIKey::Num9)
         return static_cast<SDL_Scancode>(SDL_SCANCODE_1 + (static_cast<int>(k) - static_cast<int>(UIKey::Num1)));
+    // Function keys F1..F12 are contiguous in both enums.
+    if (k >= UIKey::F1 && k <= UIKey::F12)
+        return static_cast<SDL_Scancode>(SDL_SCANCODE_F1 + (static_cast<int>(k) - static_cast<int>(UIKey::F1)));
     switch (k) {
         case UIKey::Space:       return SDL_SCANCODE_SPACE;
         case UIKey::Enter:       return SDL_SCANCODE_RETURN;

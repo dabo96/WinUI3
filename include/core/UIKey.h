@@ -27,10 +27,44 @@ enum class UIKey : uint32_t {
   // Navigation
   Left, Right, Up, Down, Home, End, PageUp, PageDown,
 
+  // Function keys (contiguous F1..F12)
+  F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+
   // Modifiers
   LeftCtrl, RightCtrl, LeftShift, RightShift, LeftAlt, RightAlt,
 
   Count
 };
+
+// Human-readable name for a key (SDL-free; used by ShortcutRegistry text). Kept
+// inline and dependency-free so it works in any translation unit.
+inline const char* UIKeyName(UIKey k) {
+  static const char* kLetters[] = {"A","B","C","D","E","F","G","H","I","J","K","L","M",
+                                    "N","O","P","Q","R","S","T","U","V","W","X","Y","Z"};
+  static const char* kDigits[]  = {"0","1","2","3","4","5","6","7","8","9"};
+  static const char* kFns[]     = {"F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12"};
+  if (k >= UIKey::A && k <= UIKey::Z)       return kLetters[(int)k - (int)UIKey::A];
+  if (k >= UIKey::Num0 && k <= UIKey::Num9) return kDigits[(int)k - (int)UIKey::Num0];
+  if (k >= UIKey::F1 && k <= UIKey::F12)    return kFns[(int)k - (int)UIKey::F1];
+  switch (k) {
+    case UIKey::Space:       return "Space";
+    case UIKey::Enter:       return "Enter";
+    case UIKey::KeypadEnter: return "Enter";
+    case UIKey::Escape:      return "Esc";
+    case UIKey::Tab:         return "Tab";
+    case UIKey::Backspace:   return "Backspace";
+    case UIKey::Delete:      return "Delete";
+    case UIKey::Insert:      return "Insert";
+    case UIKey::Left:        return "Left";
+    case UIKey::Right:       return "Right";
+    case UIKey::Up:          return "Up";
+    case UIKey::Down:        return "Down";
+    case UIKey::Home:        return "Home";
+    case UIKey::End:         return "End";
+    case UIKey::PageUp:      return "PageUp";
+    case UIKey::PageDown:    return "PageDown";
+    default:                 return "???";
+  }
+}
 
 } // namespace FluentUI

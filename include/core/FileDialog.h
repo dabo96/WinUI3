@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SDL3/SDL.h>
+#include "core/UIEvent.h"  // WindowHandle (opaque; no SDL in the public header)
 #include <string>
 #include <vector>
 #include <functional>
@@ -24,20 +24,20 @@ using FileDialogCallback = std::function<void(const std::vector<std::string>& pa
 /// @param defaultPath  Initial directory or file path (empty = OS default).
 /// @param allowMany    Allow selecting multiple files.
 /// @param callback     Called with results (may be called from another thread).
-void ShowOpenFileDialog(SDL_Window* window,
+void ShowOpenFileDialog(WindowHandle window,
                         const std::vector<FileFilter>& filters,
                         const std::string& defaultPath,
                         bool allowMany,
                         FileDialogCallback callback);
 
 /// Show a native "Save File" dialog (non-blocking).
-void ShowSaveFileDialog(SDL_Window* window,
+void ShowSaveFileDialog(WindowHandle window,
                         const std::vector<FileFilter>& filters,
                         const std::string& defaultPath,
                         FileDialogCallback callback);
 
 /// Show a native "Open Folder" dialog (non-blocking).
-void ShowOpenFolderDialog(SDL_Window* window,
+void ShowOpenFolderDialog(WindowHandle window,
                           const std::string& defaultPath,
                           bool allowMany,
                           FileDialogCallback callback);

@@ -7,7 +7,7 @@ using namespace FluentUI;
 // Set to 1 to run the widget gallery (App) on the standalone Vulkan backend.
 // Set to 0 to run the engine-editor example (EngineEditor) via FluentApp — now on
 // Vulkan, with multi-window validation (menu Window → "Nueva ventana (compartida)").
-#define RUN_WIDGET_GALLERY_VULKAN 0
+#define RUN_WIDGET_GALLERY_VULKAN 1
 
 #if RUN_WIDGET_GALLERY_VULKAN
 int main(int, char**) {
@@ -29,20 +29,20 @@ int main(int, char**) {
     EditorState editorState;
 
     // Keyboard shortcuts
-    app.shortcuts.Register("file.save", {SDL_SCANCODE_S, MOD_CTRL}, [&]{
+    app.shortcuts.Register("file.save", {UIKey::S, MOD_CTRL}, [&]{
         app.undoStack.Execute({"Save Scene", []{}, []{}});
         editorState.consoleMessages.push_back({ConsoleMessage::Info, "Scene saved (Ctrl+S)", editorState.playTime});
     });
 
-    app.shortcuts.Register("edit.undo", {SDL_SCANCODE_Z, MOD_CTRL}, [&]{
+    app.shortcuts.Register("edit.undo", {UIKey::Z, MOD_CTRL}, [&]{
         if (app.undoStack.CanUndo()) app.undoStack.Undo();
     });
 
-    app.shortcuts.Register("edit.redo", {SDL_SCANCODE_Y, MOD_CTRL}, [&]{
+    app.shortcuts.Register("edit.redo", {UIKey::Y, MOD_CTRL}, [&]{
         if (app.undoStack.CanRedo()) app.undoStack.Redo();
     });
 
-    app.shortcuts.Register("edit.delete", {SDL_SCANCODE_DELETE, 0}, [&]{
+    app.shortcuts.Register("edit.delete", {UIKey::Delete, 0}, [&]{
         if (editorState.selectedObject >= 0 && editorState.selectedObject < (int)editorState.objects.size()) {
             std::string name = editorState.objects[editorState.selectedObject].name;
             editorState.objects.erase(editorState.objects.begin() + editorState.selectedObject);
@@ -51,11 +51,11 @@ int main(int, char**) {
         }
     });
 
-    app.shortcuts.Register("debug.overlay", {SDL_SCANCODE_F3, 0}, [&]{
+    app.shortcuts.Register("debug.overlay", {UIKey::F3, 0}, [&]{
         app.showDebugOverlay(!app.isDebugOverlayVisible());
     });
 
-    app.shortcuts.Register("view.play", {SDL_SCANCODE_F5, 0}, [&]{
+    app.shortcuts.Register("view.play", {UIKey::F5, 0}, [&]{
         editorState.isPlaying = !editorState.isPlaying;
     });
 
