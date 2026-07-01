@@ -56,7 +56,7 @@ static bool BeginListViewSingleImpl(const std::string &id, const Vec2 &size,
       return node;
   });
 
-  auto &state = ctx->listViewStates[listViewId];
+  auto &state = ctx->GetListState(listViewId);
 
   if (!state.initialized) {
     state.selectedItem = selectedItem ? *selectedItem : -1;
@@ -252,7 +252,7 @@ static bool BeginListViewMultiImpl(const std::string &id, const Vec2 &size,
       return node;
   });
 
-  auto &state = ctx->listViewStates[listViewId];
+  auto &state = ctx->GetListState(listViewId);
 
   if (!state.initialized) {
     state.selectedItem = -1;
@@ -469,7 +469,7 @@ bool BeginTreeView(const std::string &id, const Vec2 &size, std::optional<Vec2> 
   );
   ctx->widgetTree.PushParent(treeNode);
 
-  auto &state = ctx->treeViewStates[treeViewId];
+  auto &state = ctx->GetTreeState(treeViewId);
   ctx->currentTreeViewId = treeViewId;
   // brief 21: scope TreeNodes by the tree id (paired with widgetTree push/pop).
   PushID(id.c_str());
@@ -560,8 +560,8 @@ bool BeginTreeView(const std::string &id, const Vec2 &size, std::optional<Vec2> 
   ctx->lastItemPos = ctx->cursorPos;
   ctx->treeViewDepth = 0;
 
-  // Phase C5: reset DFS visit order for this frame
-  ctx->treeVisitOrder[treeViewId].clear();
+  // Phase C5 / brief 22 (fase 7): reset DFS visit order for this frame
+  ctx->GetWidgetState(treeViewId).treeVisitOrder.clear();
 
   // Iniciar layout vertical para apilar los nodos correctamente
   Vec2 contentSize(treeViewSize.x - innerPadding.x * 2.0f,
@@ -592,9 +592,11 @@ void EndTreeView() {
 
   // Medir y guardar la altura real del contenido (para scroll del próximo frame)
   if (ctx->currentTreeViewId != 0) {
-    auto it = ctx->treeViewStates.find(ctx->currentTreeViewId);
-    if (it != ctx->treeViewStates.end()) {
-      auto &state = it->second;
+    // brief 22 (fase 7): prueba de existencia sin crear entrada — mira widgetStates
+    // y el unique_ptr ws.tree directamente (GetTreeState crearía el sub-estado).
+    auto wsIt = ctx->widgetStates.find(ctx->currentTreeViewId);
+    if (wsIt != ctx->widgetStates.end() && wsIt->second.tree) {
+      auto &state = *wsIt->second.tree;
       Vec2 innerPadding = ctx->style.panel.padding * 0.5f;
       // contentEndCursor.y está offset por -scrollOffset, sumar de vuelta para obtener la altura real
       float realContentHeight = (contentEndCursor.y + state.scrollOffset) - (state.viewPos.y) + innerPadding.y;
@@ -644,11 +646,12 @@ bool TreeNode(const std::string &id, const std::string &label, uint32_t iconCode
   if (!ctx || ctx->currentTreeViewId == 0)
     return false;
 
-  auto it = ctx->treeViewStates.find(ctx->currentTreeViewId);
-  if (it == ctx->treeViewStates.end())
+  // brief 22 (fase 7): prueba de existencia sin crear entrada (ver EndTreeView).
+  auto wsIt = ctx->widgetStates.find(ctx->currentTreeViewId);
+  if (wsIt == ctx->widgetStates.end() || !wsIt->second.tree)
     return false;
 
-  const auto &state = it->second;
+  const auto &state = *wsIt->second.tree;
   const PanelStyle &panelStyle = ctx->style.panel;
   const TextStyle &textStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
 
@@ -795,7 +798,7 @@ bool TreeNodeMulti(const std::string &id, const std::string &label, uint32_t ico
 
   // Record visit order for range select
   uint32_t treeId = ctx->currentTreeViewId;
-  ctx->treeVisitOrder[treeId].push_back(nodeId);
+  ctx->GetWidgetState(treeId).treeVisitOrder.push_back(nodeId);
 
   bool isInSelection = std::find(selectedIds->begin(), selectedIds->end(), nodeId) != selectedIds->end();
   bool tempSelected = isInSelection;
@@ -809,9 +812,11 @@ bool TreeNodeMulti(const std::string &id, const std::string &label, uint32_t ico
 
   if (shiftHeld) {
     // Range select from anchor in DFS order
-    auto anchorIt = ctx->treeLastSelectedId.find(treeId);
-    int anchor = (anchorIt != ctx->treeLastSelectedId.end()) ? anchorIt->second : nodeId;
-    const auto& order = ctx->treeVisitOrder[treeId];
+    // brief 22 (fase 7): treeLastSelectedSet==false emula la ausencia en el mapa
+    // original (find()==end() -> ancla = nodeId actual).
+    auto& tws = ctx->GetWidgetState(treeId);
+    int anchor = tws.treeLastSelectedSet ? tws.treeLastSelectedId : nodeId;
+    const auto& order = tws.treeVisitOrder;
     int aIdx = -1, bIdx = -1;
     for (int i = 0; i < static_cast<int>(order.size()); ++i) {
       if (order[i] == anchor) aIdx = i;
@@ -832,11 +837,11 @@ bool TreeNodeMulti(const std::string &id, const std::string &label, uint32_t ico
     } else {
       selectedIds->push_back(nodeId);
     }
-    ctx->treeLastSelectedId[treeId] = nodeId;
+    { auto& tws = ctx->GetWidgetState(treeId); tws.treeLastSelectedId = nodeId; tws.treeLastSelectedSet = true; }
   } else {
     // Replace selection
     selectedIds->assign({nodeId});
-    ctx->treeLastSelectedId[treeId] = nodeId;
+    { auto& tws = ctx->GetWidgetState(treeId); tws.treeLastSelectedId = nodeId; tws.treeLastSelectedSet = true; }
   }
   return true;
 }
@@ -872,7 +877,7 @@ bool BeginTable(const std::string& id, std::vector<TableColumn>& columns,
       return node;
   });
 
-  auto &state = ctx->tableStates[tableId];
+  auto &state = ctx->GetTableState(tableId);
   if (!state.initialized) {
     state.initialized = true;
     if (externalState) {
@@ -1407,7 +1412,7 @@ void EndTable() {
   }
 
   // Draw vertical scrollbar if needed
-  auto &state = ctx->tableStates[frame.id];
+  auto &state = ctx->GetTableState(frame.id);
   // Phase C7: persist anchor row id back to per-table state
   state.lastSelectedRow = frame.lastSelectedRow;
   // Phase C7: use the dataAreaHeight that already excludes h-scrollbar space.
@@ -1443,13 +1448,11 @@ void EndTable() {
   ctx->renderer.DrawRect(frame.position, frame.size, panelStyle.borderColor,
                          panelStyle.cornerRadius);
 
-  // Phase C7: sync horizontal scroll offset back to external state.
-  if (auto it = ctx->tableStates.find(frame.id); it != ctx->tableStates.end()) {
-    // (state was retrieved above; nothing extra needed here — external sync
-    //  happens implicitly the next frame because BeginTable copies from state
-    //  if not initialized; for already-initialized tables we leave external
-    //  scrollOffsetX read-only from user perspective.)
-  }
+  // Phase C7 / brief 22 (fase 7): sync horizontal scroll offset back to external
+  // state. `state` (arriba, GetTableState) es la fuente; no hace falta más aquí —
+  // el sync externo ocurre implícitamente el próximo frame porque BeginTable copia
+  // desde `state` si no está inicializado; para tablas ya inicializadas dejamos el
+  // scrollOffsetX externo de solo lectura desde la perspectiva del usuario.
 
   // Restore cursor state and advance
   ctx->cursorPos = frame.savedCursor;

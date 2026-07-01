@@ -641,7 +641,7 @@ struct UIContext {
     std::vector<int> selectedItems;
   };
 
-  std::unordered_map<uint32_t, ListViewState> listViewStates;
+  // brief 22 (fase 7): listViewStates migrado a widgetStates (ws.list) — GetListState(id).
 
   struct TreeViewState {
     Vec2 itemSize{0.0f, 24.0f};
@@ -662,12 +662,14 @@ struct UIContext {
     float dragStartScroll = 0.0f;
   };
 
-  std::unordered_map<uint32_t, TreeViewState> treeViewStates;
+  // brief 22 (fase 7): treeViewStates migrado a widgetStates (ws.tree) — GetTreeState(id).
   std::unordered_map<std::string, bool> treeNodeStates; // Map id -> isOpen
+  // brief 22 (fase 7): treeNodeStates SE QUEDA — su clave es std::string
+  // (TREENODE:<treeId>:<id>), no uint32_t, así que no cabe en WidgetState.
 
-  // Phase C5: per-tree visit order and selection anchor for range-select.
-  std::unordered_map<uint32_t, std::vector<int>> treeVisitOrder;
-  std::unordered_map<uint32_t, int> treeLastSelectedId;
+  // Phase C5 / brief 22 (fase 7): el orden de visita DFS y el ancla de selección
+  // de rango viven ahora en WidgetState.treeVisitOrder / .treeLastSelectedId
+  // (ver GetWidgetState).
 
   // DragFloat / DragInt widget state
   std::unordered_map<uint32_t, DragWidgetState> dragStates;
@@ -899,7 +901,7 @@ struct UIContext {
   // floatAnimations, rippleEffects, springColors, springFloats, flipStates) se
   // fundieron en widgetStates, que tiene su propio GC por lastFrameSeen (abajo en
   // NewFrame), así que salen de la rotación amortizada.
-  static constexpr uint32_t GC_MAP_COUNT = 3;      // Total maps to GC (brief 22 fase 3: 10->6; fase 5: 6->3)
+  static constexpr uint32_t GC_MAP_COUNT = 1;      // Total maps to GC (brief 22 fase 3: 10->6; fase 5: 6->3; fase 7: 3->1)
   static constexpr uint32_t GC_ROTATE_INTERVAL = 10; // GC one map every N frames
   uint32_t gcMapIndex = 0;                           // Current map being GC'd
 
@@ -1019,7 +1021,7 @@ struct UIContext {
   std::vector<size_t> menuItemStartIndexStack;
 
   // Table/DataGrid state
-  std::unordered_map<uint32_t, TableInternalState> tableStates;
+  // brief 22 (fase 7): tableStates migrado a widgetStates (ws.table) — GetTableState(id).
   std::vector<TableFrameContext> tableStack;
 
   // ─── brief 22: estado unificado por-widget (FASE 1, aditiva) ────────────────
@@ -1056,6 +1058,14 @@ struct UIContext {
     bool comboChanged = false;
     bool prevActive = false;
     bool editedSinceActivate = false;
+    // brief 22 (fase 7): TreeView range-select. Antes eran los mapas paralelos
+    // treeVisitOrder[id] (orden DFS de nodos visitados este frame) y
+    // treeLastSelectedId[id] (ancla de rango). treeLastSelectedSet emula la
+    // prueba de existencia .find() del mapa original: false == "sin ancla aún"
+    // (el default 0 de treeLastSelectedId no basta porque un nodeId puede ser 0).
+    std::vector<int> treeVisitOrder;
+    int treeLastSelectedId = 0;
+    bool treeLastSelectedSet = false;
     // animaciones inline (fase 2): replican AnimSlot(id, 0..3)
     AnimatedValue<Color> colorAnim[4];
     AnimatedValue<float> floatAnim[4];

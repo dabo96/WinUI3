@@ -860,10 +860,11 @@ namespace FluentUI {
             // ws.scroll/ws.tabs, con GC propio por lastFrameSeen); GC_MAP_COUNT 6->3
             // y los casos se renumeran contiguos 0..2 para que gcMapIndex %
             // GC_MAP_COUNT nunca caiga en un case inexistente.
+            // brief 22 (fase 7): listViewStates/treeViewStates/tableStates migraron a
+            // widgetStates (ws.list/ws.tree/ws.table, con GC propio por lastFrameSeen);
+            // GC_MAP_COUNT 3->1 y solo queda colorPickerStates en el case 0.
             switch (g_ctx->gcMapIndex) {
-                case 0:  gcMap(g_ctx->listViewStates); break;
-                case 1:  gcMap(g_ctx->treeViewStates); break;
-                case 2:  gcMap(g_ctx->colorPickerStates); break;
+                case 0:  gcMap(g_ctx->colorPickerStates); break;
             }
 
             g_ctx->gcMapIndex = (g_ctx->gcMapIndex + 1) % UIContext::GC_MAP_COUNT;
