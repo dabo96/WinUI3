@@ -14,7 +14,7 @@ namespace FluentUI {
 class InputState {
 public:
   // Update once per frame; `window` (opaque WindowHandle) is used to refresh the
-  // mouse position for the focused window. Implementation casts it to SDL_Window*.
+  // mouse position for the focused window. Implementation casts it to native window handle.
   void Update(WindowHandle window = nullptr);
   // Feed a platform-neutral event (brief 20). The SDL→UIEvent translation lives
   // in SDLPlatform (ProcessSDLEvent), so this core stays SDL-free.
@@ -26,7 +26,7 @@ public:
   bool IsKeyPressed(UIKey key) const;
   bool IsKeyReleased(UIKey key) const;
 
-  // brief 20 Part B: modifier state from tracked key state (no SDL_GetModState in
+  // brief 20 Part B: modifier state from tracked key state (no the OS modifier state in
   // widgets). Each is true if either left/right modifier is currently held.
   bool CtrlDown() const;
   bool ShiftDown() const;
@@ -75,9 +75,9 @@ public:
 
   // OS clipboard helpers (platform-centralized). UTF-8 in/out.
   // Brief 18.1: reusable by TextInput/SelectableText/PasswordBox/NumberBox.
-  void SetClipboardText(const std::string& utf8);  // SDL_SetClipboardText
-  std::string GetClipboardText();                   // SDL_GetClipboardText (frees with SDL_free)
-  bool HasClipboardText();                           // SDL_HasClipboardText
+  void SetClipboardText(const std::string& utf8);  // the OS clipboard write
+  std::string GetClipboardText();                   // the OS clipboard read (frees with the allocator)
+  bool HasClipboardText();                           // the OS clipboard query
 
 public:
   bool anyKeyPressed = false;

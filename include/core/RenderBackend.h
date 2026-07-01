@@ -136,7 +136,7 @@ public:
 
     // --- Initialization and Frame ---
     // The meaning of `existingContext` depends on the backend:
-    //   - OpenGL: an existing SDL_GLContext to reuse (null = create our own).
+    //   - OpenGL: an existing GL context to reuse (null = create our own).
     //   - Vulkan: a VulkanSharedContext* describing the engine's device/render
     //             pass (null = standalone; creates its own device/swapchain).
     virtual bool Init(void* windowHandle, void* existingContext = nullptr) = 0;

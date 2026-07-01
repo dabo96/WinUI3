@@ -345,6 +345,22 @@ bool TranslateSDLEvent(const SDL_Event& e, UIEvent& out)
     case SDL_EVENT_GAMEPAD_ADDED:
         SDL_OpenGamepad(e.gdevice.which); // side effect only — produces no UIEvent
         return false;
+    // ── Window events (routed by FluentApp; size is queried by the handler) ──
+    case SDL_EVENT_WINDOW_RESIZED:
+        out.type = UIEventType::Resize;
+        out.width = e.window.data1; out.height = e.window.data2;
+        return true;
+    case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+    case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+    case SDL_EVENT_WINDOW_MOVED:
+        out.type = UIEventType::DpiChange;
+        return true;
+    case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+        out.type = UIEventType::WindowClose;
+        return true;
+    case SDL_EVENT_QUIT:
+        out.type = UIEventType::Quit;
+        return true;
     default:
         return false;
     }

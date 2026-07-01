@@ -25,10 +25,10 @@ struct SharedResourcePool;
 // ─── brief 13: regiones de hit-test de la TitleBar custom ─────────────────────
 // El widget TitleBar() (hilo de UI) publica aquí la zona arrastrable (caption) y
 // las exclusiones (caption buttons + contenido interactivo). El callback de
-// SDL_SetWindowHitTest registrado por FluentApp las lee — y ese callback puede
+// the platform hit-test registrado por FluentApp las lee — y ese callback puede
 // ejecutarse en el hilo de la cola de eventos del SO — de ahí el mutex. Las
 // coordenadas están en el espacio del viewport del renderer, que coincide con el
-// de SDL_GetWindowSize (= el de SDL_HitTest `area`), así que el callback no
+// de the window size (= el de the hit-test `area`), así que el callback no
 // necesita convertir DPI. `active` se reinicia cada frame en NewFrame().
 struct TitleBarHitRegions {
   std::mutex mutex;
@@ -164,7 +164,7 @@ struct DragWidgetState {
   float dragStartValue = 0.0f;
   float dragStartMouseX = 0.0f;
   std::string editText;
-  uint64_t lastClickTime = 0;  // For double-click detection (SDL_GetTicks)
+  uint64_t lastClickTime = 0;  // For double-click detection (the OS timer)
   // Phase B4: drag threshold — small movements after mouse-down don't change the value.
   // Set to true once total mouse movement exceeds the threshold; cleared on release.
   bool dragThresholdPassed = false;
@@ -295,7 +295,7 @@ struct UIContext {
   InputState input;
   Style style;
   WindowHandle window =
-      nullptr; // Ventana (handle opaco; cast a SDL_Window* en el .cpp de plataforma)
+      nullptr; // Ventana (handle opaco; cast a native window handle en el .cpp de plataforma)
 
   // brief 08: the render backend this context renders with (so multi-window code
   // can extract the shared GL context / Vulkan shared device from a parent ctx).
@@ -448,7 +448,7 @@ struct UIContext {
 
   // Per-TextInput multi-click tracking (double/triple-click word/line selection)
   struct TextClickInfo {
-    uint64_t lastClickTime = 0;  // SDL_GetTicks of last click
+    uint64_t lastClickTime = 0;  // the OS timer of last click
     Vec2 lastClickPos{0, 0};
     int clickCount = 0;          // 1 = single, 2 = double, 3 = triple
   };
@@ -879,7 +879,7 @@ struct UIContext {
   enum class CursorType { Arrow, IBeam, Hand, ResizeH, ResizeV, ResizeNESW, ResizeNWSE };
   CursorType desiredCursor = CursorType::Arrow;
   CursorType currentCursor = CursorType::Arrow;
-  void* systemCursors[7] = {}; // SDL_Cursor* (opaque; cast in Context.cpp)
+  void* systemCursors[7] = {}; // native cursor handle (opaque; cast in Context.cpp)
   bool cursorsInitialized = false;
 
   // Scroll consumed flag - reset each frame in NewFrame()
@@ -964,8 +964,8 @@ struct UIContext {
   std::function<void(const std::string&, Vec2)> onTextDropped;
 
   // brief 18.4: per-field IME ownership. The text field that currently holds the
-  // caret claims IME each frame so SDL_StartTextInput/StopTextInput and the
-  // candidate-window area (SDL_SetTextInputArea) follow focus instead of being
+  // caret claims IME each frame so OS text-input start/stop and the
+  // candidate-window area (the IME area) follow focus instead of being
   // globally on. 0 = no field owns IME. See EnsureTextInputFocus().
   uint32_t imeOwnerId = 0;
 
@@ -976,7 +976,7 @@ struct UIContext {
   bool IsRTL() const { return layoutDirection == LayoutDirection::RTL; }
 
   // brief 13: zonas de hit-test publicadas por TitleBar() y leídas por el callback
-  // de SDL_SetWindowHitTest (ver TitleBarHitRegions arriba). active se limpia en
+  // de the platform hit-test (ver TitleBarHitRegions arriba). active se limpia en
   // NewFrame y lo re-fija el widget cada frame.
   TitleBarHitRegions titleBarHit;
 
@@ -1021,7 +1021,7 @@ struct UIContext {
 // existing code is unaffected. Call SetPreferredBackend(RenderBackendType::Vulkan)
 // before CreateContext()/CreateStandaloneContext() to use the Vulkan backend; in
 // that case the `existingContext` argument is a VulkanSharedContext* (or nullptr
-// for standalone) instead of an SDL_GLContext.
+// for standalone) instead of an GL context.
 enum class RenderBackendType { OpenGL, Vulkan };
 void SetPreferredBackend(RenderBackendType type);
 RenderBackendType GetPreferredBackend();
@@ -1030,7 +1030,7 @@ UIContext *CreateContext(WindowHandle window, void* existingGLContext = nullptr)
 // Convenience overload: pick the backend and create the context in one call, so
 // the backend choice and its matching `existingContext` handle can't get out of
 // sync. For Vulkan pass a VulkanSharedContext* (shared mode) or nullptr
-// (standalone); for OpenGL pass an SDL_GLContext or nullptr.
+// (standalone); for OpenGL pass an GL context or nullptr.
 UIContext *CreateContext(WindowHandle window, RenderBackendType backend, void* existingContext = nullptr);
 UIContext *GetContext();
 void DestroyContext();
@@ -1054,7 +1054,7 @@ void SetCurrentContext(UIContext* ctx);
 UIContext* CreateStandaloneContext(WindowHandle window, RenderBackend** outBackend = nullptr);
 // brief 08: create a secondary-window context that SHARES the GPU device and
 // resource pool of `shareFrom` (the main context). In OpenGL it reuses the same
-// SDL_GLContext; in Vulkan it creates only a surface/swapchain over shareFrom's
+// GL context; in Vulkan it creates only a surface/swapchain over shareFrom's
 // device. The font atlas/MSDF/textures are not duplicated. `shareFrom` must be a
 // live context created by CreateContext(). Falls back to an isolated context if
 // shareFrom is null or its backend can't be shared.

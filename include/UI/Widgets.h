@@ -762,7 +762,7 @@ void SelectableText(const std::string& id, const std::string& text,
                     std::optional<Vec2> pos = std::nullopt);
 
 /// HyperlinkButton: accent-colored text, underlined on hover, hand cursor. Click
-/// (or Enter when focused) opens @p url with the OS (SDL_OpenURL) when non-empty.
+/// (or Enter when focused) opens @p url with the OS (the OS URL opener) when non-empty.
 /// Usable inline beside Label in a horizontal row. @param fontSize 0 = Body.
 /// @return true when activated this frame.
 bool HyperlinkButton(const std::string& text, const std::string& url = "",

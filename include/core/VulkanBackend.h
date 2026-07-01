@@ -114,7 +114,7 @@ private:
     // brief 08 Part B: secondary window on a shared device — owns its surface/
     // swapchain/render pass/sync and presents, but NOT the device/instance.
     bool ownSwapchainOnSharedDevice = false;
-    void* window = nullptr;  // SDL_Window* (opaque; cast in the .cpp)
+    void* window = nullptr;  // native window handle (opaque; cast in the .cpp)
 
     VkInstance       instance       = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;

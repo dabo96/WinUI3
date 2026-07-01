@@ -19,7 +19,7 @@ public:
     void Present() override;
     void SetViewport(int width, int height) override;
 
-    // brief 08 Part A: expose the GL context (SDL_GLContext, as an opaque void*)
+    // brief 08 Part A: expose the GL context (GL context, as an opaque void*)
     // so a secondary window's backend can reuse the SAME context (shared GL-side).
     void* GetGLContext() const { return glContext; }
 
@@ -70,8 +70,8 @@ public:
     Color ReadPixel(int x, int y) override;
 
 private:
-    void* window = nullptr;     // SDL_Window* (opaque; cast in the .cpp)
-    void* glContext = nullptr;  // SDL_GLContext (opaque; cast in the .cpp)
+    void* window = nullptr;     // native window handle (opaque; cast in the .cpp)
+    void* glContext = nullptr;  // GL context (opaque; cast in the .cpp)
     bool ownsGLContext = true;  // false when using an external context
     // brief 08 Part A: true when this backend renders a secondary OS-window that
     // shares the main GL context. Distinguishes "embedded in an engine context"

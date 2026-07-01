@@ -6,7 +6,7 @@
 namespace FluentUI {
 
 // Opaque native window handle. The core never dereferences it; only the
-// PlatformBackend implementation knows its real type (SDL_Window*, HWND, …).
+// PlatformBackend implementation knows its real type (native window handle, HWND, …).
 using WindowHandle = void*;
 
 // Platform-neutral event stream (brief 20, Part A/B). A PlatformBackend polls
@@ -24,6 +24,7 @@ enum class UIEventType {
   TextEditing,  // IME composition (preedit)
   Resize,
   DpiChange,
+  WindowClose, // OS close request / custom titlebar close for a window
   // Drag-drop phases (brief 18.7). text carries the payload (file path / text),
   // x/y the drop position in window coords.
   DropBegin,

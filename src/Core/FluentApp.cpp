@@ -1,7 +1,7 @@
 #include <SDL3/SDL.h>
 #include "core/FluentApp.h"
 #include "core/Context.h"
-#include "core/SDLPlatform.h" // ProcessSDLEvent (SDL→UIEvent seam, brief 20)
+#include "core/SDLPlatform.h" // TranslateSDLEvent (SDL→UIEvent seam, brief 20)
 #include "core/DockSystem.h"
 #include "core/LayoutSerializer.h"
 #include "core/OpenGLBackend.h"
@@ -196,26 +196,24 @@ void AppWindow::root(std::function<void(UIBuilder&)> buildFn) {
     rootBuilder_ = std::move(buildFn);
 }
 
-void AppWindow::routeEvent(const SDL_Event& e) {
+void AppWindow::routeEvent(const UIEvent& e) {
     if (!ctx_) return;
 
-    if (e.type == SDL_EVENT_WINDOW_RESIZED) {
+    if (e.type == UIEventType::Resize) {
         int w, h;
         SDL_GetWindowSize(asWin(window_), &w, &h);
         ctx_->renderer.SetViewport(w, h);
         // Update DPI for this window
         updateDPIScale();
-    } else if (e.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED ||
-               e.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED ||
-               e.type == SDL_EVENT_WINDOW_MOVED) {
+    } else if (e.type == UIEventType::DpiChange) {
         // brief 18.2: window moved/crossed to a different monitor or its display
         // scale changed → recompute the per-monitor DPI for THIS window. MSDF text
         // re-scales without re-rasterizing; immediate-mode re-layouts next frame.
         updateDPIScale();
-    } else if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+    } else if (e.type == UIEventType::WindowClose) {
         open_ = false;
     } else {
-        ProcessSDLEvent(ctx_->input, e);
+        ctx_->input.ProcessEvent(e);
     }
 }
 
@@ -463,7 +461,9 @@ void FluentApp::root(std::function<void(UIBuilder&)> buildFn) {
 }
 
 // Helper: extract SDL window ID from any event type
-SDL_WindowID FluentApp::getEventWindowID(const SDL_Event& e) {
+// brief 20 (F-c2): file-local (no longer a FluentApp member) — extracts the target
+// window id from a raw SDL event so the loop can route it. SDL stays in the .cpp.
+static SDL_WindowID getEventWindowID(const SDL_Event& e) {
     switch (e.type) {
         case SDL_EVENT_WINDOW_RESIZED:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -548,33 +548,35 @@ void FluentApp::run() {
 
             SDL_WindowID eventWinID = getEventWindowID(e);
 
+            // brief 20 (F-c2): translate to a neutral UIEvent; routing stays here in
+            // the SDL driver (by window id), but handlers speak UIEvent.
+            UIEvent ui;
+            if (!TranslateSDLEvent(e, ui)) continue; // untranslated SDL event → skip
+
             if (eventWinID == mainWindowID || eventWinID == 0) {
                 // Main window or global event
-                if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+                if (ui.type == UIEventType::WindowClose) {
                     // brief 13: custom TitleBar close button posts this for the main
                     // window; the OS X button (non-borderless) sends it too.
                     running_ = false;
                     break;
-                } else if (e.type == SDL_EVENT_WINDOW_RESIZED) {
+                } else if (ui.type == UIEventType::Resize) {
                     int w, h;
                     SDL_GetWindowSize(asWin(window_), &w, &h);
                     ctx_->renderer.SetViewport(w, h);
                     if (enableDPI_) updateDPIScale();
-                } else if (e.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED ||
-                           e.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED) {
-                    if (enableDPI_) updateDPIScale();
-                } else if (e.type == SDL_EVENT_WINDOW_MOVED) {
-                    // brief 18.2: moved — may have crossed to a monitor with a different DPI
+                } else if (ui.type == UIEventType::DpiChange) {
+                    // brief 18.2: display scale changed / moved to another monitor.
                     if (enableDPI_) updateDPIScale();
                 } else {
-                    ProcessSDLEvent(ctx_->input, e);
+                    ctx_->input.ProcessEvent(ui);
                 }
             } else {
                 // Route to the correct secondary window
                 for (auto& win : secondaryWindows_) {
                     if (win->isOpen() && win->window() &&
                         SDL_GetWindowID(asWin(win->window())) == eventWinID) {
-                        win->routeEvent(e);
+                        win->routeEvent(ui);
                         break;
                     }
                 }
@@ -717,21 +719,18 @@ float FluentApp::computeDelta() {
 
 // --- External-window integration ---
 
-void FluentApp::processEvent(const SDL_Event& e) {
+void FluentApp::processEvent(const UIEvent& e) {
     if (!ctx_ || !window_) return;
 
-    if (e.type == SDL_EVENT_WINDOW_RESIZED) {
+    if (e.type == UIEventType::Resize) {
         int w, h;
         SDL_GetWindowSize(asWin(window_), &w, &h);
         ctx_->renderer.SetViewport(w, h);
         if (enableDPI_) updateDPIScale();
-    } else if (e.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED ||
-               e.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED) {
-        if (enableDPI_) updateDPIScale();
-    } else if (e.type == SDL_EVENT_WINDOW_MOVED) {
+    } else if (e.type == UIEventType::DpiChange) {
         if (enableDPI_) updateDPIScale();
     } else {
-        ProcessSDLEvent(ctx_->input, e);
+        ctx_->input.ProcessEvent(e);
     }
 }
 
