@@ -445,17 +445,17 @@ struct UIContext {
   Vec2 openMenuDropdownSize;
   // brief 22 (fase 3): estados float/int/string primitivos fundidos en
   // WidgetState.floatVal/intVal/stringVal (raw widget id).
-  std::unordered_map<uint32_t, size_t> caretPositions;
-  std::unordered_map<uint32_t, size_t> selectionAnchors; // Selection anchor (start of selection)
-  std::unordered_map<uint32_t, float> textScrollOffsets;
+  // brief 22 (fase 4): caretPositions/selectionAnchors/textScrollOffsets fundidos
+  // en WidgetState.text->{caret,anchor,scrollOffset} (ver GetTextState).
 
   // Per-TextInput multi-click tracking (double/triple-click word/line selection)
+  // brief 22 (fase 4): la instancia por-widget vive en TextEditState::clickInfo;
+  // el struct se conserva aquí porque TextEditState lo referencia por valor.
   struct TextClickInfo {
     uint64_t lastClickTime = 0;  // the OS timer of last click
     Vec2 lastClickPos{0, 0};
     int clickCount = 0;          // 1 = single, 2 = double, 3 = triple
   };
-  std::unordered_map<uint32_t, TextClickInfo> textClickInfo;
 
   // Pending callback for the next TextInput call (consumed once).
   // Use std::any-like opaque pointer to avoid pulling Widgets.h here.
@@ -485,7 +485,8 @@ struct UIContext {
       redoStack.clear();
     }
   };
-  std::unordered_map<uint32_t, TextUndoState> textUndoStates;
+  // brief 22 (fase 4): la pila undo/redo por-widget vive en TextEditState::undo;
+  // el struct se conserva aquí porque TextEditState lo referencia por valor.
 
   struct PanelState {
     Vec2 position{0.0f, 0.0f};

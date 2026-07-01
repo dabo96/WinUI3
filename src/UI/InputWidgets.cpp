@@ -732,18 +732,23 @@ bool TextInput(const std::string &label, std::string *value, float width,
   // Asegurar que textPtr apunta al valor correcto
   std::string &textRef = *textPtr;
 
-  auto caretIt = ctx->caretPositions.try_emplace(id, textRef.size());
-  size_t &caret = caretIt.first->second;
+  // brief 22 (fase 4): caret/scroll/anchor fundidos en TextEditState. El
+  // try_emplace original inicializaba caret=textRef.size() SOLO en el primer
+  // frame; se replica detectando si el sub-struct de texto aún no existe.
+  bool firstTextFrame = ctx->GetWidgetState(id).text == nullptr;
+  auto &ts = ctx->GetTextState(id);
+  if (firstTextFrame) ts.caret = textRef.size();
+  size_t &caret = ts.caret;
   caret = std::min(caret, textRef.size());
-  float &scroll = ctx->textScrollOffsets[id];
+  float &scroll = ts.scrollOffset;
 
   // Vertical scroll offset for multiline (stored in WidgetState.floatVal at offset key)
   uint32_t mlScrollKey = id ^ 0xA5A5A5A5u; // Distinct key for multiline vertical scroll
   float &mlScroll = ctx->GetWidgetState(mlScrollKey).floatVal; // brief 22 (fase 3)
 
-  // Selection anchor (SIZE_MAX = no selection)
-  auto anchorIt = ctx->selectionAnchors.try_emplace(id, SIZE_MAX);
-  size_t &selAnchor = anchorIt.first->second;
+  // Selection anchor (SIZE_MAX = no selection). Default de TextEditState::anchor
+  // ya es SIZE_MAX, idéntico al try_emplace(id, SIZE_MAX) original.
+  size_t &selAnchor = ts.anchor;
 
   // Helper lambdas for selection
   auto HasSelection = [&]() { return selAnchor != SIZE_MAX && selAnchor != caret; };
@@ -799,7 +804,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
       }
 
       // Multi-click detection
-      auto &clickInfo = ctx->textClickInfo[id];
+      auto &clickInfo = ts.clickInfo; // brief 22 (fase 4)
       uint64_t now = SDL_GetTicks();
       const uint64_t MULTICLICK_MS = 350;
       const float MULTICLICK_DIST = 4.0f;
@@ -995,7 +1000,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
     }
     // Ctrl+Z: Undo
     else if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::Z) && !shiftHeld) {
-      auto& undoState = ctx->textUndoStates[id];
+      auto& undoState = ts.undo; // brief 22 (fase 4)
       if (!undoState.undoStack.empty()) {
         // Save current state to redo stack
         undoState.redoStack.push_back({textRef, caret, ctx->frame});
@@ -1010,7 +1015,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
     // Ctrl+Y or Ctrl+Shift+Z: Redo
     else if ((ctrlHeld && ctx->input.IsKeyPressed(UIKey::Y)) ||
              (ctrlHeld && shiftHeld && ctx->input.IsKeyPressed(UIKey::Z))) {
-      auto& undoState = ctx->textUndoStates[id];
+      auto& undoState = ts.undo; // brief 22 (fase 4)
       if (!undoState.redoStack.empty()) {
         undoState.undoStack.push_back({textRef, caret, ctx->frame});
         auto& entry = undoState.redoStack.back();
@@ -1204,7 +1209,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
 
   // Push pre-edit state to undo stack when text actually changed
   if (valueChanged && preEditText != textRef) {
-    ctx->textUndoStates[id].PushUndo(preEditText, preEditCaret, ctx->frame);
+    ts.undo.PushUndo(preEditText, preEditCaret, ctx->frame); // brief 22 (fase 4)
   }
 
   // Invoke valueChanged callback if text changed
@@ -1626,9 +1631,12 @@ bool DragFloat(const std::string& label, float* value, float speed,
       ctx->activeWidgetId = id;
       ctx->activeWidgetType = ActiveWidgetType::TextInput;
 
-      // Handle text input
-      auto caretIt = ctx->caretPositions.try_emplace(id, editStr.size());
-      size_t& caret = caretIt.first->second;
+      // Handle text input (brief 22 fase 4: caret en TextEditState; primer
+      // frame → caret al final, como el try_emplace original)
+      bool firstEditFrame = ctx->GetWidgetState(id).text == nullptr;
+      auto& tsEdit = ctx->GetTextState(id);
+      if (firstEditFrame) tsEdit.caret = editStr.size();
+      size_t& caret = tsEdit.caret;
       caret = std::min(caret, editStr.size());
 
       bool ctrlHeld = ctx->input.CtrlDown();
@@ -1680,7 +1688,7 @@ bool DragFloat(const std::string& label, float* value, float speed,
         std::snprintf(buf, sizeof(buf), format ? format : "%.2f", currentValue);
         state.editText = buf;
         // Place caret at end
-        ctx->caretPositions[id] = state.editText.size();
+        ctx->GetTextState(id).caret = state.editText.size(); // brief 22 (fase 4)
         ctx->activeWidgetId = id;
         ctx->activeWidgetType = ActiveWidgetType::TextInput;
       } else {
@@ -1784,9 +1792,10 @@ bool DragFloat(const std::string& label, float* value, float speed,
                  fieldPos.y + fieldSize.y * 0.5f - dragVisualCenterOffset);
     ctx->renderer.DrawText(textPos, state.editText, valueStyle.color, valueStyle.fontSize);
 
-    // Draw caret
-    auto caretIt = ctx->caretPositions.find(id);
-    size_t caretPos = (caretIt != ctx->caretPositions.end()) ? caretIt->second : state.editText.size();
+    // Draw caret (brief 22 fase 4: test de existencia SIN crear entrada)
+    auto wsIt = ctx->widgetStates.find(id);
+    size_t caretPos = (wsIt != ctx->widgetStates.end() && wsIt->second.text)
+                          ? wsIt->second.text->caret : state.editText.size();
     {
       float blinkAlpha = 0.5f + 0.5f * std::sin(ctx->frame * 0.1f);
       float caretX = MeasureTextCached(ctx, state.editText.substr(0, caretPos), valueStyle.fontSize).x;
@@ -1957,8 +1966,11 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
         ctx->activeWidgetId = id;
         ctx->activeWidgetType = ActiveWidgetType::TextInput;
 
-        auto caretIt = ctx->caretPositions.try_emplace(id, editStr.size());
-        size_t& caret = caretIt.first->second;
+        // brief 22 (fase 4): caret en TextEditState; primer frame → caret al final
+        bool firstEditFrame = ctx->GetWidgetState(id).text == nullptr;
+        auto& tsEdit = ctx->GetTextState(id);
+        if (firstEditFrame) tsEdit.caret = editStr.size();
+        size_t& caret = tsEdit.caret;
         caret = std::min(caret, editStr.size());
 
         bool ctrlHeld = ctx->input.CtrlDown();
@@ -1997,7 +2009,7 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
           char buf[64];
           std::snprintf(buf, sizeof(buf), format ? format : "%.2f", currentVal);
           state.editText = buf;
-          ctx->caretPositions[id] = state.editText.size();
+          ctx->GetTextState(id).caret = state.editText.size(); // brief 22 (fase 4)
           ctx->activeWidgetId = id;
           ctx->activeWidgetType = ActiveWidgetType::TextInput;
         } else {
@@ -2093,8 +2105,10 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
                    fieldPos.y + fieldSize.y * 0.5f - dragVisualCenterOffset);
       ctx->renderer.DrawText(textPos, state.editText, valStyle.color, valStyle.fontSize);
 
-      auto caretIt = ctx->caretPositions.find(id);
-      size_t caretPos = (caretIt != ctx->caretPositions.end()) ? caretIt->second : state.editText.size();
+      // brief 22 (fase 4): test de existencia SIN crear entrada
+      auto wsIt = ctx->widgetStates.find(id);
+      size_t caretPos = (wsIt != ctx->widgetStates.end() && wsIt->second.text)
+                            ? wsIt->second.text->caret : state.editText.size();
       {
         float blinkAlpha = 0.5f + 0.5f * std::sin(ctx->frame * 0.1f);
         float caretX = MeasureTextCached(ctx, state.editText.substr(0, caretPos), valStyle.fontSize).x;
@@ -3181,7 +3195,7 @@ void SelectableText(const std::string &id, const std::string &text,
       ctx->focusedWidgetId = wid;
       focused = true;
       size_t hit = hitTest(mousePos);
-      auto &ci = ctx->textClickInfo[wid];
+      auto &ci = ctx->GetTextState(wid).clickInfo; // brief 22 (fase 4)
       uint64_t now = SDL_GetTicks();
       const uint64_t MS = 350;
       const float DIST = 4.0f;
@@ -3329,11 +3343,14 @@ bool PasswordBox(const std::string &id, std::string *value,
   }
   std::string &textRef = *textPtr;
 
-  auto caretIt = ctx->caretPositions.try_emplace(wid, textRef.size());
-  size_t &caret = caretIt.first->second;
+  // brief 22 (fase 4): caret/anchor en TextEditState. Primer frame → caret al
+  // final (try_emplace original); anchor default ya es SIZE_MAX.
+  bool firstTextFrame = ctx->GetWidgetState(wid).text == nullptr;
+  auto &tstate = ctx->GetTextState(wid);
+  if (firstTextFrame) tstate.caret = textRef.size();
+  size_t &caret = tstate.caret;
   caret = std::min(caret, textRef.size());
-  auto anchorIt = ctx->selectionAnchors.try_emplace(wid, SIZE_MAX);
-  size_t &selAnchor = anchorIt.first->second;
+  size_t &selAnchor = tstate.anchor;
   bool &reveal = ctx->GetWidgetState(AnimSlot(wid, 3)).boolVal; // brief 22 (fase 3)
 
   auto HasSelection = [&]() { return selAnchor != SIZE_MAX && selAnchor != caret; };
