@@ -3397,9 +3397,10 @@ bool PasswordBox(const std::string &id, std::string *value,
     return static_cast<size_t>(p - textRef.data());
   };
   auto totalCp = [&]() -> size_t { return byteToCp(textRef.size()); };
-  // Bugfix: U+2022 (•) NO está en el atlas MSDF → la ruta MSDF avanza pero no dibuja
-  // (glifo invisible). Usamos '*' (presente en el atlas) como máscara estándar.
-  const std::string BULLET = "*";
+  // Máscara: el • (U+2022) no está en el atlas MSDF, así que NO se dibuja con DrawText
+  // — el draw pinta puntos con DrawCircle. Este BULLET solo alimenta la MEDICIÓN
+  // (displayStr/dispPrefix); su avance por carácter = GetGlyphAdvance(0x2022) = fs*0.3.
+  const std::string BULLET = "\xE2\x80\xA2"; // U+2022 (solo para medir)
   auto displayStr = [&]() -> std::string {
     if (reveal)
       return textRef;
@@ -3423,7 +3424,7 @@ bool PasswordBox(const std::string &id, std::string *value,
   auto hitToByte = [&](float localX) -> size_t {
     if (reveal)
       return FindCaretPosition(textRef, localX, ctx);
-    float bw = ctx->renderer.GetGlyphAdvance('*', fs); // debe coincidir con BULLET
+    float bw = ctx->renderer.GetGlyphAdvance(0x2022, fs); // debe coincidir con BULLET
     size_t k = bw > 0.0f ? static_cast<size_t>(std::max(0.0f, (localX + bw * 0.5f) / bw)) : 0;
     k = std::min(k, totalCp());
     return cpToByte(k);
@@ -3612,8 +3613,20 @@ bool PasswordBox(const std::string &id, std::string *value,
     Color ph = ts.color;
     ph.a *= 0.4f;
     ctx->renderer.DrawText(textPos, placeholder, ph, fs);
-  } else {
+  } else if (reveal) {
     ctx->renderer.DrawText(textPos, disp, ts.color, fs);
+  } else {
+    // Máscara: dibuja puntos reales con DrawCircle (el • no está en el atlas MSDF).
+    // El espaciado = GetGlyphAdvance(0x2022) (fs*0.3), el MISMO avance que ya asumen
+    // caret/selección/hit-test → las posiciones quedan sincronizadas sin tocar el layout.
+    float dotAdv = ctx->renderer.GetGlyphAdvance(0x2022, fs);
+    float r = fs * 0.11f;
+    float cy = textPos.y + fs * 0.5f;
+    size_t n = totalCp();
+    for (size_t i = 0; i < n; ++i) {
+      float cx = textPos.x + (static_cast<float>(i) + 0.5f) * dotAdv;
+      ctx->renderer.DrawCircle(Vec2(cx, cy), r, ts.color, true);
+    }
   }
   if (hasFocus && !HasSelection()) {
     float caretX = textPos.x + MeasureTextCached(ctx, dispPrefix(caret), fs).x;
