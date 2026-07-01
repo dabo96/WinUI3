@@ -929,7 +929,7 @@ namespace FluentUI {
         // campos es false, así que GetWidgetState (que auto-crea) preserva la
         // semántica. El erase(id) del bloque deactivated se emula reseteando
         // ws.editedSinceActivate = false (su valor por defecto).
-        WidgetState& ws = GetWidgetState(id);
+        UIContext::WidgetState& ws = g_ctx->GetWidgetState(id);
         bool wasActive = ws.prevActive;
 
         li.activated = (active && !wasActive);

@@ -929,7 +929,7 @@ void EndTabView() {
   // existencia sin crear (find), preservando la semántica original; el puntero
   // se reutiliza en el segundo bloque (dibujo de scrollbar) más abajo.
   auto wsIt = ctx->widgetStates.find(frame.tabViewId);
-  TabViewState* stPtr = (wsIt != ctx->widgetStates.end() && wsIt->second.tabs)
+  UIContext::TabViewState* stPtr = (wsIt != ctx->widgetStates.end() && wsIt->second.tabs)
                             ? wsIt->second.tabs.get()
                             : nullptr;
   if (stPtr) {
