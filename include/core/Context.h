@@ -12,6 +12,8 @@
 #include "core/UIEvent.h" // WindowHandle (brief 20; no SDL in the public header)
 #include "Theme/Style.h"
 #include <map>
+#include <unordered_map>
+#include <memory>
 #include <functional>
 #include <cstdarg>
 #include <mutex>
@@ -1015,6 +1017,86 @@ struct UIContext {
   // Table/DataGrid state
   std::unordered_map<uint32_t, TableInternalState> tableStates;
   std::vector<TableFrameContext> tableStack;
+
+  // ─── brief 22: estado unificado por-widget (FASE 1, aditiva) ────────────────
+  // Objetivo del brief 22 (Opción B): fundir los ~35 mapas paralelos
+  // unordered_map<uint32_t,X> en UN solo unordered_map<uint32_t, WidgetState>.
+  // Esta fase 1 SOLO añade la infraestructura: el struct, el mapa (que queda
+  // vacío hasta las fases 2-8) y los accesores. Los mapas viejos y el GC
+  // rotatorio siguen intactos; cero cambio de comportamiento. Se define aquí,
+  // al final de UIContext, para que TODOS los sub-structs que referencia por
+  // valor / unique_ptr (PanelState … TableInternalState, PresenceState,
+  // FlipState, TextClickInfo, TextUndoState) ya sean tipos completos.
+
+  // Estado de edición de texto (se materializa en la fase 4). El centinela de
+  // `anchor` ("sin selección") es SIZE_MAX — idéntico al que usa hoy
+  // selectionAnchors (ver InputWidgets.cpp: try_emplace(id, SIZE_MAX)).
+  struct TextEditState {
+    size_t caret = 0;
+    size_t anchor = SIZE_MAX;   // "sin selección" (== centinela de selectionAnchors)
+    float scrollOffset = 0.0f;
+    TextClickInfo clickInfo;    // multi-click (double/triple) tracking
+    TextUndoState undo;         // pilas undo/redo
+  };
+
+  // Estado unificado de un widget. Los sub-estados pesados son lazy (unique_ptr
+  // null hasta que se usan) para no inflar cada entrada. Los arrays de animación
+  // tienen 4 slots porque AnimSlot(id, slot) alcanza slot=3 en el código real
+  // (InputWidgets.cpp usa AnimSlot(wid, 3)); AnimSlot(id, 0..3) → [0..3].
+  struct WidgetState {
+    // comunes / primitivos (fases 3, 8)
+    bool boolVal = false;
+    float floatVal = 0.0f;
+    int intVal = 0;
+    std::string stringVal;
+    bool comboChanged = false;
+    bool prevActive = false;
+    bool editedSinceActivate = false;
+    // animaciones inline (fase 2): replican AnimSlot(id, 0..3)
+    AnimatedValue<Color> colorAnim[4];
+    AnimatedValue<float> floatAnim[4];
+    SpringValue<Color> springColor[4];
+    SpringValue<float> springFloat[4];
+    RippleEffect ripple;
+    PresenceState presence;
+    FlipState flip;
+    // sub-estados pesados, lazy (fases 4-8) via unique_ptr (null hasta usarse)
+    std::unique_ptr<TextEditState> text;
+    std::unique_ptr<PanelState> panel;
+    std::unique_ptr<ScrollViewState> scroll;
+    std::unique_ptr<TabViewState> tabs;
+    std::unique_ptr<ModalState> modal;
+    std::unique_ptr<ContextMenuState> ctxMenu;
+    std::unique_ptr<FlyoutState> flyout;
+    std::unique_ptr<ListViewState> list;
+    std::unique_ptr<TreeViewState> tree;
+    std::unique_ptr<TableInternalState> table;
+    std::unique_ptr<ColorPickerState> colorPicker;
+    std::unique_ptr<SplitterState> splitter;
+    std::unique_ptr<DragWidgetState> drag;
+    uint32_t lastFrameSeen = 0;
+  };
+
+  std::unordered_map<uint32_t, WidgetState> widgetStates;
+
+  // Accesores (definidos out-of-line en src/Core/Context.cpp donde los tipos
+  // están completos). GetWidgetState SIEMPRE crea la entrada y refresca
+  // lastFrameSeen = frame. Cada Get*State asegura su unique_ptr (make_unique si
+  // es null) y devuelve la referencia al sub-estado.
+  WidgetState& GetWidgetState(uint32_t id);
+  TextEditState& GetTextState(uint32_t id);
+  PanelState& GetPanelState(uint32_t id);
+  ScrollViewState& GetScrollState(uint32_t id);
+  TabViewState& GetTabState(uint32_t id);
+  ModalState& GetModalState(uint32_t id);
+  ContextMenuState& GetCtxMenuState(uint32_t id);
+  FlyoutState& GetFlyoutState(uint32_t id);
+  ListViewState& GetListState(uint32_t id);
+  TreeViewState& GetTreeState(uint32_t id);
+  TableInternalState& GetTableState(uint32_t id);
+  ColorPickerState& GetColorPickerState(uint32_t id);
+  SplitterState& GetSplitterState(uint32_t id);
+  DragWidgetState& GetDragState(uint32_t id);
 };
 
 // Selects which RenderBackend the factory instantiates. Defaults to OpenGL so

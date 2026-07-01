@@ -184,6 +184,82 @@ namespace FluentUI {
         return false;
     }
 
+    // ─── brief 22: accesores del estado unificado (FASE 1, aditiva) ───────────
+    // GetWidgetState crea/obtiene la entrada y refresca lastFrameSeen para que el
+    // GC nuevo la conserve. Los Get*State materializan su unique_ptr perezoso la
+    // primera vez y devuelven la referencia al sub-estado. Mientras las fases 2-8
+    // no migren widgets, nadie llama a esto en producción (mapa vacío).
+    UIContext::WidgetState& UIContext::GetWidgetState(uint32_t id) {
+        WidgetState& ws = widgetStates[id];
+        ws.lastFrameSeen = frame;
+        return ws;
+    }
+    UIContext::TextEditState& UIContext::GetTextState(uint32_t id) {
+        WidgetState& ws = GetWidgetState(id);
+        if (!ws.text) ws.text = std::make_unique<TextEditState>();
+        return *ws.text;
+    }
+    UIContext::PanelState& UIContext::GetPanelState(uint32_t id) {
+        WidgetState& ws = GetWidgetState(id);
+        if (!ws.panel) ws.panel = std::make_unique<PanelState>();
+        return *ws.panel;
+    }
+    UIContext::ScrollViewState& UIContext::GetScrollState(uint32_t id) {
+        WidgetState& ws = GetWidgetState(id);
+        if (!ws.scroll) ws.scroll = std::make_unique<ScrollViewState>();
+        return *ws.scroll;
+    }
+    UIContext::TabViewState& UIContext::GetTabState(uint32_t id) {
+        WidgetState& ws = GetWidgetState(id);
+        if (!ws.tabs) ws.tabs = std::make_unique<TabViewState>();
+        return *ws.tabs;
+    }
+    UIContext::ModalState& UIContext::GetModalState(uint32_t id) {
+        WidgetState& ws = GetWidgetState(id);
+        if (!ws.modal) ws.modal = std::make_unique<ModalState>();
+        return *ws.modal;
+    }
+    UIContext::ContextMenuState& UIContext::GetCtxMenuState(uint32_t id) {
+        WidgetState& ws = GetWidgetState(id);
+        if (!ws.ctxMenu) ws.ctxMenu = std::make_unique<ContextMenuState>();
+        return *ws.ctxMenu;
+    }
+    UIContext::FlyoutState& UIContext::GetFlyoutState(uint32_t id) {
+        WidgetState& ws = GetWidgetState(id);
+        if (!ws.flyout) ws.flyout = std::make_unique<FlyoutState>();
+        return *ws.flyout;
+    }
+    UIContext::ListViewState& UIContext::GetListState(uint32_t id) {
+        WidgetState& ws = GetWidgetState(id);
+        if (!ws.list) ws.list = std::make_unique<ListViewState>();
+        return *ws.list;
+    }
+    UIContext::TreeViewState& UIContext::GetTreeState(uint32_t id) {
+        WidgetState& ws = GetWidgetState(id);
+        if (!ws.tree) ws.tree = std::make_unique<TreeViewState>();
+        return *ws.tree;
+    }
+    TableInternalState& UIContext::GetTableState(uint32_t id) {
+        WidgetState& ws = GetWidgetState(id);
+        if (!ws.table) ws.table = std::make_unique<TableInternalState>();
+        return *ws.table;
+    }
+    UIContext::ColorPickerState& UIContext::GetColorPickerState(uint32_t id) {
+        WidgetState& ws = GetWidgetState(id);
+        if (!ws.colorPicker) ws.colorPicker = std::make_unique<ColorPickerState>();
+        return *ws.colorPicker;
+    }
+    UIContext::SplitterState& UIContext::GetSplitterState(uint32_t id) {
+        WidgetState& ws = GetWidgetState(id);
+        if (!ws.splitter) ws.splitter = std::make_unique<SplitterState>();
+        return *ws.splitter;
+    }
+    DragWidgetState& UIContext::GetDragState(uint32_t id) {
+        WidgetState& ws = GetWidgetState(id);
+        if (!ws.drag) ws.drag = std::make_unique<DragWidgetState>();
+        return *ws.drag;
+    }
+
     // Helper: initialize system cursors for a context
     static void InitCursors(UIContext* ctx) {
         ctx->systemCursors[static_cast<int>(UIContext::CursorType::Arrow)]     = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
@@ -758,6 +834,18 @@ namespace FluentUI {
                     } else {
                         ++it;
                     }
+                }
+            }
+
+            // brief 22 (FASE 1): GC simple del mapa unificado widgetStates. Usa el
+            // MISMO threshold que el GC rotatorio (GC_MAP_COUNT * GC_ROTATE_INTERVAL)
+            // y corre en el mismo intervalo. Inofensivo por ahora (el mapa está
+            // vacío hasta que las fases 2-8 migren los widgets a GetWidgetState()).
+            for (auto it = g_ctx->widgetStates.begin(); it != g_ctx->widgetStates.end(); ) {
+                if ((currentFrame - it->second.lastFrameSeen) > threshold) {
+                    it = g_ctx->widgetStates.erase(it);
+                } else {
+                    ++it;
                 }
             }
         }
