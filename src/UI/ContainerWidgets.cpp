@@ -991,7 +991,7 @@ bool BeginSplitter(const std::string& id, bool vertical, float* ratio, const Vec
   if (!ctx) return false;
 
   uint32_t splitId = GenerateId("SPLITTER:", id.c_str());
-  auto& state = ctx->splitterStates[splitId];
+  auto& state = ctx->GetSplitterState(splitId);
 
   // Initialize ratio from caller pointer, clamp and write back if out of range
   if (ratio) {

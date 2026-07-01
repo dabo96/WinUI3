@@ -63,8 +63,11 @@ bool LayoutSerializer::SaveLayout(const std::string& filepath, const DockSpace& 
 
         // Save splitter ratios
         file << "# Splitter States\n";
-        for (auto& [id, state] : ctx->splitterStates) {
-            file << "splitter." << id << ".ratio=" << state.ratio << "\n";
+        // brief 22 (fase 8): igual que paneles/tabs — solo los widgets con estado
+        // de splitter real (ws.splitter != nullptr), sin auto-crear entradas.
+        for (auto& [id, ws] : ctx->widgetStates) {
+            if (!ws.splitter) continue;
+            file << "splitter." << id << ".ratio=" << ws.splitter->ratio << "\n";
         }
         file << "\n";
 
@@ -159,7 +162,7 @@ bool LayoutSerializer::LoadLayout(const std::string& filepath, DockSpace& dockSp
                 uint32_t id = static_cast<uint32_t>(std::stoul(rest.substr(0, dot)));
                 std::string prop = rest.substr(dot + 1);
                 if (prop == "ratio") {
-                    ctx->splitterStates[id].ratio = std::stof(value);
+                    ctx->GetSplitterState(id).ratio = std::stof(value);
                 }
             }
             else if (key.substr(0, 8) == "tabview.") {

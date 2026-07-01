@@ -834,49 +834,27 @@ namespace FluentUI {
             }
         }
         
-        // Issue 11: Amortized GC — rotate through maps, one every GC_ROTATE_INTERVAL frames
+        // Issue 11 / brief 22 (fase 8): el GC rotatorio de mapas paralelos ya no
+        // tiene mapas que recorrer — colorPickerStates fue el último (fase 8) y
+        // migró a widgetStates (ws.colorPicker, GC por lastFrameSeen). Se conserva
+        // la limpieza periódica de lastSeenFrame (todavía lo escriben rutas legacy
+        // de AnimSlot y las marcas de item en NewFrame) para que no crezca sin
+        // límite, y el GC del mapa unificado widgetStates. GC_MAP_COUNT se mantiene
+        // en 1 solo para preservar el threshold de retención (== GC_ROTATE_INTERVAL);
+        // ya no cuenta mapas en rotación.
         if (g_ctx->frame > 0 && (g_ctx->frame % UIContext::GC_ROTATE_INTERVAL) == 0) {
             uint32_t currentFrame = g_ctx->frame;
-            uint32_t threshold = UIContext::GC_MAP_COUNT * UIContext::GC_ROTATE_INTERVAL; // Full rotation cycle
+            uint32_t threshold = UIContext::GC_MAP_COUNT * UIContext::GC_ROTATE_INTERVAL; // retention window
             auto& seen = g_ctx->lastSeenFrame;
 
-            auto gcMap = [&](auto& map) {
-                for (auto it = map.begin(); it != map.end(); ) {
-                    auto seenIt = seen.find(it->first);
-                    if (seenIt == seen.end() || (currentFrame - seenIt->second) > threshold) {
-                        it = map.erase(it);
-                    } else {
-                        ++it;
-                    }
-                }
-            };
-
-            // brief 22 (fase 2): colorAnimations/floatAnimations/rippleEffects/
-            // springColors/springFloats/flipStates salieron de la rotación (viven en
-            // widgetStates, con GC propio por lastFrameSeen más abajo).
-            // brief 22 (fase 3): los estados primitivos bool/float/int/string también
-            // se fundieron en widgetStates. GC_MAP_COUNT pasó de 10 a 6.
-            // brief 22 (fase 5): panel/scroll/tab migraron a widgetStates (ws.panel/
-            // ws.scroll/ws.tabs, con GC propio por lastFrameSeen); GC_MAP_COUNT 6->3
-            // y los casos se renumeran contiguos 0..2 para que gcMapIndex %
-            // GC_MAP_COUNT nunca caiga en un case inexistente.
-            // brief 22 (fase 7): listViewStates/treeViewStates/tableStates migraron a
-            // widgetStates (ws.list/ws.tree/ws.table, con GC propio por lastFrameSeen);
-            // GC_MAP_COUNT 3->1 y solo queda colorPickerStates en el case 0.
-            switch (g_ctx->gcMapIndex) {
-                case 0:  gcMap(g_ctx->colorPickerStates); break;
-            }
-
-            g_ctx->gcMapIndex = (g_ctx->gcMapIndex + 1) % UIContext::GC_MAP_COUNT;
-
-            // Clean up lastSeenFrame once per full rotation
-            if (g_ctx->gcMapIndex == 0) {
-                for (auto it = seen.begin(); it != seen.end(); ) {
-                    if ((currentFrame - it->second) > threshold) {
-                        it = seen.erase(it);
-                    } else {
-                        ++it;
-                    }
+            // Limpieza periódica de lastSeenFrame (misma cadencia que antes: cada
+            // GC_ROTATE_INTERVAL frames, ya que con GC_MAP_COUNT==1 la rotación
+            // volvía a índice 0 cada intervalo).
+            for (auto it = seen.begin(); it != seen.end(); ) {
+                if ((currentFrame - it->second) > threshold) {
+                    it = seen.erase(it);
+                } else {
+                    ++it;
                 }
             }
 
@@ -989,29 +967,33 @@ namespace FluentUI {
         li.edited = edited;
 
         // Track activation transitions
-        bool wasActive = false;
-        auto itPrev = g_ctx->prevActiveItems.find(id);
-        if (itPrev != g_ctx->prevActiveItems.end()) wasActive = itPrev->second;
+        // brief 22 (fase 8): prevActiveItems/editedSinceActivate migraron a
+        // WidgetState (ws.prevActive / ws.editedSinceActivate). El .find() del mapa
+        // original solo distinguía "no visto" de false, pero el default de ambos
+        // campos es false, así que GetWidgetState (que auto-crea) preserva la
+        // semántica. El erase(id) del bloque deactivated se emula reseteando
+        // ws.editedSinceActivate = false (su valor por defecto).
+        WidgetState& ws = GetWidgetState(id);
+        bool wasActive = ws.prevActive;
 
         li.activated = (active && !wasActive);
         li.deactivated = (!active && wasActive);
 
         if (li.activated) {
-            g_ctx->editedSinceActivate[id] = false;
+            ws.editedSinceActivate = false;
         }
         if (edited) {
-            g_ctx->editedSinceActivate[id] = true;
+            ws.editedSinceActivate = true;
         }
         if (li.deactivated) {
-            auto itEd = g_ctx->editedSinceActivate.find(id);
-            li.deactivatedAfterEdit = (itEd != g_ctx->editedSinceActivate.end() && itEd->second);
-            g_ctx->editedSinceActivate.erase(id);
+            li.deactivatedAfterEdit = ws.editedSinceActivate;
+            ws.editedSinceActivate = false;
         } else {
             li.deactivatedAfterEdit = false;
         }
 
         // Update prev-frame state for next frame
-        g_ctx->prevActiveItems[id] = active;
+        ws.prevActive = active;
     }
 
 } // namespace FluentUI

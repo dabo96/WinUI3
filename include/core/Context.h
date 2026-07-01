@@ -671,8 +671,7 @@ struct UIContext {
   // de rango viven ahora en WidgetState.treeVisitOrder / .treeLastSelectedId
   // (ver GetWidgetState).
 
-  // DragFloat / DragInt widget state
-  std::unordered_map<uint32_t, DragWidgetState> dragStates;
+  // brief 22 (fase 8): dragStates migrado a widgetStates (ws.drag) — GetDragState(id).
 
   struct SplitterState {
     float ratio = 0.5f;
@@ -696,9 +695,8 @@ struct UIContext {
     bool eyedropperActive = false;
   };
 
-  std::unordered_map<uint32_t, ColorPickerState> colorPickerStates;
-
-  std::unordered_map<uint32_t, SplitterState> splitterStates;
+  // brief 22 (fase 8): colorPickerStates/splitterStates migrados a widgetStates
+  // (ws.colorPicker / ws.splitter) — GetColorPickerState(id) / GetSplitterState(id).
 
   struct SplitterFrameContext {
     uint32_t id;
@@ -901,9 +899,13 @@ struct UIContext {
   // floatAnimations, rippleEffects, springColors, springFloats, flipStates) se
   // fundieron en widgetStates, que tiene su propio GC por lastFrameSeen (abajo en
   // NewFrame), así que salen de la rotación amortizada.
-  static constexpr uint32_t GC_MAP_COUNT = 1;      // Total maps to GC (brief 22 fase 3: 10->6; fase 5: 6->3; fase 7: 3->1)
-  static constexpr uint32_t GC_ROTATE_INTERVAL = 10; // GC one map every N frames
-  uint32_t gcMapIndex = 0;                           // Current map being GC'd
+  // brief 22 (fase 8): 1->0 mapas en rotación (colorPickerStates fue el último y
+  // migró a widgetStates). Se conserva =1 para preservar el threshold de retención
+  // (GC_MAP_COUNT * GC_ROTATE_INTERVAL == 10 frames), usado ahora por el GC de
+  // widgetStates y por la limpieza de lastSeenFrame; ya no cuenta mapas paralelos.
+  static constexpr uint32_t GC_MAP_COUNT = 1;      // retención = GC_MAP_COUNT * GC_ROTATE_INTERVAL frames
+  static constexpr uint32_t GC_ROTATE_INTERVAL = 10; // ejecuta el GC cada N frames
+  uint32_t gcMapIndex = 0;                           // brief 22 (fase 8): sin uso (0 mapas en rotación)
 
   uint32_t lastGeneratedId = 0;
 
@@ -1006,9 +1008,8 @@ struct UIContext {
     bool deactivatedAfterEdit = false; // Deactivated AND edits happened during the active span
   };
   LastItemData lastItem;
-  // Internal tracking: id → was-active-last-frame, plus edited-since-activation flag.
-  std::unordered_map<uint32_t, bool> prevActiveItems;     // id → active last frame
-  std::unordered_map<uint32_t, bool> editedSinceActivate; // id → edits seen during current active span
+  // brief 22 (fase 8): prevActiveItems/editedSinceActivate migrados a WidgetState
+  // (ws.prevActive / ws.editedSinceActivate) — ver SetLastItem en Context.cpp.
 
   // Global statics moved from Widgets.cpp
   int treeViewDepth = 0;

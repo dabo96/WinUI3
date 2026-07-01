@@ -1467,7 +1467,7 @@ bool ColorPicker(const std::string &label, Color *value,
   uint32_t pickerId = GenerateId("CPICK:", label.c_str());
 
   // Get or create state
-  auto &state = ctx->colorPickerStates[pickerId];
+  auto &state = ctx->GetColorPickerState(pickerId);
   if (!state.initialized) {
     value->ToHSV(state.hue, state.saturation, state.value);
     state.alpha = value->a;

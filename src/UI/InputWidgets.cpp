@@ -1578,7 +1578,7 @@ bool DragFloat(const std::string& label, float* value, float speed,
   uint32_t id = GenerateId("DRAG_F:", label.c_str());
 
   // Get or create drag state
-  DragWidgetState& state = ctx->dragStates[id];
+  DragWidgetState& state = ctx->GetDragState(id);
 
   float currentValue = value ? *value : 0.0f;
   bool valueChanged = false;
@@ -1920,7 +1920,7 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
     std::string compId = label + "." + componentLabels[i];
     uint32_t id = GenerateId("DRAG_F3:", compId.c_str());
 
-    DragWidgetState& state = ctx->dragStates[id];
+    DragWidgetState& state = ctx->GetDragState(id);
     float currentVal = values[i];
 
     Vec2 mousePos(ctx->input.MouseX(), ctx->input.MouseY());
