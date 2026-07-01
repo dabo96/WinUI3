@@ -1553,9 +1553,11 @@ void GridView(const std::string &id, int itemCount, Vec2 itemSize,
     totalH = static_cast<float>(rows) * cellH + static_cast<float>(rows - 1) * gap;
   }
 
-  float &scroll = ctx->floatStates[gridId];
+  float &scroll = ctx->GetWidgetState(gridId).floatVal; // brief 22 (fase 3)
   uint32_t selId = GenerateId("GRIDSEL:", id.c_str());
-  int &sel = ctx->intStates.try_emplace(selId, -1).first->second;
+  bool selFresh = ctx->widgetStates.find(selId) == ctx->widgetStates.end();
+  int &sel = ctx->GetWidgetState(selId).intVal;
+  if (selFresh) sel = -1; // preserva default try_emplace(., -1)
   if (sel >= itemCount) sel = itemCount - 1;
 
   bool focused = (ctx->focusedWidgetId == gridId);
@@ -1926,8 +1928,12 @@ void ExpanderList(const std::string &id, int itemCount,
 
   uint32_t listId = GenerateId("EXPLIST:", id.c_str());
   int *openIdx = nullptr;
-  if (accordion)
-    openIdx = &ctx->intStates.try_emplace(listId, -1).first->second;
+  if (accordion) {
+    bool openFresh = ctx->widgetStates.find(listId) == ctx->widgetStates.end(); // brief 22 (fase 3)
+    int& oi = ctx->GetWidgetState(listId).intVal;
+    if (openFresh) oi = -1; // preserva default try_emplace(., -1)
+    openIdx = &oi;
+  }
 
   PushID(id.c_str());
   for (int i = 0; i < itemCount; ++i) {
@@ -1939,7 +1945,7 @@ void ExpanderList(const std::string &id, int itemCount,
     if (accordion)
       open = (*openIdx == i);
     else
-      open = ctx->boolStates.try_emplace(subId, false).first->second;
+      open = ctx->GetWidgetState(subId).boolVal; // brief 22 (fase 3)
 
     bool before = open;
     // CollapsingHeader toggles `open` on click/keyboard and applies an auto-indent
@@ -1950,7 +1956,7 @@ void ExpanderList(const std::string &id, int itemCount,
       if (open && !before) *openIdx = i;
       else if (!open && before && *openIdx == i) *openIdx = -1;
     } else {
-      ctx->boolStates[subId] = open;
+      ctx->GetWidgetState(subId).boolVal = open; // brief 22 (fase 3)
     }
 
     // Body height animation (brief 10) degrades to snap: show/hide instantly.

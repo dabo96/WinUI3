@@ -1057,9 +1057,9 @@ void MenuFlyout(const std::string &id, const Rect &anchorRect,
   uint32_t hlKey = GenerateId("FLYOUTMENU_HL:", id.c_str());
   int hl = -1;
   {
-    auto hlIt = ctx->intStates.find(hlKey);
-    if (hlIt != ctx->intStates.end())
-      hl = hlIt->second;
+    auto hlIt = ctx->widgetStates.find(hlKey); // brief 22 (fase 3): test de existencia, no crea
+    if (hlIt != ctx->widgetStates.end())
+      hl = hlIt->second.intVal;
   }
 
   std::vector<int> selectable;
@@ -1178,7 +1178,7 @@ void MenuFlyout(const std::string &id, const Rect &anchorRect,
       invokeIndex = i;
   }
 
-  ctx->intStates[hlKey] = hl;
+  ctx->GetWidgetState(hlKey).intVal = hl; // brief 22 (fase 3)
 
   // Invocar fuera del bucle de dibujo.
   if (invokeIndex >= 0) {
@@ -1205,7 +1205,7 @@ bool TeachingTip(const std::string &id, const Rect &targetRect,
     return false;
 
   uint32_t seenKey = GenerateId("TEACHTIP_SEEN:", id.c_str());
-  bool &seen = ctx->boolStates[seenKey];
+  bool &seen = ctx->GetWidgetState(seenKey).boolVal; // brief 22 (fase 3)
   if (seen)
     return false;
 
@@ -1213,7 +1213,7 @@ bool TeachingTip(const std::string &id, const Rect &targetRect,
   // Abrir una sola vez. Si el flyout se cerró (click fuera/Esc) y ya se había
   // abierto, marcar "ya visto" y no volver a mostrar.
   uint32_t openedKey = GenerateId("TEACHTIP_OPENED:", id.c_str());
-  bool &openedOnce = ctx->boolStates[openedKey];
+  bool &openedOnce = ctx->GetWidgetState(openedKey).boolVal; // brief 22 (fase 3)
   if (!IsFlyoutOpen(flyoutId)) {
     if (!openedOnce) {
       OpenFlyout(flyoutId);
@@ -1297,18 +1297,18 @@ DialogResult ContentDialog(const std::string &id, bool *open,
                       ctx->input.IsKeyPressed(UIKey::KeypadEnter);
 
   // Foco inicial en el botón primario la primera vez que se abre. No mantenemos
-  // una referencia al mapa: body() es arbitrario y podría insertar en boolStates
+  // una referencia al mapa: body() es arbitrario y podría insertar en widgetStates
   // (rehash) e invalidarla.
   uint32_t focusInitKey = GenerateId("CDLG_FOCUS:", id.c_str());
   bool focusInit = false;
   {
-    auto fit = ctx->boolStates.find(focusInitKey);
-    if (fit != ctx->boolStates.end())
-      focusInit = fit->second;
+    auto fit = ctx->widgetStates.find(focusInitKey); // brief 22 (fase 3): test de existencia, no crea
+    if (fit != ctx->widgetStates.end())
+      focusInit = fit->second.boolVal;
   }
   if (!focusInit && !primaryText.empty()) {
     ctx->focusedWidgetId = GenerateId("BTN:", primaryText.c_str());
-    ctx->boolStates[focusInitKey] = true;
+    ctx->GetWidgetState(focusInitKey).boolVal = true;
   }
 
   // Trap de foco: recordar dónde empiezan los widgets enfocables del diálogo.
@@ -1373,7 +1373,7 @@ DialogResult ContentDialog(const std::string &id, bool *open,
 
   if (result != DialogResult::None) {
     *open = false;
-    ctx->boolStates[focusInitKey] = false; // re-armar el foco para la próxima
+    ctx->GetWidgetState(focusInitKey).boolVal = false; // re-armar el foco para la próxima (brief 22 fase 3)
   }
 
   // Accesibilidad: rol Dialog.

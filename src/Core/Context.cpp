@@ -841,20 +841,18 @@ namespace FluentUI {
 
             // brief 22 (fase 2): colorAnimations/floatAnimations/rippleEffects/
             // springColors/springFloats/flipStates salieron de la rotación (viven en
-            // widgetStates, con GC propio por lastFrameSeen más abajo). GC_MAP_COUNT
-            // pasó de 16 a 10; los casos se renumeran contiguos 0..9 para que
-            // gcMapIndex % GC_MAP_COUNT nunca caiga en un case inexistente.
+            // widgetStates, con GC propio por lastFrameSeen más abajo).
+            // brief 22 (fase 3): los estados primitivos bool/float/int/string también
+            // se fundieron en widgetStates. GC_MAP_COUNT pasó de 10 a 6; los casos se
+            // renumeran contiguos 0..5 para que gcMapIndex % GC_MAP_COUNT nunca caiga
+            // en un case inexistente.
             switch (g_ctx->gcMapIndex) {
                 case 0:  gcMap(g_ctx->panelStates); break;
                 case 1:  gcMap(g_ctx->scrollViewStates); break;
                 case 2:  gcMap(g_ctx->tabViewStates); break;
                 case 3:  gcMap(g_ctx->listViewStates); break;
                 case 4:  gcMap(g_ctx->treeViewStates); break;
-                case 5:  gcMap(g_ctx->boolStates); break;
-                case 6:  gcMap(g_ctx->floatStates); break;
-                case 7:  gcMap(g_ctx->intStates); break;
-                case 8:  gcMap(g_ctx->stringStates); break;
-                case 9:  gcMap(g_ctx->colorPickerStates); break;
+                case 5:  gcMap(g_ctx->colorPickerStates); break;
             }
 
             g_ctx->gcMapIndex = (g_ctx->gcMapIndex + 1) % UIContext::GC_MAP_COUNT;

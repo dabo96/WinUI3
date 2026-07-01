@@ -50,8 +50,8 @@ bool ToggleSwitch(const std::string &label, bool *value, const std::string &onTe
   uint32_t id = GenerateId("TOGGLE:", label.c_str());
   ctx->focusableWidgets.push_back(id);
 
-  auto boolEntry = ctx->boolStates.try_emplace(id, false);
-  bool current = value ? *value : boolEntry.first->second;
+  bool& boolSlot = ctx->GetWidgetState(id).boolVal; // brief 22 (fase 3)
+  bool current = value ? *value : boolSlot;
 
   const TextStyle &labelStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
   const PanelStyle &panelStyle = ctx->style.panel;
@@ -105,19 +105,19 @@ bool ToggleSwitch(const std::string &label, bool *value, const std::string &onTe
   if (value)
     *value = current;
   else
-    boolEntry.first->second = current;
+    boolSlot = current;
 
   if (hover)
     ctx->desiredCursor = UIContext::CursorType::Hand;
 
-  // Animación 0→1 del thumb (floatStates[AnimSlot(id,0)]).
-  float &anim = ctx->floatStates[AnimSlot(id, 0)];
+  // Animación 0→1 del thumb (WidgetState.floatVal at AnimSlot(id,0)).
+  float &anim = ctx->GetWidgetState(AnimSlot(id, 0)).floatVal; // brief 22 (fase 3)
   float target = current ? 1.0f : 0.0f;
   // Primera vez: arrancar ya en el estado correcto (sin animación fantasma).
-  auto animInit = ctx->boolStates.try_emplace(AnimSlot(id, 1), false);
-  if (!animInit.first->second) {
+  bool &animInit = ctx->GetWidgetState(AnimSlot(id, 1)).boolVal;
+  if (!animInit) {
     anim = target;
-    animInit.first->second = true;
+    animInit = true;
   }
   anim = ApproachAnim(anim, target, ctx->deltaTime);
 
@@ -214,8 +214,8 @@ bool BeginExpander(const std::string &id, const std::string &header,
   uint32_t wid = GenerateId("EXPANDER:", id.c_str());
   ctx->focusableWidgets.push_back(wid);
 
-  auto openEntry = ctx->boolStates.try_emplace(wid, false);
-  bool isOpen = expanded ? *expanded : openEntry.first->second;
+  bool& openSlot = ctx->GetWidgetState(wid).boolVal; // brief 22 (fase 3)
+  bool isOpen = expanded ? *expanded : openSlot;
 
   const TextStyle &headerStyle =
       ctx->style.GetTextStyle(TypographyStyle::BodyStrong);
@@ -250,7 +250,7 @@ bool BeginExpander(const std::string &id, const std::string &header,
     clicked = true;
   if (clicked) {
     isOpen = !isOpen;
-    openEntry.first->second = isOpen;
+    openSlot = isOpen;
     if (expanded)
       *expanded = isOpen;
   }
@@ -259,8 +259,8 @@ bool BeginExpander(const std::string &id, const std::string &header,
 
   // --- Animación de la altura del cuerpo ---
   // measured = altura del contenido medida en EndExpander el frame anterior.
-  float measured = ctx->floatStates[AnimSlot(wid, 1)];
-  float &animH = ctx->floatStates[AnimSlot(wid, 0)];
+  float measured = ctx->GetWidgetState(AnimSlot(wid, 1)).floatVal; // brief 22 (fase 3)
+  float &animH = ctx->GetWidgetState(AnimSlot(wid, 0)).floatVal;
   if (isOpen) {
     animH = ApproachAnim(animH, measured, ctx->deltaTime);
   } else {
@@ -400,7 +400,7 @@ void EndExpander() {
   if (fr.clipPushed)
     ctx->renderer.PopClipRect();
 
-  ctx->floatStates[AnimSlot(fr.id, 1)] = measured;
+  ctx->GetWidgetState(AnimSlot(fr.id, 1)).floatVal = measured; // brief 22 (fase 3)
 
   // Restaurar estado del padre y avanzar el cursor por la card completa.
   ctx->cursorPos = fr.savedCursor;
@@ -624,7 +624,7 @@ bool RatingControl(const std::string &id, int *value, int maxStars,
   // value se interpreta en "medias estrellas" cuando allowHalf (0..2*maxStars),
   // y en estrellas enteras (0..maxStars) en caso contrario.
   int maxUnits = allowHalf ? maxStars * 2 : maxStars;
-  int current = value ? *value : ctx->intStates[wid];
+  int current = value ? *value : ctx->GetWidgetState(wid).intVal; // brief 22 (fase 3)
   current = std::clamp(current, 0, maxUnits);
 
   float starSize = S(22.0f);
@@ -683,7 +683,7 @@ bool RatingControl(const std::string &id, int *value, int maxStars,
   if (value)
     *value = current;
   else
-    ctx->intStates[wid] = current;
+    ctx->GetWidgetState(wid).intVal = current; // brief 22 (fase 3)
 
   // Valor a dibujar: preview si hay hover, si no el actual.
   int displayUnits = (hover && previewUnits >= 0) ? previewUnits : current;

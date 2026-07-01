@@ -406,8 +406,7 @@ bool CollapsingHeader(const std::string &label, bool *open,
   uint32_t id = GenerateId("COLLAPSE:", label.c_str());
   ctx->focusableWidgets.push_back(id);
 
-  auto entry = ctx->boolStates.try_emplace(id, false);
-  bool &storedOpen = entry.first->second;
+  bool &storedOpen = ctx->GetWidgetState(id).boolVal; // brief 22 (fase 3)
   bool isOpen = open ? *open : storedOpen;
 
   const TextStyle &labelStyle = ctx->style.GetTextStyle(TypographyStyle::BodyStrong);

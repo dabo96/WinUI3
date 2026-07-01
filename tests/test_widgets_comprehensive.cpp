@@ -577,7 +577,7 @@ TEST_CASE("GPU Widget: ComboBox with temporary items (use-after-free fix)", "[gp
 
     int selected = 0;
     // Force dropdown open
-    gpu.ctx->boolStates[GenerateId("COMBO", "Temp")] = true;
+    gpu.ctx->GetWidgetState(GenerateId("COMBO", "Temp")).boolVal = true; // brief 22 (fase 3)
 
     gpu.beginFrame();
     // Pass temporary vector — this used to cause use-after-free

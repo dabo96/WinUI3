@@ -423,7 +423,7 @@ struct UIContext {
   // Sistema de ripple effects
   // brief 22 (fase 2): rippleEffects fundido en WidgetState.ripple (raw widget id).
 
-  std::unordered_map<uint32_t, bool> boolStates;
+  // brief 22 (fase 3): estado bool primitivo fundido en WidgetState.boolVal (raw widget id).
   // Id del único ComboBox que puede estar abierto a la vez (0 = ninguno). Al
   // abrir uno se cierra cualquier otro automáticamente.
   uint32_t openComboId = 0;
@@ -443,9 +443,8 @@ struct UIContext {
   uint32_t openMenuId = 0;
   Vec2 openMenuDropdownPos;
   Vec2 openMenuDropdownSize;
-  std::unordered_map<uint32_t, float> floatStates;
-  std::unordered_map<uint32_t, int> intStates;
-  std::unordered_map<uint32_t, std::string> stringStates;
+  // brief 22 (fase 3): estados float/int/string primitivos fundidos en
+  // WidgetState.floatVal/intVal/stringVal (raw widget id).
   std::unordered_map<uint32_t, size_t> caretPositions;
   std::unordered_map<uint32_t, size_t> selectionAnchors; // Selection anchor (start of selection)
   std::unordered_map<uint32_t, float> textScrollOffsets;
@@ -875,7 +874,7 @@ struct UIContext {
   std::vector<DeferredMenuItem> currentMenuItems;
 
   // ComboBox change tracking (deferred dropdowns notify change next frame)
-  std::unordered_map<uint32_t, bool> comboBoxChanged;
+  // brief 22 (fase 3): flag de cambio fundido en WidgetState.comboChanged (raw widget id).
 
   bool anyTooltipHoveredThisFrame = false;
 
@@ -899,7 +898,7 @@ struct UIContext {
   // floatAnimations, rippleEffects, springColors, springFloats, flipStates) se
   // fundieron en widgetStates, que tiene su propio GC por lastFrameSeen (abajo en
   // NewFrame), así que salen de la rotación amortizada.
-  static constexpr uint32_t GC_MAP_COUNT = 10;     // Total maps to GC
+  static constexpr uint32_t GC_MAP_COUNT = 6;      // Total maps to GC (brief 22 fase 3: 10->6)
   static constexpr uint32_t GC_ROTATE_INTERVAL = 10; // GC one map every N frames
   uint32_t gcMapIndex = 0;                           // Current map being GC'd
 

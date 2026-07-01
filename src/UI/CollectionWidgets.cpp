@@ -26,7 +26,7 @@ int Pagination(const std::string &id, int pageCount, int *currentPage) {
   ctx->focusableWidgets.push_back(pgId);
 
   int cur = currentPage ? *currentPage
-                        : ctx->intStates.try_emplace(pgId, 0).first->second;
+                        : ctx->GetWidgetState(pgId).intVal; // brief 22 (fase 3)
   cur = std::clamp(cur, 0, pageCount - 1);
 
   bool focused = (ctx->focusedWidgetId == pgId);
@@ -127,7 +127,7 @@ int Pagination(const std::string &id, int pageCount, int *currentPage) {
   float totalW = std::max(0.0f, x - origin.x - gap);
   cur = std::clamp(cur, 0, pageCount - 1);
   if (currentPage) *currentPage = cur;
-  ctx->intStates[pgId] = cur;
+  ctx->GetWidgetState(pgId).intVal = cur; // brief 22 (fase 3)
 
   if (focused)
     DrawFocusRing(ctx, origin, Vec2(totalW, h), 4.0f);
@@ -152,13 +152,17 @@ int FlipView(const std::string &id, int itemCount,
   ctx->focusableWidgets.push_back(fvId);
 
   int idx = currentIndex ? *currentIndex
-                         : ctx->intStates.try_emplace(fvId, 0).first->second;
+                         : ctx->GetWidgetState(fvId).intVal; // brief 22 (fase 3)
   idx = std::clamp(idx, 0, itemCount - 1);
 
   uint32_t animId = GenerateId("FLIPANIM:", id.c_str());
   uint32_t dirId = GenerateId("FLIPDIR:", id.c_str());
-  float &progress = ctx->floatStates.try_emplace(animId, 1.0f).first->second;
-  int &slideDir = ctx->intStates.try_emplace(dirId, 1).first->second;
+  bool progFresh = ctx->widgetStates.find(animId) == ctx->widgetStates.end(); // brief 22 (fase 3)
+  float &progress = ctx->GetWidgetState(animId).floatVal;
+  if (progFresh) progress = 1.0f; // preserva default try_emplace(., 1.0f)
+  bool dirFresh = ctx->widgetStates.find(dirId) == ctx->widgetStates.end();
+  int &slideDir = ctx->GetWidgetState(dirId).intVal;
+  if (dirFresh) slideDir = 1; // preserva default try_emplace(., 1)
 
   bool focused = (ctx->focusedWidgetId == fvId);
 
@@ -262,7 +266,7 @@ int FlipView(const std::string &id, int itemCount,
 
   idx = std::clamp(idx, 0, itemCount - 1);
   if (currentIndex) *currentIndex = idx;
-  ctx->intStates[fvId] = idx;
+  ctx->GetWidgetState(fvId).intVal = idx; // brief 22 (fase 3)
 
   ctx->cursorPos = savedCursor;
   ctx->lastItemPos = origin;

@@ -77,8 +77,8 @@ bool Checkbox(const std::string &label, uint32_t iconCodepoint, bool *value, std
   // Phase F1: register as focusable
   ctx->focusableWidgets.push_back(id);
 
-  auto boolEntry = ctx->boolStates.try_emplace(id, false);
-  bool currentValue = value ? *value : boolEntry.first->second;
+  bool& boolSlot = ctx->GetWidgetState(id).boolVal; // brief 22 (fase 3)
+  bool currentValue = value ? *value : boolSlot;
 
   // Hit area = caja + gap + label (contenido real), NO el ancho rellenado por
   // Fill, para no dejar seleccionable la fila entera a la derecha.
@@ -101,7 +101,7 @@ bool Checkbox(const std::string &label, uint32_t iconCodepoint, bool *value, std
   if (value)
     *value = currentValue;
   else
-    boolEntry.first->second = currentValue;
+    boolSlot = currentValue;
 
   if (toggled) {
     std::string idStr = "CHK:" + label;
@@ -333,8 +333,10 @@ bool SliderFloat(const std::string &label, float *value, float minValue,
   // Phase F1: register as focusable
   ctx->focusableWidgets.push_back(id);
 
-  auto floatEntry = ctx->floatStates.try_emplace(id, minValue);
-  float currentValue = value ? *value : floatEntry.first->second;
+  bool floatFresh = ctx->widgetStates.find(id) == ctx->widgetStates.end(); // brief 22 (fase 3)
+  float& floatSlot = ctx->GetWidgetState(id).floatVal;
+  if (floatFresh) floatSlot = minValue; // preserva default try_emplace(id, minValue)
+  float currentValue = value ? *value : floatSlot;
   currentValue = std::clamp(currentValue, minValue, maxValue);
 
   // Phase F1: keyboard adjust (Left/Right arrows when focused)
@@ -409,7 +411,7 @@ bool SliderFloat(const std::string &label, float *value, float minValue,
   if (value)
     *value = currentValue;
   else
-    floatEntry.first->second = currentValue;
+    floatSlot = currentValue;
 
   // Invoke valueChanged callback if slider moved
   if (valueChanged) {
@@ -469,7 +471,7 @@ bool SliderFloat(const std::string &label, float *value, float minValue,
   // Phase F1: apply keyboard change to value if it happened
   if (kbChanged) {
     if (value) *value = currentValue;
-    floatEntry.first->second = currentValue;
+    floatSlot = currentValue;
     valueChanged = true;
   }
 
@@ -496,8 +498,10 @@ bool SliderInt(const std::string &label, int *value, int minValue, int maxValue,
   }
 
   uint32_t id = GenerateId("SLDR_I:", label.c_str());
-  auto intEntry = ctx->intStates.try_emplace(id, minValue);
-  int originalValue = value ? *value : intEntry.first->second;
+  bool intFresh = ctx->widgetStates.find(id) == ctx->widgetStates.end(); // brief 22 (fase 3)
+  int& intSlot = ctx->GetWidgetState(id).intVal;
+  if (intFresh) intSlot = minValue; // preserva default try_emplace(id, minValue)
+  int originalValue = value ? *value : intSlot;
   int currentValue = std::clamp(originalValue, minValue, maxValue);
 
   // Write back clamped value immediately if out of range
@@ -505,7 +509,7 @@ bool SliderInt(const std::string &label, int *value, int minValue, int maxValue,
     if (value)
       *value = currentValue;
     else
-      intEntry.first->second = currentValue;
+      intSlot = currentValue;
   }
 
   float asFloat = static_cast<float>(currentValue);
@@ -518,7 +522,7 @@ bool SliderInt(const std::string &label, int *value, int minValue, int maxValue,
     if (value)
       *value = newInt;
     else
-      intEntry.first->second = newInt;
+      intSlot = newInt; // brief 22 (fase 3)
     return true;
   }
   return currentValue != originalValue;
@@ -719,11 +723,10 @@ bool TextInput(const std::string &label, std::string *value, float width,
   ctx->focusableWidgets.push_back(id);
 
   // Si value no es nullptr, usar su valor directamente
-  // Si value es nullptr, usar el valor almacenado en stringStates
+  // Si value es nullptr, usar el valor almacenado en WidgetState.stringVal
   std::string* textPtr = value;
   if (!textPtr) {
-    auto stringEntry = ctx->stringStates.try_emplace(id, "");
-    textPtr = &stringEntry.first->second;
+    textPtr = &ctx->GetWidgetState(id).stringVal; // brief 22 (fase 3)
   }
 
   // Asegurar que textPtr apunta al valor correcto
@@ -734,9 +737,9 @@ bool TextInput(const std::string &label, std::string *value, float width,
   caret = std::min(caret, textRef.size());
   float &scroll = ctx->textScrollOffsets[id];
 
-  // Vertical scroll offset for multiline (stored in floatStates with offset key)
+  // Vertical scroll offset for multiline (stored in WidgetState.floatVal at offset key)
   uint32_t mlScrollKey = id ^ 0xA5A5A5A5u; // Distinct key for multiline vertical scroll
-  float &mlScroll = ctx->floatStates[mlScrollKey];
+  float &mlScroll = ctx->GetWidgetState(mlScrollKey).floatVal; // brief 22 (fase 3)
 
   // Selection anchor (SIZE_MAX = no selection)
   auto anchorIt = ctx->selectionAnchors.try_emplace(id, SIZE_MAX);
@@ -2263,8 +2266,8 @@ static bool ComboBoxImpl(const std::string &label, int *currentItem,
   bool hoverField = IsMouseOver(ctx, fieldPos, fieldSize);
 
   // Estado del dropdown
-  auto boolEntry = ctx->boolStates.try_emplace(id, false);
-  bool isOpen = boolEntry.first->second;
+  bool& boolSlot = ctx->GetWidgetState(id).boolVal; // brief 22 (fase 3)
+  bool isOpen = boolSlot;
 
   // Solo un ComboBox abierto a la vez: si otro pasó a ser el abierto, éste
   // se considera cerrado.
@@ -2320,7 +2323,7 @@ static bool ComboBoxImpl(const std::string &label, int *currentItem,
   }
 
   // Keyboard navigation when dropdown is open
-  auto& highlightEntry = ctx->intStates[id];
+  auto& highlightEntry = ctx->GetWidgetState(id).intVal; // brief 22 (fase 3)
   if (isOpen) {
     if (ctx->input.IsKeyPressed(UIKey::Down)) {
       highlightEntry = std::min(highlightEntry + 1, static_cast<int>(items.size()) - 1);
@@ -2357,7 +2360,7 @@ static bool ComboBoxImpl(const std::string &label, int *currentItem,
   }
 
   // Actualizar estado
-  boolEntry.first->second = isOpen;
+  boolSlot = isOpen;
   // Si este combo dejó de estar abierto (click fuera, ESC/Enter, o selección
   // de item vía dropdown diferido), liberar el slot único de "abierto".
   if (!isOpen && ctx->openComboId == id) {
@@ -2436,10 +2439,10 @@ static bool ComboBoxImpl(const std::string &label, int *currentItem,
 
   // Check if a deferred dropdown reported a change for this combo
   bool valueChanged = false;
-  auto changedIt = ctx->comboBoxChanged.find(id);
-  if (changedIt != ctx->comboBoxChanged.end() && changedIt->second) {
+  bool& cbChanged = ctx->GetWidgetState(id).comboChanged; // brief 22 (fase 3)
+  if (cbChanged) {
     valueChanged = true;
-    ctx->comboBoxChanged.erase(changedIt);
+    cbChanged = false; // reset (equivalente al antiguo erase del flag de cambio)
     // Invoke valueChanged callback
     std::string idStr = "COMBO:" + label;
     auto cbIt = ctx->valueChangedCallbacks.find(idStr);
@@ -2466,7 +2469,7 @@ static bool ComboBoxImpl(const std::string &label, int *currentItem,
   }
 
   // Update open state
-  boolEntry.first->second = isOpen;
+  boolSlot = isOpen;
 
   ctx->lastItemPos = widgetPos;
   AdvanceCursor(ctx, finalSize);
@@ -2486,7 +2489,7 @@ bool ComboBoxSearchable(const std::string &label, int *currentItem,
   if (!ctx || items.empty()) return false;
 
   uint32_t searchId = GenerateId("COMBO_SEARCH:", label.c_str());
-  std::string &filter = ctx->stringStates[searchId];
+  std::string &filter = ctx->GetWidgetState(searchId).stringVal; // brief 22 (fase 3)
 
   auto toLower = [](std::string s) {
     for (auto &c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -2537,7 +2540,7 @@ bool ComboBoxSearchable(const std::string &label, int *currentItem,
   if (!ctx || items.empty()) return false;
 
   uint32_t searchId = GenerateId("COMBO_SEARCH:", label.c_str());
-  std::string &filter = ctx->stringStates[searchId];
+  std::string &filter = ctx->GetWidgetState(searchId).stringVal; // brief 22 (fase 3)
 
   auto toLower = [](std::string s) {
     for (auto &c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -2700,11 +2703,11 @@ void RenderDeferredDropdowns() {
     // Update selection if item was clicked
     if (itemClicked && dropdown.currentItemPtr) {
       if (clickedIndex != dropdown.selectedIndex) {
-        ctx->comboBoxChanged[dropdown.comboId] = true;
+        ctx->GetWidgetState(dropdown.comboId).comboChanged = true; // brief 22 (fase 3)
       }
       *dropdown.currentItemPtr = clickedIndex;
       // Close the dropdown by setting its state to false
-      ctx->boolStates[dropdown.comboId] = false;
+      ctx->GetWidgetState(dropdown.comboId).boolVal = false; // brief 22 (fase 3)
     }
   }
 
@@ -2846,7 +2849,7 @@ void RenderDeferredDropdowns() {
 // NumberBox (brief 14, section 4)
 // ════════════════════════════════════════════════════════════════════════════
 // Numeric field with +/- spinners and validation. Reuses the internal TextInput
-// for editing (buffer in stringStates); parses on Enter/blur, clamps, reformats.
+// for editing (buffer in WidgetState.stringVal); parses on Enter/blur, clamps, reformats.
 // Spinners repeat while held; the mouse wheel over the control steps ±step.
 bool NumberBox(const std::string &label, double *value, double min, double max,
                double step, const char *format, std::optional<Vec2> pos) {
@@ -2867,8 +2870,8 @@ bool NumberBox(const std::string &label, double *value, double min, double max,
   };
 
   // Buffer de edición (lo muta el TextInput interno) y flag de edición.
-  std::string &buf = ctx->stringStates[nbId];
-  bool &editing = ctx->boolStates[nbId];
+  std::string &buf = ctx->GetWidgetState(nbId).stringVal; // brief 22 (fase 3)
+  bool &editing = ctx->GetWidgetState(nbId).boolVal;
 
   // Geometría: campo + spinners reservados a la derecha.
   bool inVertical =
@@ -2962,7 +2965,7 @@ bool NumberBox(const std::string &label, double *value, double min, double max,
     DrawWidgetIcon(ctx, bp, bs, cp, bodyStyle.color, glyphSize,
                    (bs.x - glyphSize) * 0.5f, 0.0f);
     uint32_t rkey = GenerateId(rkeyName, label.c_str());
-    float &timer = ctx->floatStates[rkey];
+    float &timer = ctx->GetWidgetState(rkey).floatVal; // brief 22 (fase 3)
     bool pressed = hov && ctx->input.IsMousePressed(0);
     bool down = hov && ctx->input.IsMouseDown(0);
     bool tick = false;
@@ -3045,7 +3048,7 @@ bool NumberBox(const std::string &label, double *value, double min, double max,
 // ============================================================================
 
 // SelectableText — read-only text the user can select and copy. Selection is
-// kept by id in intStates (anchor + caret byte offsets). Highlight is drawn
+// kept by id in WidgetState.intVal (anchor + caret byte offsets). Highlight is drawn
 // before the glyphs. Mouse: down sets anchor, drag moves caret, double-click =
 // word, triple-click = line. Keyboard (when focused): Shift+Left/Right extend,
 // Ctrl+A select all, Ctrl+C / Ctrl+Insert copy to the OS clipboard.
@@ -3129,10 +3132,10 @@ void SelectableText(const std::string &id, const std::string &text,
   uint32_t wid = GenerateId("SELTXT:", id.c_str());
   ctx->focusableWidgets.push_back(wid);
 
-  // Selection range (anchor + caret) as byte offsets in intStates (2 sub-keys).
-  int &anchorI = ctx->intStates[wid];
-  int &caretI = ctx->intStates[AnimSlot(wid, 1)];
-  bool &dragging = ctx->boolStates[AnimSlot(wid, 2)];
+  // Selection range (anchor + caret) as byte offsets in WidgetState.intVal (2 sub-keys).
+  int &anchorI = ctx->GetWidgetState(wid).intVal; // brief 22 (fase 3)
+  int &caretI = ctx->GetWidgetState(AnimSlot(wid, 1)).intVal;
+  bool &dragging = ctx->GetWidgetState(AnimSlot(wid, 2)).boolVal;
   auto clampIdx = [&](int v) -> size_t {
     if (v < 0)
       v = 0;
@@ -3322,8 +3325,7 @@ bool PasswordBox(const std::string &id, std::string *value,
 
   std::string *textPtr = value;
   if (!textPtr) {
-    auto e = ctx->stringStates.try_emplace(wid, "");
-    textPtr = &e.first->second;
+    textPtr = &ctx->GetWidgetState(wid).stringVal; // brief 22 (fase 3)
   }
   std::string &textRef = *textPtr;
 
@@ -3332,7 +3334,7 @@ bool PasswordBox(const std::string &id, std::string *value,
   caret = std::min(caret, textRef.size());
   auto anchorIt = ctx->selectionAnchors.try_emplace(wid, SIZE_MAX);
   size_t &selAnchor = anchorIt.first->second;
-  bool &reveal = ctx->boolStates[AnimSlot(wid, 3)];
+  bool &reveal = ctx->GetWidgetState(AnimSlot(wid, 3)).boolVal; // brief 22 (fase 3)
 
   auto HasSelection = [&]() { return selAnchor != SIZE_MAX && selAnchor != caret; };
   auto SelStart = [&]() -> size_t { return HasSelection() ? std::min(selAnchor, caret) : caret; };
@@ -3672,8 +3674,7 @@ std::string AutoSuggestBox(
   uint32_t wid = GenerateId("ASB:", id.c_str());
   std::string *textPtr = text;
   if (!textPtr) {
-    auto e = ctx->stringStates.try_emplace(wid, "");
-    textPtr = &e.first->second;
+    textPtr = &ctx->GetWidgetState(wid).stringVal; // brief 22 (fase 3)
   }
 
   // Inner field is scoped by id so its empty/hidden label produces a stable id.
@@ -3694,7 +3695,7 @@ std::string AutoSuggestBox(
                                                 : std::vector<std::string>{};
   std::string flyId = "ASB_FLY:" + id;
   uint32_t hlKey = GenerateId("ASB_HL:", id.c_str());
-  int &hl = ctx->intStates[hlKey];
+  int &hl = ctx->GetWidgetState(hlKey).intVal; // brief 22 (fase 3)
 
   std::string result;
 
@@ -3761,7 +3762,7 @@ bool TokenizingTextBox(
   bool changed = false;
 
   uint32_t bufKey = GenerateId("TTB_BUF:", id.c_str());
-  std::string &buf = ctx->stringStates[bufKey];
+  std::string &buf = ctx->GetWidgetState(bufKey).stringVal; // brief 22 (fase 3)
 
   auto trim = [](std::string s) {
     size_t a = s.find_first_not_of(" \t");

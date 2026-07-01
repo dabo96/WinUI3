@@ -70,7 +70,7 @@ bool InfoBar(const std::string& id, InfoSeverity severity,
   uint32_t wid = GenerateId("INFOBAR:", id.c_str());
 
   // Estado "cerrado" persistente por id → no reaparece tras dismiss.
-  bool& dismissed = ctx->boolStates.try_emplace(wid, false).first->second;
+  bool& dismissed = ctx->GetWidgetState(wid).boolVal; // brief 22 (fase 3)
   if (dismissed) return false;
 
   const Style& style = ctx->style;

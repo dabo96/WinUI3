@@ -62,11 +62,12 @@ std::string NavigationView(const std::string& id,
   uint32_t paneOpenKey = GenerateId("NAVP:", id.c_str());
   uint32_t selKey = GenerateId("NAVS:", id.c_str());
 
-  std::string& sel = selectedKey ? *selectedKey : ctx->stringStates[selKey];
+  std::string& sel = selectedKey ? *selectedKey : ctx->GetWidgetState(selKey).stringVal; // brief 22 (fase 3)
   // El modo base (alternado por la hamburguesa) se inicializa una vez con `mode`.
-  int& baseMode =
-      ctx->intStates.try_emplace(baseModeKey, static_cast<int>(mode)).first->second;
-  bool& paneOpen = ctx->boolStates.try_emplace(paneOpenKey, false).first->second;
+  bool baseModeFresh = ctx->widgetStates.find(baseModeKey) == ctx->widgetStates.end();
+  int& baseMode = ctx->GetWidgetState(baseModeKey).intVal;
+  if (baseModeFresh) baseMode = static_cast<int>(mode); // preserva default try_emplace(., mode)
+  bool& paneOpen = ctx->GetWidgetState(paneOpenKey).boolVal;
 
   // Responsive (brief 19): decidir según el ancho de la VENTANA (no el de la
   // barra, que es estrecho). Small → Minimal, Medium → Compact.
@@ -90,7 +91,9 @@ std::string NavigationView(const std::string& id,
   else
     targetW = expandedW;
 
-  float& curW = ctx->floatStates.try_emplace(widthKey, targetW).first->second;
+  bool curWFresh = ctx->widgetStates.find(widthKey) == ctx->widgetStates.end(); // brief 22 (fase 3)
+  float& curW = ctx->GetWidgetState(widthKey).floatVal;
+  if (curWFresh) curW = targetW; // preserva default try_emplace(., targetW)
   // Lerp exponencial hacia el ancho objetivo (degradación suave sin spring).
   float t = std::min(1.0f, ctx->deltaTime * 14.0f);
   curW += (targetW - curW) * t;
@@ -163,8 +166,7 @@ std::string NavigationView(const std::string& id,
       bool hover = IsMouseOver(ctx, rp, rs);
 
       uint32_t expKey = GenerateId("NAVE:", (id + ":" + it.key).c_str());
-      bool& expanded =
-          ctx->boolStates.try_emplace(expKey, false).first->second;
+      bool& expanded = ctx->GetWidgetState(expKey).boolVal; // brief 22 (fase 3)
 
       // Fondo de selección / hover + barra de acento.
       if (selected) {

@@ -28,7 +28,7 @@ enum class InfoSeverity : int { Informational, Success, Warning, Error };
 // ─── 1) InfoBar (mensaje inline) ──────────────────────────────────────────────
 // Barra de estado inline con icono de severidad, título en negrita, mensaje
 // multilínea (word-wrap), acción opcional y botón de cierre. El estado "cerrado"
-// persiste por `id` (ctx->boolStates) para no reaparecer. Devuelve false cuando
+// persiste por `id` (WidgetState.boolVal) para no reaparecer. Devuelve false cuando
 // el usuario lo cierra (el caller debe dejar de mostrarlo). La acción opcional,
 // si se pulsa, invoca el valueChanged callback registrado para `id` (si lo hay).
 // Rol de accesibilidad: Group, con accessibleName que incluye la severidad.
