@@ -108,30 +108,14 @@ namespace FluentUI {
             if (sharedPool->refCount > 0) sharedPool->refCount--;
             sharedPool = nullptr;
         }
-        // brief 08 Part C: only the font-resource owner frees the font GPU objects.
-        // A secondary Renderer merely referenced the owner's handles — freeing them
-        // here would double-free the owner's atlases.
-        if (ownsFontResources) {
-            // Destroy font objects first while backend is still valid
-            fontManager.Shutdown();
-            msdfFont.reset();
-            msdfGenerator.reset();
-            ClearGlyphs();
-            if (fontFace) { FT_Done_Face(fontFace); fontFace = nullptr; }
-            if (iconFontFace) { FT_Done_Face(iconFontFace); iconFontFace = nullptr; }
-            if (ftLibrary) { FT_Done_FreeType(ftLibrary); ftLibrary = nullptr; }
-            if (fontAtlasTexture && backend) backend->DeleteTexture(fontAtlasTexture);
-            if (dynamicMSDFAtlasTexture && backend) backend->DeleteTexture(dynamicMSDFAtlasTexture);
-        }
+        // brief 23: the font subsystem frees its own GPU/FreeType objects while the
+        // backend is still valid. It only frees them if it OWNS them — a secondary
+        // window merely referenced the owner's atlases (no double-free).
+        fontSystem_.Shutdown();
         // blueNoiseTexture is per-renderer (created lazily by this instance), always ours.
         if (blueNoiseTexture && backend) backend->DeleteTexture(blueNoiseTexture);
-        fontAtlasTexture = nullptr; dynamicMSDFAtlasTexture = nullptr; blueNoiseTexture = nullptr;
+        blueNoiseTexture = nullptr;
         backend = nullptr;
-    }
-
-    void Renderer::ClearGlyphs() {
-        glyphCache.clear();
-        dynamicMSDFGlyphCache.clear();
     }
 
     void Renderer::InitTrigTables() {
@@ -159,9 +143,9 @@ namespace FluentUI {
             // First Renderer bound to the pool becomes the device-owner and publishes
             // its atlas handles so secondary windows can reference the same GPU memory.
             sharedPool->originRenderer = this;
-            sharedPool->fontAtlasTexture = fontAtlasTexture;
-            sharedPool->dynamicMSDFAtlasTexture = dynamicMSDFAtlasTexture;
-            sharedPool->msdf = msdfFont.get();
+            sharedPool->fontAtlasTexture = fontSystem_.BitmapAtlasTexture();
+            sharedPool->dynamicMSDFAtlasTexture = fontSystem_.DynamicMSDFAtlasTexture();
+            sharedPool->msdf = fontSystem_.ActiveMSDF();
             sharedPool->refCount++;
         }
         return ok;
@@ -170,7 +154,6 @@ namespace FluentUI {
     bool Renderer::InitShared(RenderBackend* backend) {
         this->backend = backend;
         if (!this->backend) return false;
-        ownsFontResources = false; // we reference the owner's font GPU resources
 
         // Per-renderer (non-font) setup — identical to the head of Init(backend).
         InitTrigTables();
@@ -182,31 +165,16 @@ namespace FluentUI {
         cachedProjection[13] = 1.0f;
         cachedProjection[15] = 1.0f;
 
-        // Adopt the owner's shared GPU atlas handles (valid on the shared device /
-        // GL context). These are NOT owned here — Shutdown must not free them.
-        Renderer* o = sharedPool->originRenderer;
-        fontAtlasTexture        = o->fontAtlasTexture;
-        dynamicMSDFAtlasTexture = o->dynamicMSDFAtlasTexture;
-        atlasWidth = o->atlasWidth; atlasHeight = o->atlasHeight;
-        dynamicAtlasWidth = o->dynamicAtlasWidth; dynamicAtlasHeight = o->dynamicAtlasHeight;
-        // Mirror bitmap-font metrics so the (delegated) fallback text paths agree.
-        fontLoaded      = o->fontLoaded;
-        fontPixelHeight = o->fontPixelHeight;
-        fontAscent      = o->fontAscent;
-        fontDescent     = o->fontDescent;
-        fontLineHeight  = o->fontLineHeight;
-        iconFontLoaded      = o->iconFontLoaded;
-        iconFontPixelHeight = o->iconFontPixelHeight;
-        iconFontAscent      = o->iconFontAscent;
-        // msdfFont / fontFace / iconFontFace / fontManager stay null/empty here: the
-        // owner is the single writer, reached via FontOwner()/ActiveMSDF()/FontMgr().
+        // brief 23: point our FontSystem at the device-owner's so every glyph
+        // lookup / metric routes there — the atlas is never rebaked per window. No
+        // GPU handles are held here, so Shutdown won't free the owner's atlases.
+        fontSystem_.InitShared(backend, &sharedPool->originRenderer->fontSystem_);
         return true;
     }
 
     bool Renderer::Init(RenderBackend* backend) {
         this->backend = backend;
         if (!this->backend) return false;
-        if (FT_Init_FreeType(&ftLibrary)) return false;
 
         // Perf 3.1: Pre-compute trig tables for rounded rects
         InitTrigTables();
@@ -220,36 +188,9 @@ namespace FluentUI {
         cachedProjection[13] = 1.0f;
         cachedProjection[15] = 1.0f;
 
-        atlasWidth = 1024; atlasHeight = 1024;
-        fontAtlasTexture = backend->CreateTexture(atlasWidth, atlasHeight, nullptr, true);
-
-        dynamicMSDFAtlasTexture = backend->CreateTexture(DYNAMIC_ATLAS_SIZE, DYNAMIC_ATLAS_SIZE, nullptr, false);
-        dynamicAtlasNextX = 2; dynamicAtlasNextY = 2;
-        dynamicAtlasCurrentRowHeight = 0;
-
-        msdfFont = std::make_unique<FontMSDF>(backend);
-        msdfGenerator = std::make_unique<MSDFGenerator>();
-
-        // Initialize FontManager (Phase 5)
-        fontManager.Init(backend, ftLibrary);
-
-        InitializeDefaultFont();
-
-        // Phase 5.2: Pre-generate MSDF glyphs for ASCII range
-        // Done after font is loaded in InitializeDefaultFont
-        if (msdfFont && msdfFont->IsLoaded()) {
-            // The MSDF font atlas already has pre-generated glyphs from the atlas.json
-            // For dynamic MSDF, pre-generate ASCII + Latin Extended
-            if (fontFace) {
-                for (uint32_t c = 32; c < 128; ++c) {
-                    GetOrGenerateMSDFGlyph(c);
-                }
-                // Latin Extended (common accented characters)
-                for (uint32_t c = 192; c <= 255; ++c) {
-                    GetOrGenerateMSDFGlyph(c);
-                }
-            }
-        }
+        // brief 23: bake the font subsystem (FreeType + bitmap/MSDF atlases +
+        // default font + Lucide icon font). Owns its GPU resources.
+        if (!fontSystem_.Init(backend)) return false;
 
         return true;
     }
@@ -271,17 +212,9 @@ namespace FluentUI {
         // Reset clip stack to prevent accumulation from imbalanced Push/Pop
         clipStack.clear();
 
-        // Perf R6: Evict stale dynamic MSDF glyphs periodically
-        glyphCacheFrame++;
-        if ((glyphCacheFrame % 300) == 0 && dynamicMSDFGlyphCache.size() > MAX_GLYPH_CACHE) {
-            for (auto it = dynamicMSDFGlyphCache.begin(); it != dynamicMSDFGlyphCache.end(); ) {
-                if ((glyphCacheFrame - it->second.lastAccessFrame) > GLYPH_EVICT_AGE) {
-                    it = dynamicMSDFGlyphCache.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-        }
+        // brief 23 / Perf R6: per-frame font housekeeping (frame counter + LRU
+        // eviction of stale dynamic MSDF glyphs).
+        fontSystem_.NewFrame();
     }
 
     void Renderer::EndFrame() {
@@ -952,7 +885,7 @@ namespace FluentUI {
     void Renderer::DrawText(const Vec2& pos, const std::string& text, const Color& color, float fontSize) {
         if (!backend) return;
 
-        FontMSDF* mf = ActiveMSDF(); // shared static-MSDF atlas (owner's in multi-window)
+        FontMSDF* mf = fontSystem_.ActiveMSDF(); // shared static-MSDF atlas (owner's in multi-window)
         if (mf && mf->IsLoaded()) {
             // Issue 1: Only flush if shader/texture/color state actually changes
             EnsureBatchState(ShaderType::MSDF, mf->GetTextureHandle(), color);
@@ -991,24 +924,25 @@ namespace FluentUI {
             return;
         }
 
-        if (fontLoaded && fontAtlasTexture) {
+        void* bitmapAtlas = fontSystem_.BitmapAtlasTexture();
+        if (fontSystem_.IsFontLoaded() && bitmapAtlas) {
             // Issue 1: Only flush if shader/texture/color state actually changes
-            EnsureBatchState(ShaderType::Text, fontAtlasTexture, color);
+            EnsureBatchState(ShaderType::Text, bitmapAtlas, color);
 
-            float scale = fontSize / fontPixelHeight; float baseline = pos.y + fontAscent * scale; float penX = pos.x;
+            float scale = fontSize / fontSystem_.FontPixelHeight(); float baseline = pos.y + fontSystem_.FontAscent() * scale; float penX = pos.x;
             const char* ptr = text.data(); const char* end = ptr + text.size();
             while (ptr < end) {
                 uint32_t cp = DecodeUTF8(ptr, end);
                 if (cp == 0) break;
-                if (cp == '\n') { penX = pos.x; baseline += fontLineHeight * scale; continue; }
-                const Glyph* g = GetGlyph(cp);
-                if (!g) g = GetGlyph('?');
+                if (cp == '\n') { penX = pos.x; baseline += fontSystem_.FontLineHeight() * scale; continue; }
+                const FontSystem::Glyph* g = fontSystem_.GetGlyph(cp);
+                if (!g) g = fontSystem_.GetGlyph('?');
                 if (g) {
                     float x0 = std::round(penX + g->bearing.x * scale); float y0 = baseline - g->bearing.y * scale;
                     float w = g->size.x * scale; float h = g->size.y * scale;
                     if (w > 0 && h > 0) {
                         // Issue 5: Use 4 vertices + 6 indices instead of 6 vertices
-                        if (quadVertices.size() + 4 > MAX_QUAD_VERTICES - 4) FlushBatch(ShaderType::Text, fontAtlasTexture, color);
+                        if (quadVertices.size() + 4 > MAX_QUAD_VERTICES - 4) FlushBatch(ShaderType::Text, bitmapAtlas, color);
                         unsigned int base = static_cast<unsigned int>(quadVertices.size());
                         quadVertices.push_back({x0,y0,1,1,1,1,g->uv0.x,g->uv1.y});
                         quadVertices.push_back({x0+w,y0,1,1,1,1,g->uv1.x,g->uv1.y});
@@ -1025,122 +959,23 @@ namespace FluentUI {
     }
 
     bool Renderer::LoadFont(const std::string& filepath, int pixelHeight) {
-        // Secondary renderer: load into the owner's shared atlas instead.
-        if (!ownsFontResources) return FontOwner()->LoadFont(filepath, pixelHeight);
-        std::filesystem::path resolved = ResolveResourcePath(filepath);
-        if (resolved.empty()) return false;
-        if (FT_New_Face(ftLibrary, resolved.string().c_str(), 0, &fontFace)) return false;
-        FT_Set_Pixel_Sizes(fontFace, 0, pixelHeight);
-        fontPixelHeight = static_cast<float>(pixelHeight);
-        fontAscent = static_cast<float>(fontFace->size->metrics.ascender) / 64.0f;
-        fontDescent = static_cast<float>(fontFace->size->metrics.descender) / 64.0f;
-        fontLineHeight = static_cast<float>(fontFace->size->metrics.height) / 64.0f;
-        fontLoaded = true; ClearGlyphs();
-        for (uint32_t c = 32; c < 128; ++c) LoadGlyph(c);
-        return true;
+        return fontSystem_.LoadFont(filepath, pixelHeight);
     }
 
     Vec2 Renderer::MeasureText(const std::string& text, float fontSize) {
-        FontMSDF* mf = ActiveMSDF();
-        if (mf && mf->IsLoaded()) {
-            float scale = fontSize / mf->GetEmSize(); float currentW = 0.0f, maxW = 0.0f;
-            float totalH = fontSize * mf->GetLineHeight();
-            const char* ptr = text.data(); const char* end = ptr + text.size();
-            while (ptr < end) {
-                uint32_t cp = DecodeUTF8(ptr, end);
-                if (cp == 0) break;
-                if (cp == '\n') { maxW = std::max(maxW, currentW); currentW = 0.0f; totalH += fontSize * mf->GetLineHeight(); continue; }
-                const FontMSDF::Glyph* g = mf->GetGlyph(cp);
-                if (g) currentW += g->advance * scale; else currentW += fontSize * 0.3f;
-            }
-            return {std::max(maxW, currentW), totalH};
-        }
-        if (!fontLoaded) return {static_cast<float>(text.size()) * fontSize * 0.6f, fontSize};
-        float scale = fontSize / fontPixelHeight; float currentW = 0.0f, maxW = 0.0f;
-        float totalH = (fontLineHeight > 0 ? fontLineHeight : fontPixelHeight) * scale;
-        const char* ptr = text.data(); const char* end = ptr + text.size();
-        while (ptr < end) {
-            uint32_t cp = DecodeUTF8(ptr, end);
-            if (cp == 0) break;
-            if (cp == '\n') { maxW = std::max(maxW, currentW); currentW = 0.0f; totalH += (fontLineHeight * scale); continue; }
-            const Glyph* g = GetGlyph(cp);
-            if (g) currentW += g->advance * scale;
-        }
-        return {std::max(maxW, currentW), totalH};
-    }
-
-    // Vertical advance per line, consistent with DrawText's multiline stepping
-    // and MeasureText's per-line height. Routes through ActiveMSDF() so secondary
-    // renderers (shared-device, brief 08) use the owner's font metrics.
-    float Renderer::LineAdvancePx(float fontSize) {
-        FontMSDF* mf = ActiveMSDF();
-        if (mf && mf->IsLoaded()) return fontSize * mf->GetLineHeight();
-        if (fontLoaded) {
-            float scale = fontSize / fontPixelHeight;
-            return (fontLineHeight > 0 ? fontLineHeight : fontPixelHeight) * scale;
-        }
-        return fontSize;
-    }
-
-    // Break text into lines, wrapping by word within maxWidth and honoring
-    // explicit '\n'. Reuses MeasureText/GetGlyphAdvance for sizing (no rasterizing
-    // here). outMaxWidth receives the widest resulting line.
-    std::vector<std::string> Renderer::WrapTextLines(const std::string& text, float maxWidth,
-                                                     float fontSize, float& outMaxWidth) {
-        std::vector<std::string> lines;
-        outMaxWidth = 0.0f;
-        const float spaceW = GetGlyphAdvance(' ', fontSize);
-        size_t start = 0;
-        while (start <= text.size()) {
-            size_t nl = text.find('\n', start);
-            std::string paragraph = (nl == std::string::npos)
-                                        ? text.substr(start)
-                                        : text.substr(start, nl - start);
-            std::string line;
-            float lineW = 0.0f;
-            bool anyWord = false;
-            size_t wstart = 0;
-            while (wstart <= paragraph.size()) {
-                size_t sp = paragraph.find(' ', wstart);
-                std::string word = (sp == std::string::npos)
-                                       ? paragraph.substr(wstart)
-                                       : paragraph.substr(wstart, sp - wstart);
-                if (!word.empty()) {
-                    float wordW = MeasureText(word, fontSize).x;
-                    if (!anyWord) {
-                        line = word; lineW = wordW; anyWord = true;
-                    } else if (lineW + spaceW + wordW <= maxWidth) {
-                        line += ' '; line += word; lineW += spaceW + wordW;
-                    } else {
-                        lines.push_back(line);
-                        outMaxWidth = std::max(outMaxWidth, lineW);
-                        line = word; lineW = wordW;
-                    }
-                }
-                if (sp == std::string::npos) break;
-                wstart = sp + 1;
-            }
-            lines.push_back(line);
-            outMaxWidth = std::max(outMaxWidth, lineW);
-            if (nl == std::string::npos) break;
-            start = nl + 1;
-        }
-        return lines;
+        return fontSystem_.MeasureText(text, fontSize);
     }
 
     Vec2 Renderer::MeasureTextWrapped(const std::string& text, float maxWidth, float fontSize) {
-        if (fontSize <= 0.0f) fontSize = 16.0f;
-        float maxW = 0.0f;
-        std::vector<std::string> lines = WrapTextLines(text, maxWidth, fontSize, maxW);
-        return { maxW, LineAdvancePx(fontSize) * static_cast<float>(lines.size()) };
+        return fontSystem_.MeasureTextWrapped(text, maxWidth, fontSize);
     }
 
     void Renderer::DrawTextWrapped(const Vec2& pos, const std::string& text, const Color& color,
                                    float maxWidth, float fontSize) {
         if (fontSize <= 0.0f) fontSize = 16.0f;
         float maxW = 0.0f;
-        std::vector<std::string> lines = WrapTextLines(text, maxWidth, fontSize, maxW);
-        float lineH = LineAdvancePx(fontSize);
+        std::vector<std::string> lines = fontSystem_.WrapTextLines(text, maxWidth, fontSize, maxW);
+        float lineH = fontSystem_.LineAdvancePx(fontSize);
         float y = pos.y;
         for (const std::string& ln : lines) {
             if (!ln.empty()) DrawText(Vec2(pos.x, y), ln, color, fontSize);
@@ -1149,112 +984,30 @@ namespace FluentUI {
     }
 
     float Renderer::GetFontAscender() const {
-        FontMSDF* mf = ActiveMSDF();
-        if (mf && mf->IsLoaded()) {
-            return mf->GetAscender();
-        }
-        // Fallback razonable para fonts típicos (sans-serif estándar).
-        return 0.8f;
+        return fontSystem_.GetFontAscender();
     }
 
     // Issue 8: Public glyph advance accessor
     float Renderer::GetGlyphAdvance(uint32_t codepoint, float fontSize) {
-        FontMSDF* mf = ActiveMSDF();
-        if (mf && mf->IsLoaded()) {
-            float scale = fontSize / mf->GetEmSize();
-            const FontMSDF::Glyph* g = mf->GetGlyph(codepoint);
-            if (g) return g->advance * scale;
-            return fontSize * 0.3f;
-        }
-        if (!fontLoaded) return fontSize * 0.6f;
-        float scale = fontSize / fontPixelHeight;
-        const Glyph* g = GetGlyph(codepoint);
-        if (g) return g->advance * scale;
-        return fontSize * 0.6f;
+        return fontSystem_.GetGlyphAdvance(codepoint, fontSize);
     }
 
-    const Renderer::Glyph* Renderer::GetGlyph(uint32_t cp) {
-        // Secondary renderer: the owner is the sole writer of the shared bitmap atlas.
-        if (!ownsFontResources) return FontOwner()->GetGlyph(cp);
-        auto it = glyphCache.find(cp); if (it != glyphCache.end() && it->second.valid) return &it->second;
-        if (LoadGlyph(cp)) return &glyphCache[cp];
-        return nullptr;
-    }
-
-    bool Renderer::LoadGlyph(uint32_t cp) {
-        if (!fontFace) return false;
-        if (FT_Load_Char(fontFace, cp, FT_LOAD_RENDER | FT_LOAD_TARGET_NORMAL)) return false;
-        FT_GlyphSlot slot = fontFace->glyph;
-        int w = slot->bitmap.width, h = slot->bitmap.rows;
-        int ax, ay; if (!EnsureAtlasSpace(w, h, ax, ay)) return false;
-        if (w > 0 && h > 0) backend->UpdateTexture(fontAtlasTexture, ax, ay, w, h, slot->bitmap.buffer);
-        auto& g = glyphCache[cp];
-        g.advance = static_cast<float>(slot->advance.x) / 64.0f;
-        g.bearing = Vec2(static_cast<float>(slot->bitmap_left), static_cast<float>(slot->bitmap_top));
-        g.size = Vec2(static_cast<float>(w), static_cast<float>(h));
-        g.uv0 = Vec2(static_cast<float>(ax) / atlasWidth, static_cast<float>(ay) / atlasHeight);
-        g.uv1 = Vec2(static_cast<float>(ax + w) / atlasWidth, static_cast<float>(ay + h) / atlasHeight);
-        g.valid = true; return true;
-    }
-
-    // ─── Icon Font (secondary) ─────────────────────────────────────────────
     bool Renderer::LoadIconFont(const std::string& filepath, int pixelHeight) {
-        // Secondary renderer: load into the owner's shared atlas instead.
-        if (!ownsFontResources) return FontOwner()->LoadIconFont(filepath, pixelHeight);
-        std::filesystem::path resolved = ResolveResourcePath(filepath);
-        if (resolved.empty()) {
-            Log(LogLevel::Error, "Icon font not found: %s", filepath.c_str());
-            return false;
-        }
-        if (FT_New_Face(ftLibrary, resolved.string().c_str(), 0, &iconFontFace)) {
-            Log(LogLevel::Error, "Failed to load icon font: %s", resolved.string().c_str());
-            return false;
-        }
-        FT_Set_Pixel_Sizes(iconFontFace, 0, pixelHeight);
-        iconFontPixelHeight = static_cast<float>(pixelHeight);
-        iconFontAscent = static_cast<float>(iconFontFace->size->metrics.ascender) / 64.0f;
-        iconFontLoaded = true;
-        Log(LogLevel::Info, "Icon font loaded: %s (%dpx)", resolved.string().c_str(), pixelHeight);
-        return true;
-    }
-
-    bool Renderer::LoadIconGlyph(uint32_t cp) {
-        if (!iconFontFace) return false;
-        if (FT_Load_Char(iconFontFace, cp, FT_LOAD_RENDER | FT_LOAD_TARGET_NORMAL)) return false;
-        FT_GlyphSlot slot = iconFontFace->glyph;
-        int w = slot->bitmap.width, h = slot->bitmap.rows;
-        int ax, ay; if (!EnsureAtlasSpace(w, h, ax, ay)) return false;
-        if (w > 0 && h > 0) backend->UpdateTexture(fontAtlasTexture, ax, ay, w, h, slot->bitmap.buffer);
-        auto& g = iconGlyphCache[cp];
-        g.advance = static_cast<float>(slot->advance.x) / 64.0f;
-        g.bearing = Vec2(static_cast<float>(slot->bitmap_left), static_cast<float>(slot->bitmap_top));
-        g.size = Vec2(static_cast<float>(w), static_cast<float>(h));
-        g.uv0 = Vec2(static_cast<float>(ax) / atlasWidth, static_cast<float>(ay) / atlasHeight);
-        g.uv1 = Vec2(static_cast<float>(ax + w) / atlasWidth, static_cast<float>(ay + h) / atlasHeight);
-        g.valid = true; return true;
-    }
-
-    const Renderer::Glyph* Renderer::GetIconGlyph(uint32_t cp) {
-        // Secondary renderer: icon glyphs live in the owner's shared bitmap atlas.
-        if (!ownsFontResources) return FontOwner()->GetIconGlyph(cp);
-        auto it = iconGlyphCache.find(cp);
-        if (it != iconGlyphCache.end() && it->second.valid) return &it->second;
-        if (LoadIconGlyph(cp)) return &iconGlyphCache[cp];
-        return nullptr;
+        return fontSystem_.LoadIconFont(filepath, pixelHeight);
     }
 
     void Renderer::DrawIconGlyph(const Vec2& pos, uint32_t codepoint, const Color& color, float fontSize) {
-        if (!iconFontLoaded) return;
-        const Glyph* g = GetIconGlyph(codepoint);
+        if (!fontSystem_.IsIconFontLoaded()) return;
+        const FontSystem::Glyph* g = fontSystem_.GetIconGlyph(codepoint);
         if (!g) return;
 
-        float scale = fontSize / iconFontPixelHeight;
+        float scale = fontSize / fontSystem_.IconFontPixelHeight();
         float x0 = std::round(pos.x + g->bearing.x * scale);
-        float y0 = std::round(pos.y + (iconFontAscent - g->bearing.y) * scale);
+        float y0 = std::round(pos.y + (fontSystem_.IconFontAscent() - g->bearing.y) * scale);
         float w = g->size.x * scale;
         float h = g->size.y * scale;
 
-        EnsureBatchState(ShaderType::Text, fontAtlasTexture, color);
+        EnsureBatchState(ShaderType::Text, fontSystem_.BitmapAtlasTexture(), color);
         if (quadVertices.size() + 4 > MAX_QUAD_VERTICES) FlushBatch();
 
         unsigned int base = static_cast<unsigned int>(quadVertices.size());
@@ -1264,120 +1017,6 @@ namespace FluentUI {
         quadVertices.push_back({x0,     y0 + h, color.r, color.g, color.b, color.a, g->uv0.x, g->uv1.y});
         quadIndices.push_back(base); quadIndices.push_back(base+1); quadIndices.push_back(base+2);
         quadIndices.push_back(base); quadIndices.push_back(base+2); quadIndices.push_back(base+3);
-    }
-
-    bool Renderer::EnsureAtlasSpace(int w, int h, int& ox, int& oy) {
-        int pad = 2;
-        if (atlasNextX + w + pad > atlasWidth) { atlasNextX = 0; atlasNextY += atlasCurrentRowHeight + pad; atlasCurrentRowHeight = 0; }
-        if (atlasNextY + h + pad > atlasHeight) return false;
-        ox = atlasNextX + pad; oy = atlasNextY + pad;
-        atlasNextX += w + pad; atlasCurrentRowHeight = std::max(atlasCurrentRowHeight, h);
-        return true;
-    }
-
-    const Renderer::Glyph* Renderer::GetOrGenerateMSDFGlyph(uint32_t cp) {
-        // Secondary renderer: the owner is the sole writer of the shared dynamic atlas.
-        if (!ownsFontResources) return FontOwner()->GetOrGenerateMSDFGlyph(cp);
-        auto it = dynamicMSDFGlyphCache.find(cp);
-        if (it != dynamicMSDFGlyphCache.end() && it->second.valid) {
-            it->second.lastAccessFrame = glyphCacheFrame; // Perf R6: touch for LRU
-            return &it->second;
-        }
-        if (GenerateMSDFGlyph(cp)) {
-            dynamicMSDFGlyphCache[cp].lastAccessFrame = glyphCacheFrame;
-            return &dynamicMSDFGlyphCache[cp];
-        }
-        return nullptr;
-    }
-
-    bool Renderer::GenerateMSDFGlyph(uint32_t cp) {
-        if (!msdfGenerator || !fontFace) return false;
-        FT_UInt idx = FT_Get_Char_Index(fontFace, cp); if (idx == 0) return false;
-        auto data = msdfGenerator->GenerateFromGlyph(fontFace, idx, MSDF_GLYPH_SIZE, 4.0f, 4);
-        if (!data) return false;
-        int ax, ay; if (!EnsureDynamicMSDFAtlasSpace(data->width, data->height, ax, ay)) return false;
-        backend->UpdateTexture(dynamicMSDFAtlasTexture, ax, ay, data->width, data->height, data->pixels.data());
-        FT_Load_Glyph(fontFace, idx, FT_LOAD_NO_BITMAP);
-        auto& g = dynamicMSDFGlyphCache[cp];
-        g.size = Vec2(static_cast<float>(data->width), static_cast<float>(data->height));
-        g.bearing = Vec2(static_cast<float>(fontFace->glyph->metrics.horiBearingX)/64.0f, static_cast<float>(fontFace->glyph->metrics.horiBearingY)/64.0f);
-        g.advance = static_cast<float>(fontFace->glyph->metrics.horiAdvance)/64.0f;
-        g.uv0 = Vec2(static_cast<float>(ax)/DYNAMIC_ATLAS_SIZE, static_cast<float>(ay)/DYNAMIC_ATLAS_SIZE);
-        g.uv1 = Vec2(static_cast<float>(ax+data->width)/DYNAMIC_ATLAS_SIZE, static_cast<float>(ay+data->height)/DYNAMIC_ATLAS_SIZE);
-        g.valid = true; return true;
-    }
-
-    bool Renderer::EnsureDynamicMSDFAtlasSpace(int w, int h, int& ox, int& oy) {
-        int pad = 2;
-        if (dynamicAtlasNextX + w + pad > dynamicAtlasWidth) {
-            dynamicAtlasNextX = pad;
-            dynamicAtlasNextY += dynamicAtlasCurrentRowHeight + pad;
-            dynamicAtlasCurrentRowHeight = 0;
-        }
-        if (dynamicAtlasNextY + h + pad > dynamicAtlasHeight) {
-            // Dynamic Atlas Growth — create a larger atlas and re-generate glyphs
-            int newHeight = dynamicAtlasHeight * 2;
-            if (newHeight > 8192) return false; // Max 8192px
-
-            void* newAtlas = backend->CreateTexture(dynamicAtlasWidth, newHeight, nullptr, false);
-            if (!newAtlas) return false;
-
-            backend->DeleteTexture(dynamicMSDFAtlasTexture);
-            dynamicMSDFAtlasTexture = newAtlas;
-            dynamicAtlasHeight = newHeight;
-
-            dynamicAtlasNextX = pad;
-            dynamicAtlasNextY = pad;
-            dynamicAtlasCurrentRowHeight = 0;
-
-            auto oldGlyphs = std::move(dynamicMSDFGlyphCache);
-            dynamicMSDFGlyphCache.clear();
-            for (auto& [cp, _] : oldGlyphs) {
-                GenerateMSDFGlyph(cp);
-            }
-
-            if (dynamicAtlasNextX + w + pad > dynamicAtlasWidth) {
-                dynamicAtlasNextX = pad;
-                dynamicAtlasNextY += dynamicAtlasCurrentRowHeight + pad;
-                dynamicAtlasCurrentRowHeight = 0;
-            }
-            if (dynamicAtlasNextY + h + pad > dynamicAtlasHeight) return false;
-        }
-        ox = dynamicAtlasNextX; oy = dynamicAtlasNextY;
-        dynamicAtlasNextX += w + pad; dynamicAtlasCurrentRowHeight = std::max(dynamicAtlasCurrentRowHeight, h);
-        return true;
-    }
-
-    void Renderer::InitializeDefaultFont() {
-        std::filesystem::path atlasPng = ResolveResourcePath("assets/fonts/atlas.png");
-        std::filesystem::path atlasJson = ResolveResourcePath("assets/fonts/atlas.json");
-
-        bool textReady = false;
-        if (!atlasPng.empty() && !atlasJson.empty()) {
-            if (msdfFont->Load(atlasPng.string(), atlasJson.string())) {
-                Log(LogLevel::Info, "MSDF Font loaded successfully from: %s", atlasPng.string().c_str());
-                textReady = true;
-            }
-        }
-
-        if (!textReady) {
-            Log(LogLevel::Error, "Could not load MSDF font, falling back to System font.");
-#if defined(_WIN32)
-            LoadFont("C:/Windows/Fonts/segoeui.ttf", 14);
-#elif defined(__APPLE__)
-            LoadFont("/System/Library/Fonts/SFNS.ttf", 14);
-#else
-            LoadFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14);
-#endif
-        }
-
-        // Auto-load the Lucide icon font here, at the renderer level, so icon
-        // glyphs render on EVERY entry point — FluentApp, the standalone gallery,
-        // or an external-GL host — not only when FluentApp's constructor runs.
-        // FluentApp may still override this with an explicit path afterwards.
-        if (!iconFontLoaded) {
-            LoadIconFont("assets/fonts/lucide.ttf", 32);
-        }
     }
 
     void Renderer::PushClipRect(const Vec2& pos, const Vec2& size) {
@@ -1708,7 +1347,7 @@ namespace FluentUI {
     // --- Multi-font DrawText (Phase 5) ---
     void Renderer::DrawTextWithFont(const Vec2& pos, const std::string& text, const Color& color,
                                      const std::string& fontName, float fontSize) {
-        auto* font = FontMgr().GetFont(fontName);
+        auto* font = fontSystem_.Manager().GetFont(fontName);
         if (!font || !font->loaded || !font->atlasTexture) {
             // Fallback to default rendering
             DrawText(pos, text, color, fontSize);
@@ -1731,7 +1370,7 @@ namespace FluentUI {
                 baseline += font->lineHeight * scale;
                 continue;
             }
-            auto* g = FontMgr().GetGlyph(font, cp);
+            auto* g = fontSystem_.Manager().GetGlyph(font, cp);
             if (!g) {
                 penX += fontSize * 0.3f;
                 continue;
@@ -1756,7 +1395,7 @@ namespace FluentUI {
     }
 
     Vec2 Renderer::MeasureTextWithFont(const std::string& text, const std::string& fontName, float fontSize) {
-        return FontMgr().MeasureText(fontName, text, fontSize);
+        return fontSystem_.MeasureTextWithFont(text, fontName, fontSize);
     }
 
 } // namespace FluentUI

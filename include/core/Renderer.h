@@ -11,7 +11,8 @@
 #include "core/FontMSDF.h"
 #include "core/MSDFGenerator.h"
 #include "core/FontManager.h"
-#include "core/SharedResourcePool.h" // complete type: FontOwner() dereferences it
+#include "core/FontSystem.h" // brief 23: font/atlas/MSDF subsystem (owned by Renderer)
+#include "core/SharedResourcePool.h" // complete type: originRenderer dereferenced in Init
 #include <memory>
 #include <iostream>
 
@@ -170,7 +171,7 @@ public:
   void DrawText(const Vec2 &pos, const std::string &text, const Color &color,
                 float fontSize = 16.0f);
   bool LoadFont(const std::string &filepath, int pixelHeight);
-  bool IsFontLoaded() const { return fontLoaded; }
+  bool IsFontLoaded() const { return fontSystem_.IsFontLoaded(); }
   Vec2 MeasureText(const std::string &text, float fontSize = 16.0f);
   // Mide el texto envolviendo por palabra dentro de maxWidth. Devuelve {ancho real usado, alto total}.
   Vec2 MeasureTextWrapped(const std::string& text, float maxWidth, float fontSize = 0.0f);
@@ -185,7 +186,7 @@ public:
   // Icon font (secondary font for UI icons like Lucide)
   bool LoadIconFont(const std::string &filepath, int pixelHeight);
   void DrawIconGlyph(const Vec2 &pos, uint32_t codepoint, const Color &color, float fontSize = 16.0f);
-  bool IsIconFontLoaded() const { return iconFontLoaded; }
+  bool IsIconFontLoaded() const { return fontSystem_.IsIconFontLoaded(); }
 
   // Issue 8: Public glyph advance accessor for FindCaretPosition
   float GetGlyphAdvance(uint32_t codepoint, float fontSize);
@@ -198,7 +199,7 @@ public:
   // Font manager access. In a multi-window shared-device setup this routes to the
   // device-owner's manager so fonts registered from any window land in the single
   // shared atlas (brief 08 Part C — fonts are not re-baked per window).
-  FontManager& GetFontManager() { return FontOwner()->fontManager; }
+  FontManager& GetFontManager() { return fontSystem_.Manager(); }
 
   // Utilidades
   void SetViewport(int width, int height);
@@ -237,24 +238,12 @@ private:
   // brief 08 Part C: shared per-device resource pool (null = standalone).
   SharedResourcePool* sharedPool = nullptr;
 
-  // brief 08 Part C: font-resource ownership. The first Renderer bound to a pool
-  // bakes and OWNS the font atlases (bitmap, icon, static + dynamic MSDF) and the
-  // FontManager; secondary Renderers on the same device adopt those GPU handles
-  // and route every glyph lookup/generation through the owner, so the atlas is
-  // never rebuilt per window. true for standalone and for the device-owner.
-  bool ownsFontResources = true;
-  // The Renderer that physically owns the font GPU resources (the pool's origin,
-  // or `this` when standalone / when we are the origin).
-  Renderer* FontOwner() const {
-    return (sharedPool && sharedPool->originRenderer) ? sharedPool->originRenderer
-                                                      : const_cast<Renderer*>(this);
-  }
-  // The effective static-MSDF font (owner's). Null before fonts are initialized.
-  FontMSDF* ActiveMSDF() const { return FontOwner()->msdfFont.get(); }
-  // The effective multi-font manager (owner's).
-  FontManager& FontMgr() { return FontOwner()->fontManager; }
+  // brief 08 Part C: the font subsystem (fontSystem_) is a device-level resource.
+  // The first Renderer bound to a pool owns the atlases; secondary Renderers point
+  // their fontSystem_ at the owner's (see InitShared) so the atlas is never rebuilt
+  // per window. All font state/logic lives in FontSystem (brief 23).
   // Shared-device init for a secondary Renderer: skips font baking and adopts the
-  // owner's atlas handles. Implemented in Renderer.cpp.
+  // owner's FontSystem. Implemented in Renderer.cpp.
   bool InitShared(RenderBackend* backend);
   Vec2 viewportSize = {800.0f, 600.0f};
   RenderLayer currentLayer = RenderLayer::Default;
@@ -273,75 +262,11 @@ private:
 
   std::vector<RenderBatch> layerBatches[(int)RenderLayer::Count];
 
-  struct Glyph {
-    Vec2 size;     // size of glyph in pixels
-    Vec2 bearing;  // offset from baseline to top-left
-    float advance = 0.0f; // horizontal advance in pixels
-    Vec2 uv0;
-    Vec2 uv1;
-    bool valid = false;
-    uint32_t lastAccessFrame = 0;  // Perf R6: for LRU eviction
-  };
-  uint32_t glyphCacheFrame = 0;
-  static constexpr size_t MAX_GLYPH_CACHE = 2048;
-  static constexpr uint32_t GLYPH_EVICT_AGE = 600; // Evict after 10s at 60fps
-
-  std::unordered_map<std::uint32_t, Glyph> glyphCache;
-  bool fontLoaded = false;
-  float fontPixelHeight = 16.0f;
-  float fontAscent = 0.0f;
-  float fontDescent = 0.0f;
-  float fontLineHeight = 0.0f;
-  FT_Library ftLibrary = nullptr;
-  FT_Face fontFace = nullptr;
-
-  void* fontAtlasTexture = nullptr;
-  int atlasWidth = 0;
-  int atlasHeight = 0;
-  int atlasNextX = 0;
-  int atlasNextY = 0;
-  int atlasCurrentRowHeight = 0;
-
-  // Icon font (secondary)
-  FT_Face iconFontFace = nullptr;
-  bool iconFontLoaded = false;
-  float iconFontPixelHeight = 16.0f;
-  float iconFontAscent = 0.0f;
-  std::unordered_map<uint32_t, Glyph> iconGlyphCache;
-  bool LoadIconGlyph(uint32_t cp);
-  const Glyph* GetIconGlyph(uint32_t cp);
-
-  std::unique_ptr<FontMSDF> msdfFont;
-  std::unique_ptr<MSDFGenerator> msdfGenerator;
-
-  // Multi-font manager (Phase 5)
-  FontManager fontManager;
-
-  static constexpr int DYNAMIC_ATLAS_SIZE = 2048;
-  static constexpr int MSDF_GLYPH_SIZE = 64;
-  void* dynamicMSDFAtlasTexture = nullptr;
-  int dynamicAtlasWidth = DYNAMIC_ATLAS_SIZE;
-  int dynamicAtlasHeight = DYNAMIC_ATLAS_SIZE;
-  int dynamicAtlasNextX = 0;
-  int dynamicAtlasNextY = 0;
-  int dynamicAtlasCurrentRowHeight = 0;
-  std::unordered_map<std::uint32_t, Glyph> dynamicMSDFGlyphCache;
-
-  // Helpers internos
-  void InitializeDefaultFont();
-  void ClearGlyphs();
-  const Glyph* GetGlyph(std::uint32_t codepoint);
-  bool LoadGlyph(std::uint32_t codepoint);
-  const Glyph* GetOrGenerateMSDFGlyph(std::uint32_t codepoint);
-  bool GenerateMSDFGlyph(std::uint32_t codepoint);
-  float GetKerning(std::uint32_t left, std::uint32_t right) const;
-  // Word-wrap helpers (shared by Measure/DrawTextWrapped). LineAdvancePx returns
-  // the vertical advance per line matching DrawText's multiline stepping.
-  float LineAdvancePx(float fontSize);
-  std::vector<std::string> WrapTextLines(const std::string& text, float maxWidth,
-                                         float fontSize, float& outMaxWidth);
-  bool EnsureAtlasSpace(int glyphWidth, int glyphHeight, int& outX, int& outY);
-  bool EnsureDynamicMSDFAtlasSpace(int glyphWidth, int glyphHeight, int& outX, int& outY);
+  // brief 23: font/atlas/MSDF subsystem. Owned per-Renderer, but a secondary
+  // window's fontSystem_ routes every read to the device-owner's (set in
+  // InitShared) so the atlas is shared, not rebuilt. The text DRAW methods stay in
+  // Renderer (they emit quads into the batch); fontSystem_ supplies glyphs/metrics.
+  FontSystem fontSystem_;
 
   // Brief 06: flat tinted fallback for Acrylic/Mica when the backend cannot blur
   // (e.g. Vulkan shared mode, or no render targets). This is the old "fake acrylic"

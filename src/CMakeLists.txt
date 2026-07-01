@@ -1,6 +1,7 @@
 add_library(FluentUI
     Core/Context.cpp
     Core/Renderer.cpp
+    Core/FontSystem.cpp
     Core/FontMSDF.cpp
     Core/MSDFGenerator.cpp
     Core/InputState.cpp
