@@ -442,25 +442,14 @@ static inline uint32_t HashStr(uint32_t h, const char *s) {
 }
 
 // Helper to register hash with GC tracking
-// Perf 1.2: Only register base ID — animation slots registered lazily via RegisterAnimSlots
+// brief 22 (fase 9): ya no escribe lastSeenFrame (el GC rotatorio se retiró; el GC
+// del mapa unificado usa WidgetState.lastFrameSeen). Solo publica lastGeneratedId.
 static uint32_t RegisterHash(uint32_t hash) {
   UIContext *ctx = GetContext();
   if (ctx) {
-    ctx->lastSeenFrame[hash] = ctx->frame;
     ctx->lastGeneratedId = hash;
   }
   return hash;
-}
-
-// Perf 1.2: Lazy registration of animation slots — only called by widgets that use animations
-void RegisterAnimSlots(uint32_t widgetId) {
-  UIContext *ctx = GetContext();
-  if (ctx) {
-    uint32_t frame = ctx->frame;
-    ctx->lastSeenFrame[AnimSlot(widgetId, 0)] = frame;
-    ctx->lastSeenFrame[AnimSlot(widgetId, 1)] = frame;
-    ctx->lastSeenFrame[AnimSlot(widgetId, 2)] = frame;
-  }
 }
 
 // brief 21: current scope seed, null-safe (5381 == djb2 base when no context or

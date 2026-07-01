@@ -140,7 +140,8 @@ namespace FluentUI {
                           float response, float dampingRatio) {
         if (!ctx) return Vec2(0.0f, 0.0f);
         auto& fs = ctx->GetWidgetState(itemId).flip; // brief 22 (fase 2): antes flipStates[itemId]
-        ctx->lastSeenFrame[itemId] = ctx->frame; // (legacy) marca GC rotatorio; GetWidgetState ya refresca lastFrameSeen
+        // brief 22 (fase 9): GetWidgetState ya refresca lastFrameSeen (GC unificado);
+        // se retiró el write a lastSeenFrame del GC rotatorio (eliminado).
         if (!fs.valid) {
             fs.valid = true;
             fs.prevPos = currentPos;
@@ -169,7 +170,8 @@ namespace FluentUI {
                           float enterResponse) {
         if (!ctx) return 1.0f;
         auto& a = ctx->GetWidgetState(itemId).floatAnim[0]; // brief 22 (fase 2): antes floatAnimations[itemId]
-        ctx->lastSeenFrame[itemId] = ctx->frame;
+        // brief 22 (fase 9): sin write a lastSeenFrame (GC rotatorio retirado);
+        // GetWidgetState ya refrescó lastFrameSeen.
         if (!a.IsInitialized()) {
             a.SetImmediate(0.0f);
             a.SetTarget(1.0f, enterResponse, EasingType::Decelerate);
@@ -183,9 +185,13 @@ namespace FluentUI {
     // brief 10 Part G: union of all active animation sources. Used by the host loop
     // to decide whether to idle (block on events) or render continuously.
     bool UIContext::AnyAnimationActive() const {
-        if (!activeColorAnimIds.empty() || !activeFloatAnimIds.empty() ||
+        // brief 22 (fase 9): activeColorAnimIds y activeSpringFloatIds se retiraron
+        // (huérfanos: ningún widget usa WidgetState.colorAnim[]/springFloat[] ni llama
+        // a los Notify* correspondientes tras la migración fases 2-8). activeRippleIds
+        // se conserva porque el ripple SÍ es una feature usada (Button.AddRipple).
+        if (!activeFloatAnimIds.empty() ||
             !activeRippleIds.empty() || !activeSpringColorIds.empty() ||
-            !activeSpringFloatIds.empty() || widgetTree.HasActiveAnimations())
+            widgetTree.HasActiveAnimations())
             return true;
         // brief 10 Part D/E + brief 22 (fase 2): presence (fade de overlays) y flip
         // (item deslizante) viven inline en widgetStates. Recorrido solo-lectura del
@@ -566,28 +572,11 @@ namespace FluentUI {
         // widgetStates.find (NO crea entradas espurias — preserva el viejo gate
         // find()!=end()) y recorre los slots del array correspondiente. Se retira de
         // la lista activa cuando ningún slot sigue animando (o el ripple se apaga).
-        for (size_t i = 0; i < g_ctx->activeColorAnimIds.size(); ) {
-            uint32_t id = g_ctx->activeColorAnimIds[i];
-            auto it = g_ctx->widgetStates.find(id);
-            if (it != g_ctx->widgetStates.end()) {
-                bool anyAnim = false;
-                for (int s = 0; s < 4; ++s) {
-                    it->second.colorAnim[s].Update(deltaTime);
-                    if (it->second.colorAnim[s].IsAnimating()) anyAnim = true;
-                }
-                if (!anyAnim) {
-                    // Swap-and-pop removal (O(1))
-                    g_ctx->activeColorAnimIds[i] = g_ctx->activeColorAnimIds.back();
-                    g_ctx->activeColorAnimIds.pop_back();
-                    continue;
-                }
-            } else {
-                g_ctx->activeColorAnimIds[i] = g_ctx->activeColorAnimIds.back();
-                g_ctx->activeColorAnimIds.pop_back();
-                continue;
-            }
-            ++i;
-        }
+        // brief 22 (fase 9): el driver de activeColorAnimIds se retiró — el vector
+        // quedó huérfano (ningún widget usa WidgetState.colorAnim[] ni llama a
+        // NotifyColorAnimActive tras la migración fases 2-8). Los springs de color de
+        // botón (bg/fg/border) viven en springColor[] y los conduce el driver de
+        // activeSpringColorIds (más abajo).
         for (size_t i = 0; i < g_ctx->activeFloatAnimIds.size(); ) {
             uint32_t id = g_ctx->activeFloatAnimIds[i];
             auto it = g_ctx->widgetStates.find(id);
@@ -632,27 +621,9 @@ namespace FluentUI {
             }
             ++i;
         }
-        for (size_t i = 0; i < g_ctx->activeSpringFloatIds.size(); ) {
-            uint32_t id = g_ctx->activeSpringFloatIds[i];
-            auto it = g_ctx->widgetStates.find(id);
-            if (it != g_ctx->widgetStates.end()) {
-                bool anyAnim = false;
-                for (int s = 0; s < 4; ++s) {
-                    it->second.springFloat[s].Update(deltaTime);
-                    if (it->second.springFloat[s].IsAnimating()) anyAnim = true;
-                }
-                if (!anyAnim) {
-                    g_ctx->activeSpringFloatIds[i] = g_ctx->activeSpringFloatIds.back();
-                    g_ctx->activeSpringFloatIds.pop_back();
-                    continue;
-                }
-            } else {
-                g_ctx->activeSpringFloatIds[i] = g_ctx->activeSpringFloatIds.back();
-                g_ctx->activeSpringFloatIds.pop_back();
-                continue;
-            }
-            ++i;
-        }
+        // brief 22 (fase 9): el driver de activeSpringFloatIds se retiró — vector
+        // huérfano (ningún widget usa WidgetState.springFloat[] ni llama a
+        // NotifySpringFloatActive tras la migración fases 2-8).
         for (size_t i = 0; i < g_ctx->activeRippleIds.size(); ) {
             uint32_t id = g_ctx->activeRippleIds[i];
             auto it = g_ctx->widgetStates.find(id);
@@ -672,7 +643,9 @@ namespace FluentUI {
         }
         
         // Perf Phase C: Record active animation counts
-        g_ctx->perfCounters.activeColorAnims = static_cast<uint32_t>(g_ctx->activeColorAnimIds.size());
+        // brief 22 (fase 9): activeColorAnimIds retirado (huérfano); el contador de
+        // color-anims queda en 0 (los springs de color se cuentan aparte si se desea).
+        g_ctx->perfCounters.activeColorAnims = 0;
         g_ctx->perfCounters.activeFloatAnims = static_cast<uint32_t>(g_ctx->activeFloatAnimIds.size());
         g_ctx->perfCounters.widgetNodeCount = static_cast<uint32_t>(g_ctx->widgetTree.NodeCount());
 
@@ -834,34 +807,17 @@ namespace FluentUI {
             }
         }
         
-        // Issue 11 / brief 22 (fase 8): el GC rotatorio de mapas paralelos ya no
-        // tiene mapas que recorrer — colorPickerStates fue el último (fase 8) y
-        // migró a widgetStates (ws.colorPicker, GC por lastFrameSeen). Se conserva
-        // la limpieza periódica de lastSeenFrame (todavía lo escriben rutas legacy
-        // de AnimSlot y las marcas de item en NewFrame) para que no crezca sin
-        // límite, y el GC del mapa unificado widgetStates. GC_MAP_COUNT se mantiene
-        // en 1 solo para preservar el threshold de retención (== GC_ROTATE_INTERVAL);
-        // ya no cuenta mapas en rotación.
+        // brief 22 (fase 9): retirado el GC rotatorio de mapas paralelos y la
+        // limpieza periódica de lastSeenFrame (ambos obsoletos: no quedan mapas
+        // paralelos ni escritores de lastSeenFrame). El ÚNICO GC es ahora el del
+        // mapa unificado widgetStates, con retención = GC_ROTATE_INTERVAL frames
+        // (== el viejo threshold GC_MAP_COUNT*GC_ROTATE_INTERVAL con GC_MAP_COUNT==1)
+        // y cadencia cada GC_ROTATE_INTERVAL frames. La entrada se conserva mientras
+        // GetWidgetState() la refresque (lastFrameSeen = frame).
         if (g_ctx->frame > 0 && (g_ctx->frame % UIContext::GC_ROTATE_INTERVAL) == 0) {
             uint32_t currentFrame = g_ctx->frame;
-            uint32_t threshold = UIContext::GC_MAP_COUNT * UIContext::GC_ROTATE_INTERVAL; // retention window
-            auto& seen = g_ctx->lastSeenFrame;
+            uint32_t threshold = UIContext::GC_ROTATE_INTERVAL; // retention window (frames)
 
-            // Limpieza periódica de lastSeenFrame (misma cadencia que antes: cada
-            // GC_ROTATE_INTERVAL frames, ya que con GC_MAP_COUNT==1 la rotación
-            // volvía a índice 0 cada intervalo).
-            for (auto it = seen.begin(); it != seen.end(); ) {
-                if ((currentFrame - it->second) > threshold) {
-                    it = seen.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-
-            // brief 22 (FASE 1): GC simple del mapa unificado widgetStates. Usa el
-            // MISMO threshold que el GC rotatorio (GC_MAP_COUNT * GC_ROTATE_INTERVAL)
-            // y corre en el mismo intervalo. Inofensivo por ahora (el mapa está
-            // vacío hasta que las fases 2-8 migren los widgets a GetWidgetState()).
             for (auto it = g_ctx->widgetStates.begin(); it != g_ctx->widgetStates.end(); ) {
                 if ((currentFrame - it->second.lastFrameSeen) > threshold) {
                     it = g_ctx->widgetStates.erase(it);

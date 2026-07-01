@@ -290,9 +290,6 @@ bool Button(const std::string &label, uint32_t iconCodepoint, const Vec2 &size, 
                                   : WidgetState::Rest;
   FluentMaterial btnMat = ResolveButtonMaterial(buttonStyle, btnState);
 
-  // Perf 1.2: Register animation slots for GC tracking (only widgets that use animations)
-  RegisterAnimSlots(buttonId);
-
   // brief 10 Part C (pilot): bg/fg/border use interruptible SpringValue<Color>
   // instead of fixed-duration tweens, so a fast hover-in/out reverses continuously
   // without resetting a clock (no "kick"). Configure once (response 0.18s, critically
@@ -1473,8 +1470,8 @@ bool ColorPicker(const std::string &label, Color *value,
     state.alpha = value->a;
     state.initialized = true;
   }
-
-  ctx->lastSeenFrame[pickerId] = ctx->frame;
+  // brief 22 (fase 9): antes marcaba lastSeenFrame (GC rotatorio, ya retirado).
+  // GetColorPickerState(pickerId) arriba ya refrescó WidgetState.lastFrameSeen.
 
   bool changed = false;
 

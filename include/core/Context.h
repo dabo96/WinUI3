@@ -341,9 +341,10 @@ struct UIContext {
   bool initialized = false;
 
   // brief 22 (fase 2): los antiguos mapas paralelos colorAnimations/floatAnimations
-  // se fundieron en WidgetState.colorAnim[]/floatAnim[] (ver GetWidgetState). El
-  // avance sigue conducido por activeColorAnimIds/activeFloatAnimIds (ahora raw
-  // widget ids). StaggeredAppear usa floatAnim[0].
+  // se fundieron en WidgetState.colorAnim[]/floatAnim[] (ver GetWidgetState).
+  // brief 22 (fase 9): en la práctica solo floatAnim[0] se usa (StaggeredAppear) y lo
+  // conduce activeFloatAnimIds; colorAnim[] quedó sin usuarios y su driver/vector se
+  // retiró (los campos del struct se conservan como reserva, ver WidgetState).
 
   // brief 10 Part B: global motion tokens (durationScale / reduceMotion / enabled).
   // Read via the free function MotionDuration(). Hosts can mutate it at runtime
@@ -351,10 +352,11 @@ struct UIContext {
   MotionConfig motion;
 
   // brief 10 Part C: spring-based interactive animations (interruptible).
-  // brief 22 (fase 2): fundidos en WidgetState.springColor[]/springFloat[] (button
-  // bg/fg/border ocupan springColor[0..2]). El avance lo conducen
-  // activeSpringColorIds/activeSpringFloatIds (ahora raw widget ids; el driver
-  // recorre los 4 slots de cada WidgetState hallado).
+  // brief 22 (fase 2): fundidos en WidgetState.springColor[] (button bg/fg/border
+  // ocupan springColor[0..2]); los conduce activeSpringColorIds (raw widget ids; el
+  // driver recorre los 4 slots del WidgetState hallado).
+  // brief 22 (fase 9): springFloat[] quedó sin usuarios y su driver/vector se retiró
+  // (los campos del struct se conservan como reserva, ver WidgetState).
 
   // brief 10 Part D: presence tracker for managed overlays (enter/exit fade+scale).
   // Immediate-mode can't observe "stopped emitting" from inside NewFrame (the next
@@ -384,19 +386,18 @@ struct UIContext {
   // brief 22 (fase 2): flipStates fundido en WidgetState.flip. LayoutFlipOffset usa
   // GetWidgetState(id).flip.
 
-  // Perf 2.2: Track active animation IDs to avoid iterating all entries
-  std::vector<uint32_t> activeColorAnimIds;
+  // Perf 2.2: Track active animation IDs to avoid iterating all entries.
+  // brief 22 (fase 9): se retiraron activeColorAnimIds y activeSpringFloatIds (y sus
+  // Notify*): quedaron huérfanos tras la migración fases 2-8 (ningún widget usa
+  // WidgetState.colorAnim[]/springFloat[] ni notificaba esos ids). Sobreviven los
+  // tres vectores que SÍ se pueblan/usan: floatAnim (StaggeredAppear), springColor
+  // (Button bg/fg/border) y ripple (Button.AddRipple; su Notify sigue disponible).
   std::vector<uint32_t> activeFloatAnimIds;
   std::vector<uint32_t> activeRippleIds;
   // brief 10 Part C: active spring ids (parallel to the tween vectors above).
   std::vector<uint32_t> activeSpringColorIds;
-  std::vector<uint32_t> activeSpringFloatIds;
 
   // Perf 2.2: Notify that an animation became active
-  void NotifyColorAnimActive(uint32_t id) {
-    for (auto aid : activeColorAnimIds) if (aid == id) return;
-    activeColorAnimIds.push_back(id);
-  }
   void NotifyFloatAnimActive(uint32_t id) {
     for (auto aid : activeFloatAnimIds) if (aid == id) return;
     activeFloatAnimIds.push_back(id);
@@ -409,10 +410,6 @@ struct UIContext {
   void NotifySpringColorActive(uint32_t id) {
     for (auto aid : activeSpringColorIds) if (aid == id) return;
     activeSpringColorIds.push_back(id);
-  }
-  void NotifySpringFloatActive(uint32_t id) {
-    for (auto aid : activeSpringFloatIds) if (aid == id) return;
-    activeSpringFloatIds.push_back(id);
   }
 
   // brief 10 Part G: true when any CPU-side animation is still running, so the host
@@ -893,19 +890,13 @@ struct UIContext {
   bool mouseOverAnyWidget = false;           // Set by IsMouseOver during current frame's widget rendering
   bool mouseOverAnyWidgetLastFrame = false;  // Previous frame's value, safe to query during event processing
 
-  // GC for state maps — Issue 11: amortized rotation
-  std::unordered_map<uint32_t, uint32_t> lastSeenFrame;
-  // brief 22 (fase 2): 16 -> 10. Los mapas de animación (colorAnimations,
-  // floatAnimations, rippleEffects, springColors, springFloats, flipStates) se
-  // fundieron en widgetStates, que tiene su propio GC por lastFrameSeen (abajo en
-  // NewFrame), así que salen de la rotación amortizada.
-  // brief 22 (fase 8): 1->0 mapas en rotación (colorPickerStates fue el último y
-  // migró a widgetStates). Se conserva =1 para preservar el threshold de retención
-  // (GC_MAP_COUNT * GC_ROTATE_INTERVAL == 10 frames), usado ahora por el GC de
-  // widgetStates y por la limpieza de lastSeenFrame; ya no cuenta mapas paralelos.
-  static constexpr uint32_t GC_MAP_COUNT = 1;      // retención = GC_MAP_COUNT * GC_ROTATE_INTERVAL frames
-  static constexpr uint32_t GC_ROTATE_INTERVAL = 10; // ejecuta el GC cada N frames
-  uint32_t gcMapIndex = 0;                           // brief 22 (fase 8): sin uso (0 mapas en rotación)
+  // GC del estado por-widget. brief 22 (fase 9): retirado el GC rotatorio amortizado
+  // (con sus 13→0 mapas paralelos), el mapa lastSeenFrame, GC_MAP_COUNT y gcMapIndex.
+  // El único GC es ahora el del mapa unificado widgetStates (NewFrame): recorre las
+  // entradas cada GC_ROTATE_INTERVAL frames y borra las no vistas en ese ventana de
+  // retención (GetWidgetState refresca WidgetState.lastFrameSeen). El valor 10 iguala
+  // el viejo threshold GC_MAP_COUNT(1) * GC_ROTATE_INTERVAL(10), sin cambio de retención.
+  static constexpr uint32_t GC_ROTATE_INTERVAL = 10; // cadencia + ventana de retención (frames)
 
   uint32_t lastGeneratedId = 0;
 
@@ -1067,11 +1058,16 @@ struct UIContext {
     std::vector<int> treeVisitOrder;
     int treeLastSelectedId = 0;
     bool treeLastSelectedSet = false;
-    // animaciones inline (fase 2): replican AnimSlot(id, 0..3)
-    AnimatedValue<Color> colorAnim[4];
+    // animaciones inline (fase 2): replican AnimSlot(id, 0..3).
+    // brief 22 (fase 9): floatAnim[0] (StaggeredAppear) y springColor[0..2] (Button)
+    // están en uso y se conducen por activeFloatAnimIds/activeSpringColorIds. colorAnim[]
+    // y springFloat[] quedaron sin usuarios tras la migración; sus vectores/drivers se
+    // retiraron. Se conservan los campos como reserva (coste ínfimo) por si un widget
+    // futuro los reengancha con su Notify*/driver; hoy nunca se actualizan.
+    AnimatedValue<Color> colorAnim[4];   // (reserva — sin driver, ver fase 9)
     AnimatedValue<float> floatAnim[4];
     SpringValue<Color> springColor[4];
-    SpringValue<float> springFloat[4];
+    SpringValue<float> springFloat[4];   // (reserva — sin driver, ver fase 9)
     RippleEffect ripple;
     PresenceState presence;
     FlipState flip;
@@ -1094,6 +1090,16 @@ struct UIContext {
   };
 
   std::unordered_map<uint32_t, WidgetState> widgetStates;
+
+  // brief 22 (fase 9) — nota sobre la "doble verdad" con el WidgetNode del árbol:
+  // WidgetNode (core/WidgetNode.h) tiene sus PROPIAS animaciones inline
+  // (bgColorAnim/opacityAnim/enterT/scaleAnim/posSpring/prevBounds) conducidas por
+  // WidgetTree::UpdateAnimations. Son DISJUNTAS de las de WidgetState: ningún archivo
+  // de src/UI/*.cpp escribe los campos de animación del WidgetNode (solo WidgetNode.h
+  // los actualiza internamente), mientras que las animaciones que los widgets sí usan
+  // (springColor de Button, floatAnim de StaggeredAppear, ripple, presence, flip) viven
+  // en WidgetState. Verificado por grep: no hay ningún widget que escriba AMBOS para el
+  // mismo dato, así que NO existe doble-verdad real y no se fusiona nada (ver notes).
 
   // Accesores (definidos out-of-line en src/Core/Context.cpp donde los tipos
   // están completos). GetWidgetState SIEMPRE crea la entrada y refresca

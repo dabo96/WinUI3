@@ -218,9 +218,11 @@ inline bool IsMouseOver(UIContext *ctx, const Vec2 &pos, const Vec2 &size) {
   return over;
 }
 
-// Perf 1.2: Register animation slots for widgets that use color/float animations
-// (brief 22: la animación de widgets vive ahora en WidgetState; RegisterAnimSlots
-// solo marca lastSeenFrame para el GC rotatorio de los mapas restantes.)
-void RegisterAnimSlots(uint32_t widgetId);
+// brief 22 (fase 9): RegisterAnimSlots eliminado — solo marcaba lastSeenFrame para
+// el GC rotatorio, que ya no existe (el GC del mapa unificado widgetStates usa
+// WidgetState.lastFrameSeen, refrescado por GetWidgetState). AnimSlot (arriba) SE
+// CONSERVA: dejó de ser un "slot de animación" y ahora es un simple mezclador de id
+// que InputWidgets/SignatureControls usan para derivar ids uint32 disjuntos por
+// sub-estado dentro de widgetStates.
 
 } // namespace FluentUI
