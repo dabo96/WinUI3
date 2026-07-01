@@ -7,6 +7,7 @@
 #include <array>
 #include <string>
 #include <vector>
+#include "core/UIKey.h"
 #include <SDL3/SDL.h>
 
 namespace FluentUI {
@@ -18,6 +19,18 @@ public:
   bool IsKeyDown(SDL_Scancode sc) const { return keysDown[sc]; }
   bool IsKeyPressed(SDL_Scancode sc) const { return keysPressed[sc]; }
   bool IsKeyReleased(SDL_Scancode sc) const { return keysReleased[sc]; }
+
+  // brief 20 Part B: platform-neutral key queries. Widgets use these (UIKey)
+  // instead of SDL scancodes; the UIKey->scancode mapping lives in InputState.cpp.
+  bool IsKeyDown(UIKey key) const;
+  bool IsKeyPressed(UIKey key) const;
+  bool IsKeyReleased(UIKey key) const;
+
+  // brief 20 Part B: modifier state from tracked key state (no SDL_GetModState in
+  // widgets). Each is true if either left/right modifier is currently held.
+  bool CtrlDown() const;
+  bool ShiftDown() const;
+  bool AltDown() const;
 
   bool IsMouseDown(int button) const { return mouseDown[button]; }
   bool IsMousePressed(int button) const { return mousePressed[button]; }

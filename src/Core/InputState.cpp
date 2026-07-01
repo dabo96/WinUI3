@@ -21,6 +21,53 @@ InputState::~InputState() = default;
 InputState::InputState(InputState&& other) noexcept = default;
 InputState& InputState::operator=(InputState&& other) noexcept = default;
 
+// ─── brief 20 Part B: platform-neutral key layer ─────────────────────────────
+// The only place UIKey is translated to an SDL scancode. Widgets never see SDL.
+namespace {
+SDL_Scancode ScancodeForUIKey(UIKey k) {
+    // Letters A..Z are contiguous in both enums.
+    if (k >= UIKey::A && k <= UIKey::Z)
+        return static_cast<SDL_Scancode>(SDL_SCANCODE_A + (static_cast<int>(k) - static_cast<int>(UIKey::A)));
+    // Digits: SDL orders 1..9 then 0, so map 0 explicitly and 1..9 by offset.
+    if (k == UIKey::Num0) return SDL_SCANCODE_0;
+    if (k >= UIKey::Num1 && k <= UIKey::Num9)
+        return static_cast<SDL_Scancode>(SDL_SCANCODE_1 + (static_cast<int>(k) - static_cast<int>(UIKey::Num1)));
+    switch (k) {
+        case UIKey::Space:       return SDL_SCANCODE_SPACE;
+        case UIKey::Enter:       return SDL_SCANCODE_RETURN;
+        case UIKey::KeypadEnter: return SDL_SCANCODE_KP_ENTER;
+        case UIKey::Escape:      return SDL_SCANCODE_ESCAPE;
+        case UIKey::Tab:         return SDL_SCANCODE_TAB;
+        case UIKey::Backspace:   return SDL_SCANCODE_BACKSPACE;
+        case UIKey::Delete:      return SDL_SCANCODE_DELETE;
+        case UIKey::Insert:      return SDL_SCANCODE_INSERT;
+        case UIKey::Left:        return SDL_SCANCODE_LEFT;
+        case UIKey::Right:       return SDL_SCANCODE_RIGHT;
+        case UIKey::Up:          return SDL_SCANCODE_UP;
+        case UIKey::Down:        return SDL_SCANCODE_DOWN;
+        case UIKey::Home:        return SDL_SCANCODE_HOME;
+        case UIKey::End:         return SDL_SCANCODE_END;
+        case UIKey::PageUp:      return SDL_SCANCODE_PAGEUP;
+        case UIKey::PageDown:    return SDL_SCANCODE_PAGEDOWN;
+        case UIKey::LeftCtrl:    return SDL_SCANCODE_LCTRL;
+        case UIKey::RightCtrl:   return SDL_SCANCODE_RCTRL;
+        case UIKey::LeftShift:   return SDL_SCANCODE_LSHIFT;
+        case UIKey::RightShift:  return SDL_SCANCODE_RSHIFT;
+        case UIKey::LeftAlt:     return SDL_SCANCODE_LALT;
+        case UIKey::RightAlt:    return SDL_SCANCODE_RALT;
+        default:                 return SDL_SCANCODE_UNKNOWN;
+    }
+}
+} // namespace
+
+bool InputState::IsKeyDown(UIKey key) const     { return IsKeyDown(ScancodeForUIKey(key)); }
+bool InputState::IsKeyPressed(UIKey key) const  { return IsKeyPressed(ScancodeForUIKey(key)); }
+bool InputState::IsKeyReleased(UIKey key) const { return IsKeyReleased(ScancodeForUIKey(key)); }
+
+bool InputState::CtrlDown() const  { return keysDown[SDL_SCANCODE_LCTRL]  || keysDown[SDL_SCANCODE_RCTRL]; }
+bool InputState::ShiftDown() const { return keysDown[SDL_SCANCODE_LSHIFT] || keysDown[SDL_SCANCODE_RSHIFT]; }
+bool InputState::AltDown() const   { return keysDown[SDL_SCANCODE_LALT]   || keysDown[SDL_SCANCODE_RALT]; }
+
 const std::string& InputState::TextInputBuffer() const
 {
     static const std::string empty;

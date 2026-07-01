@@ -250,8 +250,8 @@ bool Button(const std::string &label, uint32_t iconCodepoint, const Vec2 &size, 
   // También activar con Enter/Space cuando tiene focus
   bool hasFocus = (ctx->focusedWidgetId == buttonId);
   if (hasFocus && enabled) {
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-        ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE)) {
+    if (ctx->input.IsKeyPressed(UIKey::Enter) ||
+        ctx->input.IsKeyPressed(UIKey::Space)) {
       clicked = true;
     }
   }
@@ -259,8 +259,8 @@ bool Button(const std::string &label, uint32_t iconCodepoint, const Vec2 &size, 
   // Agregar ripple effect cuando se hace click
   if (clicked && enabled) {
     // Use button center for keyboard-triggered clicks, mouse position otherwise
-    Vec2 clickPos = hasFocus && (ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-                                  ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE))
+    Vec2 clickPos = hasFocus && (ctx->input.IsKeyPressed(UIKey::Enter) ||
+                                  ctx->input.IsKeyPressed(UIKey::Space))
                         ? Vec2(btnPos.x + btnSize.x * 0.5f, btnPos.y + btnSize.y * 0.5f)
                         : Vec2(mouseX, mouseY);
     auto &ripple = ctx->rippleEffects[buttonId];
@@ -732,9 +732,9 @@ bool HyperlinkButton(const std::string &text, const std::string &url,
       activated = true;
     }
   }
-  if (focused && (ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-                  ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER) ||
-                  ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE))) {
+  if (focused && (ctx->input.IsKeyPressed(UIKey::Enter) ||
+                  ctx->input.IsKeyPressed(UIKey::KeypadEnter) ||
+                  ctx->input.IsKeyPressed(UIKey::Space))) {
     activated = true;
   }
 
@@ -1718,33 +1718,32 @@ bool ColorPicker(const std::string &label, Color *value,
 
     // Keyboard handling when editing hex
     if (state.editingHex) {
-      if (ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-          ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER)) {
+      if (ctx->input.IsKeyPressed(UIKey::Enter) ||
+          ctx->input.IsKeyPressed(UIKey::KeypadEnter)) {
         Color parsed = Color::FromHex(state.hexText.c_str());
         parsed.a = state.alpha;
         parsed.ToHSV(state.hue, state.saturation, state.value);
         state.editingHex = false;
         changed = true;
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_ESCAPE)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::Escape)) {
         state.editingHex = false;
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_BACKSPACE)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::Backspace)) {
         if (!state.hexText.empty())
           state.hexText.pop_back();
       } else {
         // Hex character input (0-9, a-f)
-        for (int sc = SDL_SCANCODE_A; sc <= SDL_SCANCODE_F; ++sc) {
-          if (ctx->input.IsKeyPressed(static_cast<SDL_Scancode>(sc)) &&
-              state.hexText.size() < 7) {
-            bool shift = ctx->input.IsKeyDown(SDL_SCANCODE_LSHIFT) ||
-                         ctx->input.IsKeyDown(SDL_SCANCODE_RSHIFT);
-            char ch = shift ? ('A' + (sc - SDL_SCANCODE_A)) : ('a' + (sc - SDL_SCANCODE_A));
+        for (int i = 0; i < 6; ++i) {  // A..F
+          UIKey k = static_cast<UIKey>(static_cast<int>(UIKey::A) + i);
+          if (ctx->input.IsKeyPressed(k) && state.hexText.size() < 7) {
+            bool shift = ctx->input.ShiftDown();
+            char ch = shift ? static_cast<char>('A' + i) : static_cast<char>('a' + i);
             state.hexText += ch;
           }
         }
-        for (int sc = SDL_SCANCODE_0; sc <= SDL_SCANCODE_9; ++sc) {
-          if (ctx->input.IsKeyPressed(static_cast<SDL_Scancode>(sc)) &&
-              state.hexText.size() < 7) {
-            state.hexText += ('0' + (sc - SDL_SCANCODE_0));
+        for (int i = 0; i < 10; ++i) {  // 0..9
+          UIKey k = static_cast<UIKey>(static_cast<int>(UIKey::Num0) + i);
+          if (ctx->input.IsKeyPressed(k) && state.hexText.size() < 7) {
+            state.hexText += static_cast<char>('0' + i);
           }
         }
       }
@@ -1803,7 +1802,7 @@ bool ColorPicker(const std::string &label, Color *value,
           }
           state.eyedropperActive = false;
         }
-        if (ctx->input.IsKeyPressed(SDL_SCANCODE_ESCAPE)) {
+        if (ctx->input.IsKeyPressed(UIKey::Escape)) {
           state.eyedropperActive = false;
         }
       }

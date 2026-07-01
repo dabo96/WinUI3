@@ -7,6 +7,7 @@
 #include "core/Context.h"
 #include "core/Renderer.h"
 #include "core/Elevation.h"
+#include "core/UIKey.h"
 #include "core/WidgetNodes.h"
 #include <algorithm>
 #include <cmath>
@@ -457,8 +458,8 @@ bool CollapsingHeader(const std::string &label, bool *open,
 
   // Keyboard activation when focused.
   if (ctx->focusedWidgetId == id &&
-      (ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE) ||
-       ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN))) {
+      (ctx->input.IsKeyPressed(UIKey::Space) ||
+       ctx->input.IsKeyPressed(UIKey::Enter))) {
     clicked = true;
   }
 

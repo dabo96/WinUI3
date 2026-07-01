@@ -6,6 +6,7 @@
 #include "core/Renderer.h"
 #include "core/Elevation.h"
 #include "core/WidgetNode.h"
+#include "core/UIKey.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -676,7 +677,7 @@ bool BeginModal(const std::string &id, const std::string &title, uint32_t iconCo
   BeginVertical(ctx->style.spacing, Vec2(contentSize.x, 0.0f), Vec2(0.0f, 0.0f));
 
   // Manejar tecla Escape para cerrar
-  if (ctx->input.IsKeyPressed(SDL_SCANCODE_ESCAPE)) {
+  if (ctx->input.IsKeyPressed(UIKey::Escape)) {
     *open = false;
     state.open = false;
   }
@@ -836,7 +837,7 @@ bool BeginFlyout(const std::string &id, const Rect &anchorRect,
       if (pressedOutside)
         state.open = false;
     }
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_ESCAPE))
+    if (ctx->input.IsKeyPressed(UIKey::Escape))
       state.open = false;
   }
 
@@ -1066,10 +1067,10 @@ void MenuFlyout(const std::string &id, const Rect &anchorRect,
     if (!entries[i].separator && entries[i].enabled)
       selectable.push_back(i);
 
-  bool downP = ctx->input.IsKeyPressed(SDL_SCANCODE_DOWN);
-  bool upP = ctx->input.IsKeyPressed(SDL_SCANCODE_UP);
-  bool enterP = ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-                ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER);
+  bool downP = ctx->input.IsKeyPressed(UIKey::Down);
+  bool upP = ctx->input.IsKeyPressed(UIKey::Up);
+  bool enterP = ctx->input.IsKeyPressed(UIKey::Enter) ||
+                ctx->input.IsKeyPressed(UIKey::KeypadEnter);
   if (!selectable.empty() && (downP || upP)) {
     int curPos = -1;
     for (int k = 0; k < (int)selectable.size(); ++k)
@@ -1291,9 +1292,9 @@ DialogResult ContentDialog(const std::string &id, bool *open,
   if (!ctx || !open || !*open)
     return DialogResult::None;
 
-  bool escPressed = ctx->input.IsKeyPressed(SDL_SCANCODE_ESCAPE);
-  bool enterPressed = ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-                      ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER);
+  bool escPressed = ctx->input.IsKeyPressed(UIKey::Escape);
+  bool enterPressed = ctx->input.IsKeyPressed(UIKey::Enter) ||
+                      ctx->input.IsKeyPressed(UIKey::KeypadEnter);
 
   // Foco inicial en el botón primario la primera vez que se abre. No mantenemos
   // una referencia al mapa: body() es arbitrario y podría insertar en boolStates

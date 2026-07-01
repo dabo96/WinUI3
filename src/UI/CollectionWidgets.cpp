@@ -7,7 +7,7 @@
 #include "core/Animation.h"
 #include "core/Context.h"
 #include "core/Renderer.h"
-#include <SDL3/SDL.h>
+#include "core/UIKey.h"
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -31,8 +31,8 @@ int Pagination(const std::string &id, int pageCount, int *currentPage) {
 
   bool focused = (ctx->focusedWidgetId == pgId);
   if (focused) {
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_LEFT))  cur = std::max(0, cur - 1);
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_RIGHT)) cur = std::min(pageCount - 1, cur + 1);
+    if (ctx->input.IsKeyPressed(UIKey::Left))  cur = std::max(0, cur - 1);
+    if (ctx->input.IsKeyPressed(UIKey::Right)) cur = std::min(pageCount - 1, cur + 1);
   }
 
   // Build the visible page set: 0, last, cur-1..cur+1.
@@ -177,8 +177,8 @@ int FlipView(const std::string &id, int itemCount,
 
   int newIdx = idx;
   if (focused) {
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_LEFT))  newIdx = (idx - 1 + itemCount) % itemCount;
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_RIGHT)) newIdx = (idx + 1) % itemCount;
+    if (ctx->input.IsKeyPressed(UIKey::Left))  newIdx = (idx - 1 + itemCount) % itemCount;
+    if (ctx->input.IsKeyPressed(UIKey::Right)) newIdx = (idx + 1) % itemCount;
   }
 
   // Background panel.

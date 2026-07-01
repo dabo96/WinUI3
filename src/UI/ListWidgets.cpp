@@ -6,7 +6,7 @@
 #include "core/Context.h"
 #include "core/Renderer.h"
 #include "core/WidgetNodes.h"
-#include <SDL3/SDL.h>
+#include "core/UIKey.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -329,9 +329,8 @@ static bool BeginListViewMultiImpl(const std::string &id, const Vec2 &size,
   bool leftPressed = ctx->input.IsMousePressed(0);
 
   // Get keyboard modifiers for multi-select
-  SDL_Keymod modState = SDL_GetModState();
-  bool ctrlHeld = (modState & SDL_KMOD_CTRL) != 0;
-  bool shiftHeld = (modState & SDL_KMOD_SHIFT) != 0;
+  bool ctrlHeld = ctx->input.CtrlDown();
+  bool shiftHeld = ctx->input.ShiftDown();
 
   // Aplicar clipping
   Vec2 clipSize(contentWidth, visibleHeight);
@@ -805,9 +804,8 @@ bool TreeNodeMulti(const std::string &id, const std::string &label, uint32_t ico
   if (!wasClicked) return false;
 
   // Click happened — apply modifier semantics
-  SDL_Keymod km = SDL_GetModState();
-  bool ctrlHeld = (km & SDL_KMOD_CTRL) != 0;
-  bool shiftHeld = (km & SDL_KMOD_SHIFT) != 0;
+  bool ctrlHeld = ctx->input.CtrlDown();
+  bool shiftHeld = ctx->input.ShiftDown();
 
   if (shiftHeld) {
     // Range select from anchor in DFS order
@@ -1339,10 +1337,10 @@ bool TableRowSelectable(int rowIndex) {
   }
 
   if (hover && ctx->input.IsMousePressed(0)) {
-    bool ctrl = ctx->input.IsKeyDown(SDL_SCANCODE_LCTRL) ||
-                ctx->input.IsKeyDown(SDL_SCANCODE_RCTRL);
-    bool shift = ctx->input.IsKeyDown(SDL_SCANCODE_LSHIFT) ||
-                 ctx->input.IsKeyDown(SDL_SCANCODE_RSHIFT);
+    bool ctrl = ctx->input.IsKeyDown(UIKey::LeftCtrl) ||
+                ctx->input.IsKeyDown(UIKey::RightCtrl);
+    bool shift = ctx->input.IsKeyDown(UIKey::LeftShift) ||
+                 ctx->input.IsKeyDown(UIKey::RightShift);
 
     if (shift && frame.lastSelectedRow >= 0) {
       // Range select: replace with [anchor..rowIndex]
@@ -1564,10 +1562,10 @@ void GridView(const std::string &id, int itemCount, Vec2 itemSize,
   if (focused) {
     int cur = sel < 0 ? 0 : sel;
     bool moved = false;
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_RIGHT)) { cur = std::min(itemCount - 1, cur + 1); moved = true; }
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_LEFT))  { cur = std::max(0, cur - 1); moved = true; }
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_DOWN))  { if (cur + cols < itemCount) cur += cols; moved = true; }
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_UP))    { if (cur - cols >= 0) cur -= cols; moved = true; }
+    if (ctx->input.IsKeyPressed(UIKey::Right)) { cur = std::min(itemCount - 1, cur + 1); moved = true; }
+    if (ctx->input.IsKeyPressed(UIKey::Left))  { cur = std::max(0, cur - 1); moved = true; }
+    if (ctx->input.IsKeyPressed(UIKey::Down))  { if (cur + cols < itemCount) cur += cols; moved = true; }
+    if (ctx->input.IsKeyPressed(UIKey::Up))    { if (cur - cols >= 0) cur -= cols; moved = true; }
     if (moved) {
       sel = cur;
       int r = cur / cols;
@@ -1778,10 +1776,10 @@ DataGridResult DataGrid(const std::string &id, const std::vector<DataColumn> &co
               st.editStarted = false;
             }
             bool commit = false, cancel = false;
-            if (ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-                ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER))
+            if (ctx->input.IsKeyPressed(UIKey::Enter) ||
+                ctx->input.IsKeyPressed(UIKey::KeypadEnter))
               commit = true;
-            if (ctx->input.IsKeyPressed(SDL_SCANCODE_ESCAPE))
+            if (ctx->input.IsKeyPressed(UIKey::Escape))
               cancel = true;
             if (ctx->lastItem.deactivated) // blur
               commit = true;

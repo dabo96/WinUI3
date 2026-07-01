@@ -4,7 +4,7 @@
 #include "Math/Color.h"
 #include "Math/Vec2.h"
 #include "UI/Widgets.h"
-#include <SDL3/SDL.h>
+#include "core/UIKey.h"
 #include <cstdio>
 
 namespace FluentUI {
@@ -35,9 +35,9 @@ void ShowItemPicker(bool* open) {
     PickerState* st = GetState();
 
     // Toggle on Ctrl+Shift+P
-    bool ctrl = ctx->input.IsKeyDown(SDL_SCANCODE_LCTRL) || ctx->input.IsKeyDown(SDL_SCANCODE_RCTRL);
-    bool shift = ctx->input.IsKeyDown(SDL_SCANCODE_LSHIFT) || ctx->input.IsKeyDown(SDL_SCANCODE_RSHIFT);
-    if (ctrl && shift && ctx->input.IsKeyPressed(SDL_SCANCODE_P)) {
+    bool ctrl = ctx->input.IsKeyDown(UIKey::LeftCtrl) || ctx->input.IsKeyDown(UIKey::RightCtrl);
+    bool shift = ctx->input.IsKeyDown(UIKey::LeftShift) || ctx->input.IsKeyDown(UIKey::RightShift);
+    if (ctrl && shift && ctx->input.IsKeyPressed(UIKey::P)) {
         st->active = !st->active;
         st->frozen = false;
         if (open) *open = st->active;

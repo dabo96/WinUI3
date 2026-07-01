@@ -12,6 +12,7 @@
 #include "core/Renderer.h"
 #include "core/Elevation.h"
 #include "core/WidgetNode.h"
+#include "core/UIKey.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -95,8 +96,8 @@ bool ToggleSwitch(const std::string &label, bool *value, const std::string &onTe
     toggled = true;
   }
   if (ctx->focusedWidgetId == id &&
-      (ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE) ||
-       ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN))) {
+      (ctx->input.IsKeyPressed(UIKey::Space) ||
+       ctx->input.IsKeyPressed(UIKey::Enter))) {
     current = !current;
     toggled = true;
   }
@@ -244,8 +245,8 @@ bool BeginExpander(const std::string &id, const std::string &header,
                !IsMouseInputBlocked(ctx);
   bool clicked = hover && ctx->input.IsMousePressed(0);
   if (ctx->focusedWidgetId == wid &&
-      (ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE) ||
-       ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN)))
+      (ctx->input.IsKeyPressed(UIKey::Space) ||
+       ctx->input.IsKeyPressed(UIKey::Enter)))
     clicked = true;
   if (clicked) {
     isOpen = !isOpen;
@@ -461,10 +462,10 @@ int SplitButton(const std::string &label, uint32_t icon,
 
   bool hasFocus = ctx->focusedWidgetId == id;
   if (hasFocus) {
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-        ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE))
+    if (ctx->input.IsKeyPressed(UIKey::Enter) ||
+        ctx->input.IsKeyPressed(UIKey::Space))
       primClicked = true;
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_DOWN))
+    if (ctx->input.IsKeyPressed(UIKey::Down))
       chevClicked = true;
   }
 
@@ -562,9 +563,9 @@ void DropDownButton(const std::string &label, uint32_t icon,
   bool hover = IsMouseOver(ctx, widgetPos, finalSize);
   bool clicked = hover && ctx->input.IsMousePressed(0);
   bool hasFocus = ctx->focusedWidgetId == id;
-  if (hasFocus && (ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-                   ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE) ||
-                   ctx->input.IsKeyPressed(SDL_SCANCODE_DOWN)))
+  if (hasFocus && (ctx->input.IsKeyPressed(UIKey::Enter) ||
+                   ctx->input.IsKeyPressed(UIKey::Space) ||
+                   ctx->input.IsKeyPressed(UIKey::Down)))
     clicked = true;
 
   if (IsRectInViewport(ctx, widgetPos, finalSize)) {
@@ -668,12 +669,12 @@ bool RatingControl(const std::string &id, int *value, int maxStars,
 
   // Teclado: flechas ±1 unidad.
   if (ctx->focusedWidgetId == wid) {
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_RIGHT) ||
-        ctx->input.IsKeyPressed(SDL_SCANCODE_UP)) {
+    if (ctx->input.IsKeyPressed(UIKey::Right) ||
+        ctx->input.IsKeyPressed(UIKey::Up)) {
       current = std::min(current + 1, maxUnits);
       changed = true;
-    } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_LEFT) ||
-               ctx->input.IsKeyPressed(SDL_SCANCODE_DOWN)) {
+    } else if (ctx->input.IsKeyPressed(UIKey::Left) ||
+               ctx->input.IsKeyPressed(UIKey::Down)) {
       current = std::max(current - 1, 0);
       changed = true;
     }

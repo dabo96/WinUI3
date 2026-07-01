@@ -602,13 +602,13 @@ namespace FluentUI {
             g_ctx->activeWidgetId = 0;
             g_ctx->activeWidgetType = ActiveWidgetType::None;
         }
-        if (!g_ctx->input.IsKeyDown(SDL_SCANCODE_LCTRL) && !g_ctx->input.IsKeyDown(SDL_SCANCODE_RCTRL)) {
+        if (!g_ctx->input.IsKeyDown(UIKey::LeftCtrl) && !g_ctx->input.IsKeyDown(UIKey::RightCtrl)) {
             g_ctx->input.anyKeyPressed = false;
         }
-        
+
         // Manejar navegación con Tab
-        if (g_ctx->input.IsKeyPressed(SDL_SCANCODE_TAB)) {
-            bool shift = g_ctx->input.IsKeyDown(SDL_SCANCODE_LSHIFT) || g_ctx->input.IsKeyDown(SDL_SCANCODE_RSHIFT);
+        if (g_ctx->input.IsKeyPressed(UIKey::Tab)) {
+            bool shift = g_ctx->input.IsKeyDown(UIKey::LeftShift) || g_ctx->input.IsKeyDown(UIKey::RightShift);
             if (!g_ctx->focusableWidgets.empty()) {
                 if (shift) {
                     // Navegar hacia atrás

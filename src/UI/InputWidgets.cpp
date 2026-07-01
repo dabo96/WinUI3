@@ -91,8 +91,8 @@ bool Checkbox(const std::string &label, uint32_t iconCodepoint, bool *value, std
   }
   // Phase F1: keyboard activation (Space / Enter when focused)
   if (ctx->focusedWidgetId == id &&
-      (ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE) ||
-       ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN))) {
+      (ctx->input.IsKeyPressed(UIKey::Space) ||
+       ctx->input.IsKeyPressed(UIKey::Enter))) {
     currentValue = !currentValue;
     toggled = true;
   }
@@ -220,8 +220,8 @@ bool RadioButton(const std::string &label, uint32_t iconCodepoint, int *value, i
   }
   // Phase F1: keyboard activation (Space / Enter when focused)
   if (ctx->focusedWidgetId == id &&
-      (ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE) ||
-       ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN))) {
+      (ctx->input.IsKeyPressed(UIKey::Space) ||
+       ctx->input.IsKeyPressed(UIKey::Enter))) {
     if (value) *value = optionValue;
     clicked = true;
   }
@@ -341,19 +341,18 @@ bool SliderFloat(const std::string &label, float *value, float minValue,
   if (ctx->focusedWidgetId == id) {
     float step = (maxValue - minValue) / 100.0f;
     if (step <= 0.0f) step = 0.01f;
-    SDL_Keymod km = SDL_GetModState();
-    bool shiftKb = (km & SDL_KMOD_SHIFT) != 0;
+    bool shiftKb = ctx->input.ShiftDown();
     if (shiftKb) step *= 10.0f;
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_LEFT)) {
+    if (ctx->input.IsKeyPressed(UIKey::Left)) {
       currentValue = std::clamp(currentValue - step, minValue, maxValue);
       kbChanged = true;
-    } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_RIGHT)) {
+    } else if (ctx->input.IsKeyPressed(UIKey::Right)) {
       currentValue = std::clamp(currentValue + step, minValue, maxValue);
       kbChanged = true;
-    } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_HOME)) {
+    } else if (ctx->input.IsKeyPressed(UIKey::Home)) {
       currentValue = minValue;
       kbChanged = true;
-    } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_END)) {
+    } else if (ctx->input.IsKeyPressed(UIKey::End)) {
       currentValue = maxValue;
       kbChanged = true;
     }
@@ -773,8 +772,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
       ctx->activeWidgetType = ActiveWidgetType::TextInput;
 
       // Check shift state to extend selection from existing anchor
-      SDL_Keymod modState_click = SDL_GetModState();
-      bool shiftClick = (modState_click & SDL_KMOD_SHIFT) != 0;
+      bool shiftClick = ctx->input.ShiftDown();
 
       // Compute caret position from click location
       size_t newCaret = caret;
@@ -927,25 +925,24 @@ bool TextInput(const std::string &label, std::string *value, float width,
   };
 
   // Query keyboard modifier state
-  SDL_Keymod modState = SDL_GetModState();
-  bool ctrlHeld = (modState & SDL_KMOD_CTRL) != 0;
-  bool shiftHeld = (modState & SDL_KMOD_SHIFT) != 0;
+  bool ctrlHeld = ctx->input.CtrlDown();
+  bool shiftHeld = ctx->input.ShiftDown();
 
   if (hasFocus) {
     // Ctrl+A: Select all
-    if (ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_A)) {
+    if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::A)) {
       selAnchor = 0;
       caret = textRef.size();
     }
     // Ctrl+C: Copy
-    else if (ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_C)) {
+    else if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::C)) {
       if (HasSelection()) {
         std::string selected = textRef.substr(SelectionStart(), SelectionEnd() - SelectionStart());
         ctx->input.SetClipboardText(selected);
       }
     }
     // Ctrl+X: Cut
-    else if (ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_X)) {
+    else if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::X)) {
       if (HasSelection()) {
         std::string selected = textRef.substr(SelectionStart(), SelectionEnd() - SelectionStart());
         ctx->input.SetClipboardText(selected);
@@ -954,7 +951,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
       }
     }
     // Ctrl+V: Paste
-    else if (ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_V)) {
+    else if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::V)) {
       std::string clipStr = ctx->input.GetClipboardText();
       if (!clipStr.empty()) {
         if (HasSelection()) {
@@ -993,7 +990,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
       }
     }
     // Ctrl+Z: Undo
-    else if (ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_Z) && !shiftHeld) {
+    else if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::Z) && !shiftHeld) {
       auto& undoState = ctx->textUndoStates[id];
       if (!undoState.undoStack.empty()) {
         // Save current state to redo stack
@@ -1007,8 +1004,8 @@ bool TextInput(const std::string &label, std::string *value, float width,
       }
     }
     // Ctrl+Y or Ctrl+Shift+Z: Redo
-    else if ((ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_Y)) ||
-             (ctrlHeld && shiftHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_Z))) {
+    else if ((ctrlHeld && ctx->input.IsKeyPressed(UIKey::Y)) ||
+             (ctrlHeld && shiftHeld && ctx->input.IsKeyPressed(UIKey::Z))) {
       auto& undoState = ctx->textUndoStates[id];
       if (!undoState.redoStack.empty()) {
         undoState.undoStack.push_back({textRef, caret, ctx->frame});
@@ -1058,26 +1055,26 @@ bool TextInput(const std::string &label, std::string *value, float width,
 
       // Tab → Completion callback
       if (cbPtr && (cbMask & static_cast<uint32_t>(TextInputCallbackType::Completion)) &&
-          ctx->input.IsKeyPressed(SDL_SCANCODE_TAB)) {
+          ctx->input.IsKeyPressed(UIKey::Tab)) {
         std::string before = textRef;
-        invokeCallback(TextInputCallbackType::Completion, SDL_SCANCODE_TAB, 0);
+        invokeCallback(TextInputCallbackType::Completion, static_cast<uint32_t>(UIKey::Tab), 0);
         if (textRef != before) valueChanged = true;
       }
 
       // Up/Down (single-line only) → History callback
       if (!multiline && cbPtr && (cbMask & static_cast<uint32_t>(TextInputCallbackType::History))) {
-        if (ctx->input.IsKeyPressed(SDL_SCANCODE_UP)) {
+        if (ctx->input.IsKeyPressed(UIKey::Up)) {
           std::string before = textRef;
-          invokeCallback(TextInputCallbackType::History, SDL_SCANCODE_UP, 0);
+          invokeCallback(TextInputCallbackType::History, static_cast<uint32_t>(UIKey::Up), 0);
           if (textRef != before) valueChanged = true;
-        } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_DOWN)) {
+        } else if (ctx->input.IsKeyPressed(UIKey::Down)) {
           std::string before = textRef;
-          invokeCallback(TextInputCallbackType::History, SDL_SCANCODE_DOWN, 0);
+          invokeCallback(TextInputCallbackType::History, static_cast<uint32_t>(UIKey::Down), 0);
           if (textRef != before) valueChanged = true;
         }
       }
 
-      if (ctx->input.IsKeyPressed(SDL_SCANCODE_BACKSPACE)) {
+      if (ctx->input.IsKeyPressed(UIKey::Backspace)) {
         if (HasSelection()) {
           DeleteSelection();
           valueChanged = true;
@@ -1087,7 +1084,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
           caret = prev;
           valueChanged = true;
         }
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_DELETE)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::Delete)) {
         if (HasSelection()) {
           DeleteSelection();
           valueChanged = true;
@@ -1096,7 +1093,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
           textRef.erase(caret, next - caret);
           valueChanged = true;
         }
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_LEFT)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::Left)) {
         if (shiftHeld) {
           if (selAnchor == SIZE_MAX) selAnchor = caret;
         } else {
@@ -1111,7 +1108,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
           if (caret > 0) caret--;
         }
         skip_move_left:;
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_RIGHT)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::Right)) {
         if (shiftHeld) {
           if (selAnchor == SIZE_MAX) selAnchor = caret;
         } else {
@@ -1126,7 +1123,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
           if (caret < textRef.size()) caret++;
         }
         skip_move_right:;
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_HOME)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::Home)) {
         if (shiftHeld) {
           if (selAnchor == SIZE_MAX) selAnchor = caret;
         } else {
@@ -1141,7 +1138,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
           // Ctrl+Home or single-line: go to start of text
           caret = 0;
         }
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_END)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::End)) {
         if (shiftHeld) {
           if (selAnchor == SIZE_MAX) selAnchor = caret;
         } else {
@@ -1156,8 +1153,8 @@ bool TextInput(const std::string &label, std::string *value, float width,
           // Ctrl+End or single-line: go to end of text
           caret = textRef.size();
         }
-      } else if (multiline && (ctx->input.IsKeyPressed(SDL_SCANCODE_UP) ||
-                                ctx->input.IsKeyPressed(SDL_SCANCODE_DOWN))) {
+      } else if (multiline && (ctx->input.IsKeyPressed(UIKey::Up) ||
+                                ctx->input.IsKeyPressed(UIKey::Down))) {
         // Up/Down arrow navigation for multiline
         if (shiftHeld) {
           if (selAnchor == SIZE_MAX) selAnchor = caret;
@@ -1167,7 +1164,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
         int curLine, curCol;
         FindLineCol(textRef, caret, curLine, curCol);
         int totalLines = CountLines(textRef);
-        if (ctx->input.IsKeyPressed(SDL_SCANCODE_UP)) {
+        if (ctx->input.IsKeyPressed(UIKey::Up)) {
           if (curLine > 0) {
             int targetLine = curLine - 1;
             size_t ls = LineStart(textRef, targetLine);
@@ -1184,8 +1181,8 @@ bool TextInput(const std::string &label, std::string *value, float width,
             caret = ls + static_cast<size_t>(std::min(curCol, lineLen));
           }
         }
-      } else if (multiline && (ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-                                ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER))) {
+      } else if (multiline && (ctx->input.IsKeyPressed(UIKey::Enter) ||
+                                ctx->input.IsKeyPressed(UIKey::KeypadEnter))) {
         // In multiline mode, Enter inserts a newline
         if (HasSelection()) {
           DeleteSelection();
@@ -1193,8 +1190,8 @@ bool TextInput(const std::string &label, std::string *value, float width,
         textRef.insert(caret, 1, '\n');
         caret++;
         valueChanged = true;
-      } else if (!multiline && (ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-                                ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER))) {
+      } else if (!multiline && (ctx->input.IsKeyPressed(UIKey::Enter) ||
+                                ctx->input.IsKeyPressed(UIKey::KeypadEnter))) {
         ctx->activeWidgetId = 0;
         ctx->activeWidgetType = ActiveWidgetType::None;
       }
@@ -1595,10 +1592,10 @@ bool DragFloat(const std::string& label, float* value, float speed,
     std::string& editStr = state.editText;
 
     // Check for Enter or click outside to confirm
-    bool enterPressed = ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-                        ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER);
+    bool enterPressed = ctx->input.IsKeyPressed(UIKey::Enter) ||
+                        ctx->input.IsKeyPressed(UIKey::KeypadEnter);
     bool clickedOutside = leftPressed && !hoverField;
-    bool escapePressed = ctx->input.IsKeyPressed(SDL_SCANCODE_ESCAPE);
+    bool escapePressed = ctx->input.IsKeyPressed(UIKey::Escape);
 
     if (enterPressed || clickedOutside) {
       // Parse the edited value
@@ -1630,8 +1627,7 @@ bool DragFloat(const std::string& label, float* value, float speed,
       size_t& caret = caretIt.first->second;
       caret = std::min(caret, editStr.size());
 
-      SDL_Keymod modState = SDL_GetModState();
-      bool ctrlHeld = (modState & SDL_KMOD_CTRL) != 0;
+      bool ctrlHeld = ctx->input.CtrlDown();
 
       if (!ctrlHeld) {
         const std::string& inputText = ctx->input.TextInputBuffer();
@@ -1641,27 +1637,27 @@ bool DragFloat(const std::string& label, float* value, float speed,
         }
       }
 
-      if (ctx->input.IsKeyPressed(SDL_SCANCODE_BACKSPACE)) {
+      if (ctx->input.IsKeyPressed(UIKey::Backspace)) {
         if (caret > 0) {
           caret--;
           editStr.erase(caret, 1);
         }
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_DELETE)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::Delete)) {
         if (caret < editStr.size()) {
           editStr.erase(caret, 1);
         }
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_LEFT)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::Left)) {
         if (caret > 0) caret--;
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_RIGHT)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::Right)) {
         if (caret < editStr.size()) caret++;
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_HOME)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::Home)) {
         caret = 0;
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_END)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::End)) {
         caret = editStr.size();
       }
 
       // Ctrl+A: Select all text in the edit field
-      if (ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_A)) {
+      if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::A)) {
         caret = editStr.size();
       }
     }
@@ -1696,8 +1692,7 @@ bool DragFloat(const std::string& label, float* value, float speed,
 
     if (state.isDragging) {
       if (leftDown) {
-        SDL_Keymod modState = SDL_GetModState();
-        bool shiftHeld = (modState & SDL_KMOD_SHIFT) != 0;
+        bool shiftHeld = ctx->input.ShiftDown();
         float effectiveSpeed = speed * (shiftHeld ? 0.1f : 1.0f);
 
         // Phase B4: ignore micro-movements within the drag threshold so a fast click
@@ -1931,10 +1926,10 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
     // --- Edit mode ---
     if (state.isEditing) {
       std::string& editStr = state.editText;
-      bool enterPressed = ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-                          ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER);
+      bool enterPressed = ctx->input.IsKeyPressed(UIKey::Enter) ||
+                          ctx->input.IsKeyPressed(UIKey::KeypadEnter);
       bool clickedOutside = leftPressed && !hoverField;
-      bool escapePressed = ctx->input.IsKeyPressed(SDL_SCANCODE_ESCAPE);
+      bool escapePressed = ctx->input.IsKeyPressed(UIKey::Escape);
 
       if (enterPressed || clickedOutside) {
         try {
@@ -1962,8 +1957,7 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
         size_t& caret = caretIt.first->second;
         caret = std::min(caret, editStr.size());
 
-        SDL_Keymod modState = SDL_GetModState();
-        bool ctrlHeld = (modState & SDL_KMOD_CTRL) != 0;
+        bool ctrlHeld = ctx->input.CtrlDown();
 
         if (!ctrlHeld) {
           const std::string& inputText = ctx->input.TextInputBuffer();
@@ -1972,17 +1966,17 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
             caret += inputText.size();
           }
         }
-        if (ctx->input.IsKeyPressed(SDL_SCANCODE_BACKSPACE)) {
+        if (ctx->input.IsKeyPressed(UIKey::Backspace)) {
           if (caret > 0) { caret--; editStr.erase(caret, 1); }
-        } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_DELETE)) {
+        } else if (ctx->input.IsKeyPressed(UIKey::Delete)) {
           if (caret < editStr.size()) editStr.erase(caret, 1);
-        } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_LEFT)) {
+        } else if (ctx->input.IsKeyPressed(UIKey::Left)) {
           if (caret > 0) caret--;
-        } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_RIGHT)) {
+        } else if (ctx->input.IsKeyPressed(UIKey::Right)) {
           if (caret < editStr.size()) caret++;
-        } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_HOME)) {
+        } else if (ctx->input.IsKeyPressed(UIKey::Home)) {
           caret = 0;
-        } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_END)) {
+        } else if (ctx->input.IsKeyPressed(UIKey::End)) {
           caret = editStr.size();
         }
       }
@@ -2014,8 +2008,7 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
 
       if (state.isDragging) {
         if (leftDown) {
-          SDL_Keymod modState = SDL_GetModState();
-          bool shiftHeld = (modState & SDL_KMOD_SHIFT) != 0;
+          bool shiftHeld = ctx->input.ShiftDown();
           float effectiveSpeed = speed * (shiftHeld ? 0.1f : 1.0f);
           // Phase B4: drag threshold
           constexpr float DRAG_THRESHOLD_PX = 4.0f;
@@ -2328,34 +2321,34 @@ static bool ComboBoxImpl(const std::string &label, int *currentItem,
   // Keyboard navigation when dropdown is open
   auto& highlightEntry = ctx->intStates[id];
   if (isOpen) {
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_DOWN)) {
+    if (ctx->input.IsKeyPressed(UIKey::Down)) {
       highlightEntry = std::min(highlightEntry + 1, static_cast<int>(items.size()) - 1);
     }
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_UP)) {
+    if (ctx->input.IsKeyPressed(UIKey::Up)) {
       highlightEntry = std::max(highlightEntry - 1, 0);
     }
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-        ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE)) {
+    if (ctx->input.IsKeyPressed(UIKey::Enter) ||
+        ctx->input.IsKeyPressed(UIKey::Space)) {
       if (currentItem) *currentItem = highlightEntry;
       isOpen = false;
     }
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_ESCAPE)) {
+    if (ctx->input.IsKeyPressed(UIKey::Escape)) {
       isOpen = false;
     }
   } else {
     // Also activate with Enter/Space when has focus and dropdown is closed
-    if (hasFocus && (ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-                     ctx->input.IsKeyPressed(SDL_SCANCODE_SPACE))) {
+    if (hasFocus && (ctx->input.IsKeyPressed(UIKey::Enter) ||
+                     ctx->input.IsKeyPressed(UIKey::Space))) {
       highlightEntry = selectedIndex;
       isOpen = true;
     }
     // Up/Down while closed: directly change selection
-    if (hasFocus && ctx->input.IsKeyPressed(SDL_SCANCODE_DOWN)) {
+    if (hasFocus && ctx->input.IsKeyPressed(UIKey::Down)) {
       if (currentItem && *currentItem < static_cast<int>(items.size()) - 1) {
         (*currentItem)++;
       }
     }
-    if (hasFocus && ctx->input.IsKeyPressed(SDL_SCANCODE_UP)) {
+    if (hasFocus && ctx->input.IsKeyPressed(UIKey::Up)) {
       if (currentItem && *currentItem > 0) {
         (*currentItem)--;
       }
@@ -3194,8 +3187,7 @@ void SelectableText(const std::string &id, const std::string &text,
       ci.clickCount = multi ? std::min(ci.clickCount + 1, 3) : 1;
       ci.lastClickTime = now;
       ci.lastClickPos = mousePos;
-      SDL_Keymod mod = SDL_GetModState();
-      bool shiftClk = (mod & SDL_KMOD_SHIFT) != 0;
+      bool shiftClk = ctx->input.ShiftDown();
       if (shiftClk) {
         caret = hit; // extend from existing anchor
         ci.clickCount = 1;
@@ -3221,20 +3213,19 @@ void SelectableText(const std::string &id, const std::string &text,
     caret = hitTest(mousePos);
 
   if (focused) {
-    SDL_Keymod mod = SDL_GetModState();
-    bool ctrlHeld = (mod & SDL_KMOD_CTRL) != 0;
-    bool shiftHeld = (mod & SDL_KMOD_SHIFT) != 0;
+    bool ctrlHeld = ctx->input.CtrlDown();
+    bool shiftHeld = ctx->input.ShiftDown();
     bool hasSel = anchor != caret;
-    if (ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_A)) {
+    if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::A)) {
       anchor = 0;
       caret = text.size();
-    } else if (ctrlHeld && (ctx->input.IsKeyPressed(SDL_SCANCODE_C) ||
-                            ctx->input.IsKeyPressed(SDL_SCANCODE_INSERT))) {
+    } else if (ctrlHeld && (ctx->input.IsKeyPressed(UIKey::C) ||
+                            ctx->input.IsKeyPressed(UIKey::Insert))) {
       if (hasSel) {
         size_t s = std::min(anchor, caret), e = std::max(anchor, caret);
         ctx->input.SetClipboardText(text.substr(s, e - s));
       }
-    } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_LEFT)) {
+    } else if (ctx->input.IsKeyPressed(UIKey::Left)) {
       if (!shiftHeld && hasSel) {
         caret = anchor = std::min(anchor, caret);
       } else {
@@ -3243,7 +3234,7 @@ void SelectableText(const std::string &id, const std::string &text,
         if (!shiftHeld)
           anchor = caret;
       }
-    } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_RIGHT)) {
+    } else if (ctx->input.IsKeyPressed(UIKey::Right)) {
       if (!shiftHeld && hasSel) {
         caret = anchor = std::max(anchor, caret);
       } else {
@@ -3431,10 +3422,9 @@ bool PasswordBox(const std::string &id, std::string *value,
       ctx->activeWidgetId = wid;
       ctx->activeWidgetType = ActiveWidgetType::TextInput;
       ctx->focusedWidgetId = wid;
-      SDL_Keymod mod = SDL_GetModState();
       float localX = mousePos.x - (fieldPos.x + textPadding);
       size_t nc = hitToByte(std::max(localX, 0.0f));
-      if ((mod & SDL_KMOD_SHIFT) && selAnchor != SIZE_MAX) {
+      if (ctx->input.ShiftDown() && selAnchor != SIZE_MAX) {
         caret = nc;
       } else {
         caret = nc;
@@ -3474,16 +3464,15 @@ bool PasswordBox(const std::string &id, std::string *value,
   }
 
   if (hasFocus) {
-    SDL_Keymod mod = SDL_GetModState();
-    bool ctrlHeld = (mod & SDL_KMOD_CTRL) != 0;
-    bool shiftHeld = (mod & SDL_KMOD_SHIFT) != 0;
+    bool ctrlHeld = ctx->input.CtrlDown();
+    bool shiftHeld = ctx->input.ShiftDown();
 
-    if (ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_A)) {
+    if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::A)) {
       selAnchor = 0;
       caret = textRef.size();
     }
     // Ctrl+C / Ctrl+X are intentionally NOT handled (do not leak the secret).
-    else if (ctrlHeld && ctx->input.IsKeyPressed(SDL_SCANCODE_V)) {
+    else if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::V)) {
       std::string clip = ctx->input.GetClipboardText();
       for (char &ch : clip)
         if (ch == '\n' || ch == '\r')
@@ -3506,7 +3495,7 @@ bool PasswordBox(const std::string &id, std::string *value,
           valueChanged = true;
         }
       }
-      if (ctx->input.IsKeyPressed(SDL_SCANCODE_BACKSPACE)) {
+      if (ctx->input.IsKeyPressed(UIKey::Backspace)) {
         if (HasSelection()) {
           DelSel();
           valueChanged = true;
@@ -3516,7 +3505,7 @@ bool PasswordBox(const std::string &id, std::string *value,
           caret = prev;
           valueChanged = true;
         }
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_DELETE)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::Delete)) {
         if (HasSelection()) {
           DelSel();
           valueChanged = true;
@@ -3525,34 +3514,34 @@ bool PasswordBox(const std::string &id, std::string *value,
           textRef.erase(caret, next - caret);
           valueChanged = true;
         }
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_LEFT)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::Left)) {
         if (shiftHeld && selAnchor == SIZE_MAX)
           selAnchor = caret;
         else if (!shiftHeld)
           ClearSel();
         if (caret > 0)
           caret = Utf8PrevCodepoint(textRef, caret);
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_RIGHT)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::Right)) {
         if (shiftHeld && selAnchor == SIZE_MAX)
           selAnchor = caret;
         else if (!shiftHeld)
           ClearSel();
         if (caret < textRef.size())
           caret = Utf8NextCodepoint(textRef, caret);
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_HOME)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::Home)) {
         if (shiftHeld && selAnchor == SIZE_MAX)
           selAnchor = caret;
         else if (!shiftHeld)
           ClearSel();
         caret = 0;
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_END)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::End)) {
         if (shiftHeld && selAnchor == SIZE_MAX)
           selAnchor = caret;
         else if (!shiftHeld)
           ClearSel();
         caret = textRef.size();
-      } else if (ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-                 ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER)) {
+      } else if (ctx->input.IsKeyPressed(UIKey::Enter) ||
+                 ctx->input.IsKeyPressed(UIKey::KeypadEnter)) {
         ctx->activeWidgetId = 0;
         ctx->activeWidgetType = ActiveWidgetType::None;
       }
@@ -3717,12 +3706,12 @@ std::string AutoSuggestBox(
     int n = static_cast<int>(sugg.size());
     if (hl >= n)
       hl = n - 1;
-    if (ctx->input.IsKeyPressed(SDL_SCANCODE_DOWN))
+    if (ctx->input.IsKeyPressed(UIKey::Down))
       hl = (hl + 1) % n;
-    else if (ctx->input.IsKeyPressed(SDL_SCANCODE_UP))
+    else if (ctx->input.IsKeyPressed(UIKey::Up))
       hl = (hl <= 0) ? n - 1 : hl - 1;
-    if ((ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-         ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER)) &&
+    if ((ctx->input.IsKeyPressed(UIKey::Enter) ||
+         ctx->input.IsKeyPressed(UIKey::KeypadEnter)) &&
         hl >= 0 && hl < n) {
       result = sugg[hl];
       *textPtr = result;
@@ -3870,8 +3859,8 @@ bool TokenizingTextBox(
     buf = remainder;
   }
 
-  bool enter = ctx->input.IsKeyPressed(SDL_SCANCODE_RETURN) ||
-               ctx->input.IsKeyPressed(SDL_SCANCODE_KP_ENTER);
+  bool enter = ctx->input.IsKeyPressed(UIKey::Enter) ||
+               ctx->input.IsKeyPressed(UIKey::KeypadEnter);
   if (fieldFocused && enter && !trim(buf).empty()) {
     addToken(buf);
     buf.clear();
@@ -3882,7 +3871,7 @@ bool TokenizingTextBox(
 
   // Backspace on an empty field removes the last chip.
   if (fieldFocused && buf.empty() &&
-      ctx->input.IsKeyPressed(SDL_SCANCODE_BACKSPACE) && !tokens->empty()) {
+      ctx->input.IsKeyPressed(UIKey::Backspace) && !tokens->empty()) {
     tokens->pop_back();
     changed = true;
   }
