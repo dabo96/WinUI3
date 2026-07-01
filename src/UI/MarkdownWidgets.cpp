@@ -1,3 +1,4 @@
+#include <SDL3/SDL.h>
 // brief 17 — MarkdownView: render a read-only subset of Markdown.
 //
 // Supported: ATX headings (#..######), inline **bold** / *italic* / `code`,

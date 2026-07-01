@@ -1,3 +1,4 @@
+#include <SDL3/SDL.h>
 #include "core/Context.h"
 #include "core/Renderer.h"
 #include "core/OpenGLBackend.h"
@@ -199,13 +200,13 @@ namespace FluentUI {
     static void DestroyCursors(UIContext* ctx) {
         if (ctx->cursorsInitialized) {
             for (auto& cursor : ctx->systemCursors) {
-                if (cursor) { SDL_DestroyCursor(cursor); cursor = nullptr; }
+                if (cursor) { SDL_DestroyCursor(static_cast<SDL_Cursor*>(cursor)); cursor = nullptr; }
             }
             ctx->cursorsInitialized = false;
         }
     }
 
-    UIContext* CreateContext(SDL_Window* window, void* existingGLContext) {
+    UIContext* CreateContext(WindowHandle window, void* existingGLContext) {
         if (g_ctx) return g_ctx;
 
         if (!window) {
@@ -259,7 +260,7 @@ namespace FluentUI {
         return g_ctx;
     }
 
-    UIContext* CreateContext(SDL_Window* window, RenderBackendType backend, void* existingContext) {
+    UIContext* CreateContext(WindowHandle window, RenderBackendType backend, void* existingContext) {
         // Keep the backend choice and its handle together so they can't desync.
         SetPreferredBackend(backend);
         return CreateContext(window, existingContext);
@@ -302,7 +303,7 @@ namespace FluentUI {
         return g_ctx && g_ctx->IsRTL();
     }
 
-    UIContext* CreateStandaloneContext(SDL_Window* window, RenderBackend** outBackend) {
+    UIContext* CreateStandaloneContext(WindowHandle window, RenderBackend** outBackend) {
         if (!window) {
             Log(LogLevel::Error, "Window handle is NULL");
             return nullptr;
@@ -339,7 +340,7 @@ namespace FluentUI {
         return ctx;
     }
 
-    UIContext* CreateStandaloneContext(SDL_Window* window, UIContext* shareFrom,
+    UIContext* CreateStandaloneContext(WindowHandle window, UIContext* shareFrom,
                                        RenderBackend** outBackend) {
         if (!window) {
             Log(LogLevel::Error, "Window handle is NULL");
@@ -814,7 +815,7 @@ namespace FluentUI {
         if (g_ctx->cursorsInitialized && g_ctx->desiredCursor != g_ctx->currentCursor) {
             int idx = static_cast<int>(g_ctx->desiredCursor);
             if (idx >= 0 && idx < 7 && g_ctx->systemCursors[idx]) {
-                SDL_SetCursor(g_ctx->systemCursors[idx]);
+                SDL_SetCursor(static_cast<SDL_Cursor*>(g_ctx->systemCursors[idx]));
             }
             g_ctx->currentCursor = g_ctx->desiredCursor;
         }

@@ -320,7 +320,7 @@ bool VulkanBackend::CreateSurfaceForWindow() {
     }
 
     if (useSdlSurface) {
-        if (!SDL_Vulkan_CreateSurface(window, instance, nullptr, &surface)) {
+        if (!SDL_Vulkan_CreateSurface(static_cast<SDL_Window*>(window), instance, nullptr, &surface)) {
             Log(LogLevel::Error, "Vulkan: SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
             return false;
         }
@@ -328,7 +328,7 @@ bool VulkanBackend::CreateSurfaceForWindow() {
     }
 #if defined(_WIN32)
     HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(
-        SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+        SDL_GetWindowProperties(static_cast<SDL_Window*>(window)), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
     if (!hwnd) {
         Log(LogLevel::Error, "Vulkan: could not obtain HWND for native surface");
         return false;

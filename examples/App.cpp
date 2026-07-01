@@ -1,3 +1,4 @@
+#include <SDL3/SDL.h>
 #include "App.h"
 #include <SDL3/SDL_vulkan.h>
 #include <cmath>

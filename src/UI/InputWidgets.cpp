@@ -1,3 +1,4 @@
+#include <SDL3/SDL.h>
 #include "UI/Widgets.h"
 #include "UI/WidgetHelpers.h"
 #include "UI/Icons.h"
@@ -881,7 +882,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
   if (ctx->window) {
     if (hasFocus) {
       if (ctx->imeOwnerId != id) {
-        SDL_StartTextInput(ctx->window);
+        SDL_StartTextInput(static_cast<SDL_Window*>(ctx->window));
         ctx->imeOwnerId = id;
       }
       SDL_Rect imeArea;
@@ -889,9 +890,9 @@ bool TextInput(const std::string &label, std::string *value, float width,
       imeArea.y = static_cast<int>(fieldPos.y);
       imeArea.w = static_cast<int>(fieldSize.x);
       imeArea.h = static_cast<int>(fieldSize.y);
-      SDL_SetTextInputArea(ctx->window, &imeArea, 0);
+      SDL_SetTextInputArea(static_cast<SDL_Window*>(ctx->window), &imeArea, 0);
     } else if (ctx->imeOwnerId == id) {
-      SDL_StopTextInput(ctx->window);
+      SDL_StopTextInput(static_cast<SDL_Window*>(ctx->window));
       ctx->imeOwnerId = 0;
     }
   }
@@ -1475,7 +1476,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
         inputArea.y = static_cast<int>(fieldPos.y);
         inputArea.w = static_cast<int>(compSize.x);
         inputArea.h = static_cast<int>(fieldSize.y);
-        SDL_SetTextInputArea(ctx->window, &inputArea, 0);
+        SDL_SetTextInputArea(static_cast<SDL_Window*>(ctx->window), &inputArea, 0);
       } else {
         // Normal caret blink
         float blinkAlpha = 0.5f + 0.5f * std::sin(ctx->frame * 0.1f);
@@ -3451,14 +3452,14 @@ bool PasswordBox(const std::string &id, std::string *value,
   if (ctx->window) {
     if (hasFocus) {
       if (ctx->imeOwnerId != wid) {
-        SDL_StartTextInput(ctx->window);
+        SDL_StartTextInput(static_cast<SDL_Window*>(ctx->window));
         ctx->imeOwnerId = wid;
       }
       SDL_Rect area{static_cast<int>(fieldPos.x), static_cast<int>(fieldPos.y),
                     static_cast<int>(fieldSize.x), static_cast<int>(fieldSize.y)};
-      SDL_SetTextInputArea(ctx->window, &area, 0);
+      SDL_SetTextInputArea(static_cast<SDL_Window*>(ctx->window), &area, 0);
     } else if (ctx->imeOwnerId == wid) {
-      SDL_StopTextInput(ctx->window);
+      SDL_StopTextInput(static_cast<SDL_Window*>(ctx->window));
       ctx->imeOwnerId = 0;
     }
   }

@@ -1,3 +1,4 @@
+#include <SDL3/SDL.h>
 #include "core/OpenGLBackend.h"
 #include "core/EmbeddedShaders.h"
 #include "core/Context.h"
@@ -26,20 +27,20 @@ bool OpenGLBackend::Init(void* windowHandle, void* existingGLContext) {
         // Reuse the caller's GL context — do not create a new one
         glContext = static_cast<SDL_GLContext>(existingGLContext);
         ownsGLContext = false;
-        SDL_GL_MakeCurrent(window, glContext);
+        SDL_GL_MakeCurrent(static_cast<SDL_Window*>(window), static_cast<SDL_GLContext>(glContext));
     } else {
         // Create our own GL context
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 5);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 
-        glContext = SDL_GL_CreateContext(window);
+        glContext = SDL_GL_CreateContext(static_cast<SDL_Window*>(window));
         if (!glContext) {
             Log(LogLevel::Error, "OpenGL Error: Failed to create GL context: %s", SDL_GetError());
             return false;
         }
         ownsGLContext = true;
-        SDL_GL_MakeCurrent(window, glContext);
+        SDL_GL_MakeCurrent(static_cast<SDL_Window*>(window), static_cast<SDL_GLContext>(glContext));
     }
 
     if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
@@ -256,7 +257,7 @@ void OpenGLBackend::Shutdown() {
     acrylicResourcesReady = false;
 
     if (glContext && ownsGLContext) {
-        SDL_GL_DestroyContext(glContext);
+        SDL_GL_DestroyContext(static_cast<SDL_GLContext>(glContext));
     }
     glContext = nullptr;
     textureIsAlphaOnly.clear();
@@ -268,7 +269,7 @@ void OpenGLBackend::BeginFrame(const Color& clearColor) {
     // window / engine-embedded cases keep the context the caller already made
     // current.)
     if (secondaryWindow && window && glContext) {
-        SDL_GL_MakeCurrent(window, glContext);
+        SDL_GL_MakeCurrent(static_cast<SDL_Window*>(window), static_cast<SDL_GLContext>(glContext));
     }
 
     // "present" = we own this window's default framebuffer (own context, or our
@@ -335,7 +336,7 @@ void OpenGLBackend::EndFrame() {
 void OpenGLBackend::Present() {
     // Swap this window's buffers. Used by the backend-agnostic multi-window path
     // (brief 09 AppWindow). The main FluentApp loop still swaps directly.
-    if (window) SDL_GL_SwapWindow(window);
+    if (window) SDL_GL_SwapWindow(static_cast<SDL_Window*>(window));
 }
 
 void OpenGLBackend::SetViewport(int width, int height) {

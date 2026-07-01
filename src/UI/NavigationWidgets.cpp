@@ -521,7 +521,7 @@ TitleBarResult TitleBar(const std::string& id, const std::string& title,
   float fullW = ctx->renderer.GetViewportSize().x;
   Vec2 barSize(std::max(1.0f, fullW - barPos.x), barH);
 
-  SDL_Window* win = ctx->window;
+  SDL_Window* win = static_cast<SDL_Window*>(ctx->window);
   bool maximized =
       win && (SDL_GetWindowFlags(win) & SDL_WINDOW_MAXIMIZED) != 0;
 

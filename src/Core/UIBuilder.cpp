@@ -1,3 +1,4 @@
+#include <SDL3/SDL.h>
 #include "core/UIBuilder.h"
 #include "UI/Widgets.h"
 #include "core/Context.h"

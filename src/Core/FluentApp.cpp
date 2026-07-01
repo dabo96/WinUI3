@@ -1,3 +1,4 @@
+#include <SDL3/SDL.h>
 #include "core/FluentApp.h"
 #include "core/Context.h"
 #include "core/DockSystem.h"

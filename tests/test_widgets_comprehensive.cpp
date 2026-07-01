@@ -1,3 +1,4 @@
+#include <SDL3/SDL.h>
 // ============================================================================
 // Comprehensive Widget & System Tests for FluentUI
 // 55+ test cases covering widgets, layout, animations, helpers, edge cases

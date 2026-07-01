@@ -2,7 +2,6 @@
 
 #include "RenderBackend.h"
 #include <glad/glad.h>
-#include <SDL3/SDL.h>
 #include <unordered_map>
 #include <vector>
 
@@ -20,9 +19,9 @@ public:
     void Present() override;
     void SetViewport(int width, int height) override;
 
-    // brief 08 Part A: expose the SDL_GLContext so a secondary window's backend
-    // can reuse the SAME context (resources are then shared GL-side).
-    SDL_GLContext GetGLContext() const { return glContext; }
+    // brief 08 Part A: expose the GL context (SDL_GLContext, as an opaque void*)
+    // so a secondary window's backend can reuse the SAME context (shared GL-side).
+    void* GetGLContext() const { return glContext; }
 
     // brief 08 Part A: mark this backend as driving a secondary OS-window that
     // shares the main context. In that mode BeginFrame makes the window current
@@ -71,8 +70,8 @@ public:
     Color ReadPixel(int x, int y) override;
 
 private:
-    SDL_Window* window = nullptr;
-    SDL_GLContext glContext = nullptr;
+    void* window = nullptr;     // SDL_Window* (opaque; cast in the .cpp)
+    void* glContext = nullptr;  // SDL_GLContext (opaque; cast in the .cpp)
     bool ownsGLContext = true;  // false when using an external context
     // brief 08 Part A: true when this backend renders a secondary OS-window that
     // shares the main GL context. Distinguishes "embedded in an engine context"

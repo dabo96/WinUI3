@@ -1,4 +1,5 @@
-﻿#include "core/InputState.h"
+#include <SDL3/SDL.h>
+#include "core/InputState.h"
 #include <string>
 #include <cstdlib>
 
