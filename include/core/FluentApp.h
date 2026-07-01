@@ -4,7 +4,8 @@
 #include "core/UndoSystem.h"
 #include "core/LayoutSerializer.h"
 #include "Theme/Style.h"
-#include <SDL3/SDL.h>
+#include "core/UIEvent.h" // WindowHandle (brief 20)
+#include <SDL3/SDL.h>     // TODO(F-c2): remove once the event API is neutralized
 #include <string>
 #include <functional>
 #include <cstdint>
@@ -63,7 +64,7 @@ public:
     void root(std::function<void(UIBuilder&)> buildFn);
 
     // Access
-    SDL_Window* window() { return window_; }
+    WindowHandle window() { return window_; }
     UIContext* context() { return ctx_; }
     bool isOpen() const { return open_; }
     void close() { open_ = false; }
@@ -79,13 +80,13 @@ private:
     // CreateStandaloneContext(window, parentCtx) so it SHARES the parent's GPU
     // device / GL context and resource pool (brief 08). No own GL context.
     AppWindow(const std::string& title, int width, int height,
-              SDL_Window* parentWindow, SDL_GLContext parentGLContext,
+              WindowHandle parentWindow, void* parentGLContext,
               UIContext* parentCtx);
 
     // Process one frame (called by FluentApp in the main loop). Sets this context
     // current, builds + renders the panel, and presents via the backend. For GL it
     // restores the parent context afterwards (parentGLContext may be null on Vulkan).
-    void processFrame(float dt, SDL_Window* parentWindow, SDL_GLContext parentGLContext);
+    void processFrame(float dt, WindowHandle parentWindow, void* parentGLContext);
 
     // Route an SDL event to this window's input system
     void routeEvent(const SDL_Event& e);
@@ -93,12 +94,12 @@ private:
     // Update DPI scale from current display
     void updateDPIScale();
 
-    SDL_Window* window_ = nullptr;
+    WindowHandle window_ = nullptr;      // SDL_Window* (opaque; cast in the .cpp)
     RenderBackend* backend_ = nullptr;   // Own backend (for cleanup); shares parent device
     UIContext* ctx_ = nullptr;
     // brief 09: the SHARED GL context (parent's) this window renders with. Stored
     // only so GL resource cleanup can be made current at destruction. Null on Vulkan.
-    SDL_GLContext sharedGLContext_ = nullptr;
+    void* sharedGLContext_ = nullptr;    // SDL_GLContext (opaque; cast in the .cpp)
     bool open_ = true;
     std::function<void(UIBuilder&)> rootBuilder_;
     std::string panelId_; // Phase E5: set when hosting a detached dock panel
@@ -148,7 +149,7 @@ public:
     ///     SDL_GL_SwapWindow(win);
     /// }
     /// @endcode
-    FluentApp(SDL_Window* externalWindow, SDL_GLContext externalGLContext,
+    FluentApp(WindowHandle externalWindow, void* externalGLContext,
               bool darkMode = true, bool enableDPI = true);
 
     ~FluentApp();
@@ -195,7 +196,7 @@ public:
 
     // Access
     UIContext* context() { return ctx_; }
-    SDL_Window* window() { return window_; }
+    WindowHandle window() { return window_; }
     bool isRunning() const { return running_; }
 
     // Keyboard shortcuts
@@ -278,8 +279,8 @@ private:
     // Get the SDL window ID for an event (works for mouse, key, window events)
     static SDL_WindowID getEventWindowID(const SDL_Event& e);
 
-    SDL_Window* window_ = nullptr;
-    SDL_GLContext mainGLContext_ = nullptr; // Cached main GL context for restore
+    WindowHandle window_ = nullptr;         // SDL_Window* (opaque; cast in the .cpp)
+    void* mainGLContext_ = nullptr;         // SDL_GLContext (opaque; cast in the .cpp)
     UIContext* ctx_ = nullptr;
     bool running_ = false;
     bool initialized_ = false;
