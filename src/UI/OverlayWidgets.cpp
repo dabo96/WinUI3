@@ -916,6 +916,9 @@ bool BeginFlyout(const std::string &id, const Rect &anchorRect,
   ctx->lastItemSize = Vec2(0.0f, 0.0f);
   BeginVertical(ctx->style.spacing, std::nullopt, Vec2(0.0f, 0.0f));
 
+  // Bugfix: marcar el scope activo. EndFlyout desenrolla según este id, NO según
+  // activeFlyoutId (que CloseFlyout puede poner a 0 dentro del scope).
+  ctx->flyoutScopeId = flyoutId;
   return true;
 }
 
@@ -923,9 +926,13 @@ void EndFlyout() {
   UIContext *ctx = GetContext();
   if (!ctx)
     return;
-  if (ctx->activeFlyoutId == 0)
+  // Bugfix: usar flyoutScopeId, no activeFlyoutId. Al elegir una fila del
+  // AutoSuggestBox o pulsar "Got it" en un TeachingTip, se llama CloseFlyout()
+  // DENTRO del scope, que pone activeFlyoutId=0; con la guarda vieja EndFlyout
+  // retornaba temprano sin restaurar el clip stack del padre → UI en blanco.
+  if (ctx->flyoutScopeId == 0)
     return;
-  auto &state = ctx->GetFlyoutState(ctx->activeFlyoutId);
+  auto &state = ctx->GetFlyoutState(ctx->flyoutScopeId);
 
   // Medir el contenido (para auto-grow / posición del frame siguiente).
   Vec2 measuredContent{0.0f, 0.0f};
@@ -965,6 +972,7 @@ void EndFlyout() {
   // rect del flyout el resto del frame (se re-fija cada BeginFlyout y se limpia
   // al cerrar). TODO: submenús (varios flyouts apilados) en una revisión futura.
   ctx->insideFlyout = false;
+  ctx->flyoutScopeId = 0; // cerrar el scope Begin/EndFlyout
 }
 
 void OpenFlyout(const std::string &id) {

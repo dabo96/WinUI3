@@ -63,7 +63,8 @@ void ProgressRing(const std::string& id, float size = 32.0f, float progress = -1
 // Píldora de acento con el número ("99+" si excede) o, con dot=true y count<=0,
 // solo un punto. Por defecto se ancla a la esquina superior-derecha del último
 // item dibujado (ctx->lastItemPos + lastItemSize); o en `anchorTopRight` si se da.
-void Badge(int count, bool dot = false, std::optional<Vec2> anchorTopRight = {});
+// Clickable: devuelve true el frame en que se pulsa (los callers pueden ignorarlo).
+bool Badge(int count, bool dot = false, std::optional<Vec2> anchorTopRight = {});
 
 // ─── 5) Skeleton / shimmer (placeholder de carga) ─────────────────────────────
 // Bloque redondeado neutro con un brillo (shimmer) que se desplaza en bucle.

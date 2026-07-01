@@ -445,9 +445,9 @@ void ProgressRing(const std::string& id, float size, float progress) {
 
 // ─── 4) Badge ─────────────────────────────────────────────────────────────────
 
-void Badge(int count, bool dot, std::optional<Vec2> anchorTopRight) {
+bool Badge(int count, bool dot, std::optional<Vec2> anchorTopRight) {
   UIContext* ctx = GetContext();
-  if (!ctx) return;
+  if (!ctx) return false;
 
   const Style& style = ctx->style;
   Color accent = style.accentColor;
@@ -458,13 +458,23 @@ void Badge(int count, bool dot, std::optional<Vec2> anchorTopRight) {
       ? anchorTopRight.value()
       : Vec2(ctx->lastItemPos.x + ctx->lastItemSize.x, ctx->lastItemPos.y);
 
+  // Enhancement (bug #3): el badge es clickable. Hit-test sin estado (posición del
+  // ratón + flanco de click); devuelve true si se pulsa. No llama a SetLastItem para
+  // no perturbar el anclaje sobre el item previo. Los call sites que lo ignoran siguen
+  // compilando (void->bool retrocompatible).
+  auto badgeClick = [&](Vec2 bp, Vec2 size) -> bool {
+    if (!IsMouseOver(ctx, bp, size)) return false;
+    ctx->desiredCursor = UIContext::CursorType::Hand;
+    return ctx->input.IsMousePressed(0);
+  };
+
   // Punto (sin número).
   if (dot && count <= 0) {
     float rad = S(4.0f);
     ctx->renderer.DrawCircle(Vec2(corner.x, corner.y), rad, accent, true);
-    return;
+    return badgeClick(Vec2(corner.x - rad, corner.y - rad), Vec2(rad * 2.0f, rad * 2.0f));
   }
-  if (count <= 0 && !dot) return; // nada que mostrar
+  if (count <= 0 && !dot) return false; // nada que mostrar
 
   std::string txt = count > 99 ? "99+" : std::to_string(count);
   float fs = cap.fontSize * 0.92f;
@@ -478,6 +488,7 @@ void Badge(int count, bool dot, std::optional<Vec2> anchorTopRight) {
   Color fg(1.0f, 1.0f, 1.0f, 1.0f);
   ctx->renderer.DrawText(Vec2(bp.x + (w - ts.x) * 0.5f, bp.y + (h - ts.y) * 0.5f),
                          txt, fg, fs);
+  return badgeClick(bp, Vec2(w, h));
 }
 
 // ─── 5) Skeleton / shimmer ────────────────────────────────────────────────────

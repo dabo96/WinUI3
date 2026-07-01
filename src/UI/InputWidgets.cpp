@@ -3194,6 +3194,11 @@ void SelectableText(const std::string &id, const std::string &text,
   if (ctx->input.IsMousePressed(0)) {
     if (hover) {
       ctx->focusedWidgetId = wid;
+      // Bugfix: reclamar el estado "activo" (captura de ratón) al iniciar el arrastre,
+      // igual que TextInput/PasswordBox. Sin esto, un scroll/panel cercano puede robar
+      // el drag y la selección nunca se forma.
+      ctx->activeWidgetId = wid;
+      ctx->activeWidgetType = ActiveWidgetType::TextInput;
       focused = true;
       size_t hit = hitTest(mousePos);
       auto &ci = ctx->GetTextState(wid).clickInfo; // brief 22 (fase 4)
@@ -3224,6 +3229,8 @@ void SelectableText(const std::string &id, const std::string &text,
         anchor = caret = hit;
       }
       dragging = true;
+    } else if (ctx->activeWidgetId == wid) {
+      ctx->activeWidgetId = 0; // soltar captura al pulsar fuera
     }
   }
   if (!ctx->input.IsMouseDown(0))
@@ -3390,7 +3397,9 @@ bool PasswordBox(const std::string &id, std::string *value,
     return static_cast<size_t>(p - textRef.data());
   };
   auto totalCp = [&]() -> size_t { return byteToCp(textRef.size()); };
-  const std::string BULLET = "\xE2\x80\xA2"; // U+2022, 3 bytes
+  // Bugfix: U+2022 (•) NO está en el atlas MSDF → la ruta MSDF avanza pero no dibuja
+  // (glifo invisible). Usamos '*' (presente en el atlas) como máscara estándar.
+  const std::string BULLET = "*";
   auto displayStr = [&]() -> std::string {
     if (reveal)
       return textRef;
@@ -3414,7 +3423,7 @@ bool PasswordBox(const std::string &id, std::string *value,
   auto hitToByte = [&](float localX) -> size_t {
     if (reveal)
       return FindCaretPosition(textRef, localX, ctx);
-    float bw = ctx->renderer.GetGlyphAdvance(0x2022, fs);
+    float bw = ctx->renderer.GetGlyphAdvance('*', fs); // debe coincidir con BULLET
     size_t k = bw > 0.0f ? static_cast<size_t>(std::max(0.0f, (localX + bw * 0.5f) / bw)) : 0;
     k = std::min(k, totalCp());
     return cpToByte(k);

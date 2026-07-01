@@ -619,6 +619,11 @@ struct UIContext {
   };
   // brief 22 (fase 6): flyoutStates fundido en widgetStates (ws.flyout) — GetFlyoutState(id).
   uint32_t activeFlyoutId = 0;   // Flyout abierto (0 = ninguno): captura input
+  // Bugfix: id del scope Begin/EndFlyout en curso, independiente de activeFlyoutId.
+  // CloseFlyout() puede poner activeFlyoutId=0 DENTRO del scope (al elegir una fila /
+  // dismiss), así que EndFlyout debe desenrollar (restaurar clip/opacity/layout) según
+  // este campo, no según activeFlyoutId, o si no la UI queda recortada a nada.
+  uint32_t flyoutScopeId = 0;
   bool insideFlyout = false;     // true entre BeginFlyout/EndFlyout (contenido exento)
 
   struct ListViewState {

@@ -752,7 +752,12 @@ bool HyperlinkButton(const std::string &text, const std::string &url,
     Vec2 textPos(pos.x, pos.y + (finalSize.y - measured.y) * 0.5f);
     ctx->renderer.DrawText(textPos, text, col, fs);
     if (hover) {
-      float underY = textPos.y + fs * 0.95f;
+      // Bugfix: anclar el subrayado a la baseline real de la fuente. DrawText sitúa
+      // la baseline en textPos.y + ascender*fs (ascender ≈ 1.079 aquí), así que el
+      // viejo fs*0.95 caía en medio del glifo = efecto de tachado. Baseline + holgura.
+      float asc = ctx->renderer.GetFontAscender();
+      if (asc <= 0.0f) asc = 0.8f;
+      float underY = textPos.y + asc * fs + std::max(1.0f, fs * 0.08f);
       ctx->renderer.DrawLine(Vec2(textPos.x, underY),
                              Vec2(textPos.x + measured.x, underY), col, 1.0f);
     }
