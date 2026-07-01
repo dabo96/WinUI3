@@ -166,7 +166,7 @@ bool BeginContextMenu(const std::string &id) {
     return false;
 
   uint32_t menuId = GenerateId("CTXMENU:", id.c_str());
-  auto &state = ctx->contextMenuStates[menuId];
+  auto &state = ctx->GetCtxMenuState(menuId);
 
   // Verificar si se debe abrir el context menu (clic derecho)
   bool rightPressed = ctx->input.IsMousePressed(2); // Botón derecho del mouse
@@ -285,8 +285,8 @@ bool ContextMenuItem(const std::string &label, uint32_t iconCodepoint, bool enab
   // Solo renderizar si hay un context menu activo
   if (ctx->activeContextMenuId == 0)
     return false;
-  auto it = ctx->contextMenuStates.find(ctx->activeContextMenuId);
-  if (it == ctx->contextMenuStates.end() || !it->second.open)
+  auto &ctxMenuState = ctx->GetCtxMenuState(ctx->activeContextMenuId);
+  if (!ctxMenuState.open)
     return false;
 
   const PanelStyle &panelStyle = ctx->style.panel;
@@ -342,8 +342,8 @@ void ContextMenuSeparator() {
   // Solo renderizar si hay un context menu activo
   if (ctx->activeContextMenuId == 0)
     return;
-  auto it = ctx->contextMenuStates.find(ctx->activeContextMenuId);
-  if (it == ctx->contextMenuStates.end() || !it->second.open)
+  auto &ctxMenuState = ctx->GetCtxMenuState(ctx->activeContextMenuId);
+  if (!ctxMenuState.open)
     return;
 
   const PanelStyle &panelStyle = ctx->style.panel;
@@ -373,31 +373,29 @@ void EndContextMenu() {
   // Solo procesar si hay un context menu activo
   if (ctx->activeContextMenuId == 0)
     return;
-  auto it = ctx->contextMenuStates.find(ctx->activeContextMenuId);
-  if (it == ctx->contextMenuStates.end() || !it->second.open) {
+  auto &state = ctx->GetCtxMenuState(ctx->activeContextMenuId);
+  if (!state.open) {
     ctx->insideContextMenu = false;
     // Pop the context menu's vertical layout if it was pushed
-    if (ctx->layoutStack.size() > it->second.savedLayoutStackSize) {
+    if (ctx->layoutStack.size() > state.savedLayoutStackSize) {
       EndVertical(false);
     }
     // Restaurar estado del padre
-    ctx->cursorPos = it->second.savedCursorPos;
-    ctx->lastItemPos = it->second.savedLastItemPos;
-    ctx->lastItemSize = it->second.savedLastItemSize;
+    ctx->cursorPos = state.savedCursorPos;
+    ctx->lastItemPos = state.savedLastItemPos;
+    ctx->lastItemSize = state.savedLastItemSize;
     // Restaurar clip stack
     ctx->renderer.FlushBatch();
     while(!ctx->renderer.GetClipStack().empty()) {
         ctx->renderer.PopClipRect();
     }
-    for (const auto& rect : it->second.savedClipStack) {
+    for (const auto& rect : state.savedClipStack) {
         ctx->renderer.PushClipRect(Vec2((float)rect.x, (float)rect.y),
                                    Vec2((float)rect.width, (float)rect.height));
     }
-    it->second.savedClipStack.clear();
+    state.savedClipStack.clear();
     return;
   }
-
-  auto &state = it->second;
 
   // Calcular el tamaño total del contenido (incluyendo scroll offset para obtener el tamaño real)
   float fullContentHeight = ctx->cursorPos.y - (state.position.y - state.scrollOffset);
@@ -477,7 +475,7 @@ bool BeginModal(const std::string &id, const std::string &title, uint32_t iconCo
     return false;
 
   uint32_t modalId = GenerateId("MODAL:", id.c_str());
-  auto &state = ctx->modalStates[modalId];
+  auto &state = ctx->GetModalState(modalId);
 
   // Si open es nullptr o está en false, no mostrar el modal
   if (!open || !*open) {
@@ -710,10 +708,7 @@ void EndModal() {
 
   // Update content size in modal state for next frame auto-sizing
   if (modalId != 0) {
-    auto it = ctx->modalStates.find(modalId);
-    if (it != ctx->modalStates.end()) {
-      it->second.contentSize = measuredContent;
-    }
+    ctx->GetModalState(modalId).contentSize = measuredContent;
   }
 
   // Remover clipping del área de contenido del modal
@@ -724,13 +719,13 @@ void EndModal() {
 
   // RESTAURAR CLIPPING ORIGINAL using the specific modal's saved stack
   if (modalId != 0) {
-    auto it = ctx->modalStates.find(modalId);
-    if (it != ctx->modalStates.end() && !it->second.savedClipStack.empty()) {
+    auto &state = ctx->GetModalState(modalId);
+    if (!state.savedClipStack.empty()) {
       ctx->renderer.FlushBatch();
-      for (const auto& rect : it->second.savedClipStack) {
+      for (const auto& rect : state.savedClipStack) {
         ctx->renderer.PushClipRect(Vec2((float)rect.x, (float)rect.y), Vec2((float)rect.width, (float)rect.height));
       }
-      it->second.savedClipStack.clear();
+      state.savedClipStack.clear();
     }
   }
 }
@@ -815,7 +810,7 @@ bool BeginFlyout(const std::string &id, const Rect &anchorRect,
     return false;
 
   uint32_t flyoutId = GenerateId("FLYOUT:", id.c_str());
-  auto &state = ctx->flyoutStates[flyoutId];
+  auto &state = ctx->GetFlyoutState(flyoutId);
 
   state.anchor = anchorRect;
   Vec2 viewport = ctx->renderer.GetViewportSize();
@@ -930,10 +925,7 @@ void EndFlyout() {
     return;
   if (ctx->activeFlyoutId == 0)
     return;
-  auto it = ctx->flyoutStates.find(ctx->activeFlyoutId);
-  if (it == ctx->flyoutStates.end())
-    return;
-  auto &state = it->second;
+  auto &state = ctx->GetFlyoutState(ctx->activeFlyoutId);
 
   // Medir el contenido (para auto-grow / posición del frame siguiente).
   Vec2 measuredContent{0.0f, 0.0f};
@@ -981,11 +973,13 @@ void OpenFlyout(const std::string &id) {
     return;
   uint32_t flyoutId = GenerateId("FLYOUT:", id.c_str());
   // Single-open: cerrar cualquier otro flyout abierto.
-  for (auto &kv : ctx->flyoutStates) {
-    if (kv.first != flyoutId)
-      kv.second.open = false;
+  // brief 22 (fase 6): los flyouts viven en widgetStates; recorremos el mapa
+  // unificado filtrando las entradas con sub-estado flyout presente.
+  for (auto &[wid, ws] : ctx->widgetStates) {
+    if (ws.flyout && wid != flyoutId)
+      ws.flyout->open = false;
   }
-  auto &state = ctx->flyoutStates[flyoutId];
+  auto &state = ctx->GetFlyoutState(flyoutId);
   if (!state.open) {
     state.open = true;
     state.measuredSize = Vec2(0.0f, 0.0f); // forzar re-medir/reposicionar
@@ -998,9 +992,11 @@ void CloseFlyout(const std::string &id) {
   if (!ctx)
     return;
   uint32_t flyoutId = GenerateId("FLYOUT:", id.c_str());
-  auto it = ctx->flyoutStates.find(flyoutId);
-  if (it != ctx->flyoutStates.end())
-    it->second.open = false;
+  // brief 22 (fase 6): test de existencia sobre widgetStates para NO crear una
+  // entrada espuria si el flyout nunca se abrió.
+  auto it = ctx->widgetStates.find(flyoutId);
+  if (it != ctx->widgetStates.end() && it->second.flyout)
+    it->second.flyout->open = false;
   if (ctx->activeFlyoutId == flyoutId)
     ctx->activeFlyoutId = 0;
 }
@@ -1010,8 +1006,9 @@ bool IsFlyoutOpen(const std::string &id) {
   if (!ctx)
     return false;
   uint32_t flyoutId = GenerateId("FLYOUT:", id.c_str());
-  auto it = ctx->flyoutStates.find(flyoutId);
-  return it != ctx->flyoutStates.end() && it->second.open;
+  // brief 22 (fase 6): consulta sin crear entrada — busca en widgetStates.
+  auto it = ctx->widgetStates.find(flyoutId);
+  return it != ctx->widgetStates.end() && it->second.flyout && it->second.flyout->open;
 }
 
 void MenuFlyout(const std::string &id, const Rect &anchorRect,
@@ -1250,11 +1247,12 @@ bool TeachingTip(const std::string &id, const Rect &targetRect,
   // Dibujar el "beak" (flecha) apuntando al target, sobre la capa de overlay y
   // fuera del clip de la card (queda en el hueco entre el target y el flyout).
   uint32_t fid = GenerateId("FLYOUT:", flyoutId.c_str());
-  auto it = ctx->flyoutStates.find(fid);
-  if (it != ctx->flyoutStates.end() && it->second.open &&
-      it->second.measuredSize.y > 1.0f) {
-    Vec2 fpos = it->second.position;
-    Vec2 fsize = it->second.measuredSize;
+  // brief 22 (fase 6): consulta sin crear entrada — busca en widgetStates.
+  auto it = ctx->widgetStates.find(fid);
+  if (it != ctx->widgetStates.end() && it->second.flyout && it->second.flyout->open &&
+      it->second.flyout->measuredSize.y > 1.0f) {
+    Vec2 fpos = it->second.flyout->position;
+    Vec2 fsize = it->second.flyout->measuredSize;
     Color beakColor = panelStyle.background;
     beakColor.a = 1.0f;
     float tcx = targetRect.pos.x + targetRect.size.x * 0.5f;

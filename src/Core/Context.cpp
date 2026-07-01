@@ -243,6 +243,11 @@ namespace FluentUI {
         if (!ws.flyout) ws.flyout = std::make_unique<FlyoutState>();
         return *ws.flyout;
     }
+    UIContext::MenuState& UIContext::GetMenuState(uint32_t id) {
+        WidgetState& ws = GetWidgetState(id);
+        if (!ws.menu) ws.menu = std::make_unique<MenuState>();
+        return *ws.menu;
+    }
     UIContext::ListViewState& UIContext::GetListState(uint32_t id) {
         WidgetState& ws = GetWidgetState(id);
         if (!ws.list) ws.list = std::make_unique<ListViewState>();
@@ -773,8 +778,15 @@ namespace FluentUI {
             float mouseY = g_ctx->input.MouseY();
             bool clickedOutside = true;
             
-            // Verificar context menus
-            for (auto& [id, menuState] : g_ctx->contextMenuStates) {
+            // brief 22 (fase 6): context menus y menus del MenuBar viven ahora en
+            // widgetStates (ws.ctxMenu / ws.menu). Recorremos UNA vez el mapa
+            // unificado y filtramos por sub-estado presente en lugar de iterar dos
+            // mapas paralelos.
+
+            // Verificar context menus (ws.ctxMenu)
+            for (auto& [id, ws] : g_ctx->widgetStates) {
+                if (!ws.ctxMenu) continue;
+                auto& menuState = *ws.ctxMenu;
                 if (menuState.open) {
                     Vec2 menuPos = menuState.position;
                     Vec2 menuSize = menuState.size;
@@ -786,9 +798,11 @@ namespace FluentUI {
                     }
                 }
             }
-            
-            // Verificar menus del MenuBar
-            for (auto& [id, menuState] : g_ctx->menuStates) {
+
+            // Verificar menus del MenuBar (ws.menu)
+            for (auto& [id, ws] : g_ctx->widgetStates) {
+                if (!ws.menu) continue;
+                auto& menuState = *ws.menu;
                 if (menuState.open) {
                     Vec2 menuPos = menuState.position;
                     Vec2 menuSize = menuState.size;
@@ -808,16 +822,14 @@ namespace FluentUI {
                     }
                 }
             }
-            
+
             // Si se hizo click fuera de todos los menus, cerrar todos
             if (clickedOutside) {
-                for (auto& [id, menuState] : g_ctx->contextMenuStates) {
-                    menuState.open = false;
+                for (auto& [id, ws] : g_ctx->widgetStates) {
+                    if (ws.ctxMenu) ws.ctxMenu->open = false;
+                    if (ws.menu) ws.menu->open = false;
                 }
                 g_ctx->activeContextMenuId = 0;
-                for (auto& [id, menuState] : g_ctx->menuStates) {
-                    menuState.open = false;
-                }
                 g_ctx->activeMenuId = 0;
             }
         }

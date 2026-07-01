@@ -2852,8 +2852,9 @@ void RenderDeferredDropdowns() {
   // bloqueo siguió vigente durante este frame (evitando el clickthrough) y aquí
   // se limpia para el siguiente.
   if (ctx->openMenuId != 0) {
-    auto it = ctx->menuStates.find(ctx->openMenuId);
-    if (it == ctx->menuStates.end() || !it->second.open) {
+    // brief 22 (fase 6): consulta sin crear entrada — busca en widgetStates.
+    auto it = ctx->widgetStates.find(ctx->openMenuId);
+    if (it == ctx->widgetStates.end() || !it->second.menu || !it->second.menu->open) {
       ctx->openMenuId = 0;
     }
   }

@@ -192,9 +192,11 @@ inline bool IsMouseInputBlocked(UIContext *ctx) {
   // Flyout abierto (brief 14): bloqueo solo bajo el rect del flyout, igual que el
   // combo. Su propio contenido queda exento vía insideFlyout.
   if (ctx->activeFlyoutId != 0 && !ctx->insideFlyout) {
-    auto it = ctx->flyoutStates.find(ctx->activeFlyoutId);
-    if (it != ctx->flyoutStates.end() &&
-        PointInRect(Vec2(mx, my), it->second.position, it->second.measuredSize)) {
+    // brief 22 (fase 6): consulta sin crear entrada — busca en widgetStates.
+    auto it = ctx->widgetStates.find(ctx->activeFlyoutId);
+    if (it != ctx->widgetStates.end() && it->second.flyout &&
+        PointInRect(Vec2(mx, my), it->second.flyout->position,
+                    it->second.flyout->measuredSize)) {
       return true;
     }
   }

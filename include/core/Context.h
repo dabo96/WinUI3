@@ -581,7 +581,7 @@ struct UIContext {
     std::vector<Renderer::ClipRect> savedClipStack;
   };
 
-  std::unordered_map<uint32_t, ModalState> modalStates;
+  // brief 22 (fase 6): modalStates fundido en widgetStates (ws.modal) — GetModalState(id).
   std::vector<uint32_t> modalStack;  // Track active modal IDs for EndModal
   uint32_t activeModalId = 0; // Modal abierto (0 = ninguno): bloquea el fondo
   bool insideModal = false;   // true entre BeginModal/EndModal (contenido exento)
@@ -601,7 +601,7 @@ struct UIContext {
     size_t savedLayoutStackSize = 0;
   };
 
-  std::unordered_map<uint32_t, ContextMenuState> contextMenuStates;
+  // brief 22 (fase 6): contextMenuStates fundido en widgetStates (ws.ctxMenu) — GetCtxMenuState(id).
   uint32_t activeContextMenuId = 0; // ID del context menu activo
   bool insideContextMenu = false;  // true entre BeginContextMenu/EndContextMenu
 
@@ -620,7 +620,7 @@ struct UIContext {
     std::vector<Renderer::ClipRect> savedClipStack;
     size_t savedLayoutStackSize = 0;
   };
-  std::unordered_map<uint32_t, FlyoutState> flyoutStates;
+  // brief 22 (fase 6): flyoutStates fundido en widgetStates (ws.flyout) — GetFlyoutState(id).
   uint32_t activeFlyoutId = 0;   // Flyout abierto (0 = ninguno): captura input
   bool insideFlyout = false;     // true entre BeginFlyout/EndFlyout (contenido exento)
 
@@ -753,7 +753,7 @@ struct UIContext {
     bool initialized = false;
   };
 
-  std::unordered_map<uint32_t, MenuState> menuStates;
+  // brief 22 (fase 6): menuStates fundido en widgetStates (ws.menu) — GetMenuState(id).
   uint32_t activeMenuId = 0; // ID del menú desplegable activo
 
   // Issue 12: Smart text cache with last-access tracking
@@ -1072,6 +1072,7 @@ struct UIContext {
     std::unique_ptr<ModalState> modal;
     std::unique_ptr<ContextMenuState> ctxMenu;
     std::unique_ptr<FlyoutState> flyout;
+    std::unique_ptr<MenuState> menu;   // brief 22 (fase 6): MenuBar dropdown state
     std::unique_ptr<ListViewState> list;
     std::unique_ptr<TreeViewState> tree;
     std::unique_ptr<TableInternalState> table;
@@ -1095,6 +1096,7 @@ struct UIContext {
   ModalState& GetModalState(uint32_t id);
   ContextMenuState& GetCtxMenuState(uint32_t id);
   FlyoutState& GetFlyoutState(uint32_t id);
+  MenuState& GetMenuState(uint32_t id);
   ListViewState& GetListState(uint32_t id);
   TreeViewState& GetTreeState(uint32_t id);
   TableInternalState& GetTableState(uint32_t id);

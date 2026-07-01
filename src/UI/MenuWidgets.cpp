@@ -71,7 +71,7 @@ bool BeginMenu(const std::string &label, uint32_t iconCodepoint, bool enabled) {
     return false;
 
   uint32_t menuId = GenerateId("MENU:", label.c_str());
-  auto &state = ctx->menuStates[menuId];
+  auto &state = ctx->GetMenuState(menuId);
 
   const PanelStyle &panelStyle = ctx->style.panel;
   const TextStyle &textStyle = ctx->style.GetTextStyle(TypographyStyle::Body);
@@ -99,9 +99,11 @@ bool BeginMenu(const std::string &label, uint32_t iconCodepoint, bool enabled) {
       ctx->activeMenuId = 0;
     } else {
       // Cerrar todos los otros menús
-      for (auto &[id, otherState] : ctx->menuStates) {
-        if (id != menuId) {
-          otherState.open = false;
+      // brief 22 (fase 6): los menús viven en widgetStates; recorremos el mapa
+      // unificado filtrando las entradas con sub-estado menu presente.
+      for (auto &[id, ws] : ctx->widgetStates) {
+        if (ws.menu && id != menuId) {
+          ws.menu->open = false;
         }
       }
       state.open = true;
@@ -198,12 +200,10 @@ void EndMenu() {
   uint32_t currentMenuId = ctx->menuIdStack.back();
   ctx->menuIdStack.pop_back();
 
-  // Find the menu state for this specific menu
-  auto it = ctx->menuStates.find(currentMenuId);
-  if (it == ctx->menuStates.end())
-    return;
-
-  auto &state = it->second;
+  // Find the menu state for this specific menu (currentMenuId proviene del
+  // menuIdStack, sólo empujado por BeginMenu con el menú abierto → la entrada
+  // existe; GetMenuState no crea nada espurio aquí).
+  auto &state = ctx->GetMenuState(currentMenuId);
 
   // ALWAYS close the BeginVertical that BeginMenu opened, even if a MenuItem
   // click set state.open = false during this frame. Otherwise the layout stack
@@ -295,8 +295,8 @@ void EndMenu() {
     }
 
     // Save dropdown rect in MenuState so NewFrame can check clicks against it
-    it->second.dropdownPos = dropdown.dropdownPos;
-    it->second.dropdownSize = dropdown.dropdownSize;
+    state.dropdownPos = dropdown.dropdownPos;
+    state.dropdownSize = dropdown.dropdownSize;
 
     // Publicar el rect para el bloqueo de input por overlay de los widgets de
     // fondo. Persiste hasta que RenderDeferredDropdowns lo limpie al cerrarse,
@@ -332,8 +332,8 @@ bool MenuItem(const std::string &label, uint32_t iconCodepoint, bool enabled) {
     return false;
 
   uint32_t currentMenuId = ctx->menuIdStack.back();
-  auto it = ctx->menuStates.find(currentMenuId);
-  if (it == ctx->menuStates.end() || !it->second.open)
+  auto &state = ctx->GetMenuState(currentMenuId);
+  if (!state.open)
     return false;
 
   const PanelStyle &panelStyle = ctx->style.panel;
@@ -381,7 +381,7 @@ bool MenuItem(const std::string &label, uint32_t iconCodepoint, bool enabled) {
 
   // Si se hace click, cerrar el menú
   if (clicked) {
-    it->second.open = false;
+    state.open = false;
     ctx->activeMenuId = 0;
   }
 
@@ -398,8 +398,8 @@ void MenuSeparator() {
     return;
 
   uint32_t currentMenuId = ctx->menuIdStack.back();
-  auto it = ctx->menuStates.find(currentMenuId);
-  if (it == ctx->menuStates.end() || !it->second.open)
+  auto &state = ctx->GetMenuState(currentMenuId);
+  if (!state.open)
     return;
 
   const PanelStyle &panelStyle = ctx->style.panel;
