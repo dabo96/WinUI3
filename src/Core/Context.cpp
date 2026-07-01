@@ -95,9 +95,17 @@ namespace FluentUI {
         if (!ctx) return { active ? 1.0f : 0.0f, active, false };
         // Avoid creating an entry for an overlay that is closed and has no pending
         // exit fade (the common "exists but not open" case queried every frame).
-        if (!active && ctx->presenceStates.find(nodeId) == ctx->presenceStates.end())
-            return { 0.0f, false, true };
-        auto& ps = ctx->presenceStates[nodeId];
+        // brief 22 (fase 2): presence vive inline en WidgetState. Una entrada
+        // WidgetState puede existir por otro sub-estado sin que presence se haya
+        // usado; el equivalente a "no hay entrada presenceStates" es
+        // presence.everActive==false (se pone true en la primera llamada activa y
+        // vuelve a false al hacer el reset final). Usamos find (no crea) + everActive.
+        if (!active) {
+            auto wit = ctx->widgetStates.find(nodeId);
+            if (wit == ctx->widgetStates.end() || !wit->second.presence.everActive)
+                return { 0.0f, false, true };
+        }
+        auto& ps = ctx->GetWidgetState(nodeId).presence;
         ps.enterT.Update(ctx->deltaTime);
 
         if (active) {
@@ -117,7 +125,11 @@ namespace FluentUI {
         float t = ps.enterT.Get();
         bool shouldDraw = active || (t > 0.01f) || ps.enterT.IsAnimating();
         if (!shouldDraw) {
-            ctx->presenceStates.erase(nodeId);
+            // brief 22 (fase 2): equivalente al viejo presenceStates.erase(nodeId).
+            // No podemos borrar solo `presence` de un WidgetState compartido con otro
+            // sub-estado, así que lo reseteamos: everActive=false ≡ "sin entrada" para
+            // el early-out de la próxima llamada inactiva.
+            ps = UIContext::PresenceState{};
             return { 0.0f, false, true };
         }
         return { std::clamp(t, 0.0f, 1.0f), true, ps.exiting };
@@ -127,8 +139,8 @@ namespace FluentUI {
     Vec2 LayoutFlipOffset(UIContext* ctx, uint32_t itemId, const Vec2& currentPos,
                           float response, float dampingRatio) {
         if (!ctx) return Vec2(0.0f, 0.0f);
-        auto& fs = ctx->flipStates[itemId];
-        ctx->lastSeenFrame[itemId] = ctx->frame; // keep alive in the GC rotation
+        auto& fs = ctx->GetWidgetState(itemId).flip; // brief 22 (fase 2): antes flipStates[itemId]
+        ctx->lastSeenFrame[itemId] = ctx->frame; // (legacy) marca GC rotatorio; GetWidgetState ya refresca lastFrameSeen
         if (!fs.valid) {
             fs.valid = true;
             fs.prevPos = currentPos;
@@ -142,7 +154,7 @@ namespace FluentUI {
         }
         fs.offset.Update(ctx->deltaTime);            // Play: decay offset → 0
         fs.prevPos = currentPos;
-        // (wake handled by AnyAnimationActive scanning flipStates)
+        // (wake handled by AnyAnimationActive scanning widgetStates' inline flip)
         return fs.offset.Get();
     }
 
@@ -156,7 +168,7 @@ namespace FluentUI {
     float StaggeredAppear(UIContext* ctx, uint32_t itemId, int index, float staggerMs,
                           float enterResponse) {
         if (!ctx) return 1.0f;
-        auto& a = ctx->floatAnimations[itemId];
+        auto& a = ctx->GetWidgetState(itemId).floatAnim[0]; // brief 22 (fase 2): antes floatAnimations[itemId]
         ctx->lastSeenFrame[itemId] = ctx->frame;
         if (!a.IsInitialized()) {
             a.SetImmediate(0.0f);
@@ -175,12 +187,14 @@ namespace FluentUI {
             !activeRippleIds.empty() || !activeSpringColorIds.empty() ||
             !activeSpringFloatIds.empty() || widgetTree.HasActiveAnimations())
             return true;
-        // brief 10 Part D: a fading-in/out managed overlay keeps the loop awake.
-        for (const auto& kv : presenceStates)
-            if (kv.second.enterT.IsAnimating()) return true;
-        // brief 10 Part E: a sliding FLIP item keeps the loop awake.
-        for (const auto& kv : flipStates)
-            if (kv.second.offset.IsAnimating()) return true;
+        // brief 10 Part D/E + brief 22 (fase 2): presence (fade de overlays) y flip
+        // (item deslizante) viven inline en widgetStates. Recorrido solo-lectura del
+        // mapa unificado (no crea entradas). La población es la misma que antes tenían
+        // presenceStates + flipStates (solo ids que realmente animaron).
+        for (const auto& kv : widgetStates) {
+            if (kv.second.presence.enterT.IsAnimating()) return true;
+            if (kv.second.flip.offset.IsAnimating()) return true;
+        }
         return false;
     }
 
@@ -541,13 +555,22 @@ namespace FluentUI {
             g_ctx->titleBarHit.active = false;
         }
         
-        // Perf 2.2: Only update active animations (O(active) instead of O(total))
+        // Perf 2.2: Only update active animations (O(active) instead of O(total)).
+        // brief 22 (fase 2): las animaciones viven inline en WidgetState. Las listas
+        // activas guardan ahora el RAW widget id; el avance busca la entrada con
+        // widgetStates.find (NO crea entradas espurias — preserva el viejo gate
+        // find()!=end()) y recorre los slots del array correspondiente. Se retira de
+        // la lista activa cuando ningún slot sigue animando (o el ripple se apaga).
         for (size_t i = 0; i < g_ctx->activeColorAnimIds.size(); ) {
             uint32_t id = g_ctx->activeColorAnimIds[i];
-            auto it = g_ctx->colorAnimations.find(id);
-            if (it != g_ctx->colorAnimations.end()) {
-                it->second.Update(deltaTime);
-                if (!it->second.IsAnimating()) {
+            auto it = g_ctx->widgetStates.find(id);
+            if (it != g_ctx->widgetStates.end()) {
+                bool anyAnim = false;
+                for (int s = 0; s < 4; ++s) {
+                    it->second.colorAnim[s].Update(deltaTime);
+                    if (it->second.colorAnim[s].IsAnimating()) anyAnim = true;
+                }
+                if (!anyAnim) {
                     // Swap-and-pop removal (O(1))
                     g_ctx->activeColorAnimIds[i] = g_ctx->activeColorAnimIds.back();
                     g_ctx->activeColorAnimIds.pop_back();
@@ -562,10 +585,14 @@ namespace FluentUI {
         }
         for (size_t i = 0; i < g_ctx->activeFloatAnimIds.size(); ) {
             uint32_t id = g_ctx->activeFloatAnimIds[i];
-            auto it = g_ctx->floatAnimations.find(id);
-            if (it != g_ctx->floatAnimations.end()) {
-                it->second.Update(deltaTime);
-                if (!it->second.IsAnimating()) {
+            auto it = g_ctx->widgetStates.find(id);
+            if (it != g_ctx->widgetStates.end()) {
+                bool anyAnim = false;
+                for (int s = 0; s < 4; ++s) {
+                    it->second.floatAnim[s].Update(deltaTime);
+                    if (it->second.floatAnim[s].IsAnimating()) anyAnim = true;
+                }
+                if (!anyAnim) {
                     g_ctx->activeFloatAnimIds[i] = g_ctx->activeFloatAnimIds.back();
                     g_ctx->activeFloatAnimIds.pop_back();
                     continue;
@@ -577,15 +604,18 @@ namespace FluentUI {
             }
             ++i;
         }
-        // brief 10 Part C: drive the spring maps with the same swap-pop pattern as
-        // the tween maps above. Springs are removed from the active list once they
-        // settle (IsAnimating()==false).
+        // brief 10 Part C: drive the springs with the same swap-pop pattern as the
+        // tween arrays above. Springs leave the active list once every slot settles.
         for (size_t i = 0; i < g_ctx->activeSpringColorIds.size(); ) {
             uint32_t id = g_ctx->activeSpringColorIds[i];
-            auto it = g_ctx->springColors.find(id);
-            if (it != g_ctx->springColors.end()) {
-                it->second.Update(deltaTime);
-                if (!it->second.IsAnimating()) {
+            auto it = g_ctx->widgetStates.find(id);
+            if (it != g_ctx->widgetStates.end()) {
+                bool anyAnim = false;
+                for (int s = 0; s < 4; ++s) {
+                    it->second.springColor[s].Update(deltaTime);
+                    if (it->second.springColor[s].IsAnimating()) anyAnim = true;
+                }
+                if (!anyAnim) {
                     g_ctx->activeSpringColorIds[i] = g_ctx->activeSpringColorIds.back();
                     g_ctx->activeSpringColorIds.pop_back();
                     continue;
@@ -599,10 +629,14 @@ namespace FluentUI {
         }
         for (size_t i = 0; i < g_ctx->activeSpringFloatIds.size(); ) {
             uint32_t id = g_ctx->activeSpringFloatIds[i];
-            auto it = g_ctx->springFloats.find(id);
-            if (it != g_ctx->springFloats.end()) {
-                it->second.Update(deltaTime);
-                if (!it->second.IsAnimating()) {
+            auto it = g_ctx->widgetStates.find(id);
+            if (it != g_ctx->widgetStates.end()) {
+                bool anyAnim = false;
+                for (int s = 0; s < 4; ++s) {
+                    it->second.springFloat[s].Update(deltaTime);
+                    if (it->second.springFloat[s].IsAnimating()) anyAnim = true;
+                }
+                if (!anyAnim) {
                     g_ctx->activeSpringFloatIds[i] = g_ctx->activeSpringFloatIds.back();
                     g_ctx->activeSpringFloatIds.pop_back();
                     continue;
@@ -616,10 +650,10 @@ namespace FluentUI {
         }
         for (size_t i = 0; i < g_ctx->activeRippleIds.size(); ) {
             uint32_t id = g_ctx->activeRippleIds[i];
-            auto it = g_ctx->rippleEffects.find(id);
-            if (it != g_ctx->rippleEffects.end()) {
-                it->second.Update(deltaTime);
-                if (!it->second.IsActive()) {
+            auto it = g_ctx->widgetStates.find(id);
+            if (it != g_ctx->widgetStates.end()) {
+                it->second.ripple.Update(deltaTime);
+                if (!it->second.ripple.IsActive()) {
                     g_ctx->activeRippleIds[i] = g_ctx->activeRippleIds.back();
                     g_ctx->activeRippleIds.pop_back();
                     continue;
@@ -805,23 +839,22 @@ namespace FluentUI {
                 }
             };
 
+            // brief 22 (fase 2): colorAnimations/floatAnimations/rippleEffects/
+            // springColors/springFloats/flipStates salieron de la rotación (viven en
+            // widgetStates, con GC propio por lastFrameSeen más abajo). GC_MAP_COUNT
+            // pasó de 16 a 10; los casos se renumeran contiguos 0..9 para que
+            // gcMapIndex % GC_MAP_COUNT nunca caiga en un case inexistente.
             switch (g_ctx->gcMapIndex) {
-                case 0:  gcMap(g_ctx->colorAnimations); break;
-                case 1:  gcMap(g_ctx->floatAnimations); break;
-                case 2:  gcMap(g_ctx->rippleEffects); break;
-                case 3:  gcMap(g_ctx->panelStates); break;
-                case 4:  gcMap(g_ctx->scrollViewStates); break;
-                case 5:  gcMap(g_ctx->tabViewStates); break;
-                case 6:  gcMap(g_ctx->listViewStates); break;
-                case 7:  gcMap(g_ctx->treeViewStates); break;
-                case 8:  gcMap(g_ctx->boolStates); break;
-                case 9:  gcMap(g_ctx->floatStates); break;
-                case 10: gcMap(g_ctx->intStates); break;
-                case 11: gcMap(g_ctx->stringStates); break;
-                case 12: gcMap(g_ctx->colorPickerStates); break;
-                case 13: gcMap(g_ctx->springColors); break;  // brief 10 Part C
-                case 14: gcMap(g_ctx->springFloats); break;  // brief 10 Part C
-                case 15: gcMap(g_ctx->flipStates); break;    // brief 10 Part E
+                case 0:  gcMap(g_ctx->panelStates); break;
+                case 1:  gcMap(g_ctx->scrollViewStates); break;
+                case 2:  gcMap(g_ctx->tabViewStates); break;
+                case 3:  gcMap(g_ctx->listViewStates); break;
+                case 4:  gcMap(g_ctx->treeViewStates); break;
+                case 5:  gcMap(g_ctx->boolStates); break;
+                case 6:  gcMap(g_ctx->floatStates); break;
+                case 7:  gcMap(g_ctx->intStates); break;
+                case 8:  gcMap(g_ctx->stringStates); break;
+                case 9:  gcMap(g_ctx->colorPickerStates); break;
             }
 
             g_ctx->gcMapIndex = (g_ctx->gcMapIndex + 1) % UIContext::GC_MAP_COUNT;

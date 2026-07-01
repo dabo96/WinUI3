@@ -340,22 +340,21 @@ struct UIContext {
 
   bool initialized = false;
 
-  // Sistema de animaciones para widgets
-  std::unordered_map<uint32_t, AnimatedValue<Color>> colorAnimations;
-  std::unordered_map<uint32_t, AnimatedValue<float>> floatAnimations;
+  // brief 22 (fase 2): los antiguos mapas paralelos colorAnimations/floatAnimations
+  // se fundieron en WidgetState.colorAnim[]/floatAnim[] (ver GetWidgetState). El
+  // avance sigue conducido por activeColorAnimIds/activeFloatAnimIds (ahora raw
+  // widget ids). StaggeredAppear usa floatAnim[0].
 
   // brief 10 Part B: global motion tokens (durationScale / reduceMotion / enabled).
   // Read via the free function MotionDuration(). Hosts can mutate it at runtime
   // (e.g. honor the OS "reduce animations" preference — see InitMotionFromOS()).
   MotionConfig motion;
 
-  // brief 10 Part C: spring-based interactive animations (interruptible). Kept as
-  // SEPARATE maps from colorAnimations/floatAnimations on purpose — brief 22
-  // (unified state) will absorb these. springColors holds Color springs (button
-  // bg/fg/border, overlay tints), springFloats holds scalar springs. Keyed by
-  // AnimSlot(widgetId, slot) exactly like the tween maps.
-  std::unordered_map<uint32_t, SpringValue<Color>> springColors;
-  std::unordered_map<uint32_t, SpringValue<float>> springFloats;
+  // brief 10 Part C: spring-based interactive animations (interruptible).
+  // brief 22 (fase 2): fundidos en WidgetState.springColor[]/springFloat[] (button
+  // bg/fg/border ocupan springColor[0..2]). El avance lo conducen
+  // activeSpringColorIds/activeSpringFloatIds (ahora raw widget ids; el driver
+  // recorre los 4 slots de cada WidgetState hallado).
 
   // brief 10 Part D: presence tracker for managed overlays (enter/exit fade+scale).
   // Immediate-mode can't observe "stopped emitting" from inside NewFrame (the next
@@ -368,7 +367,9 @@ struct UIContext {
     bool everActive = false;
     bool exiting = false;
   };
-  std::unordered_map<uint32_t, PresenceState> presenceStates;
+  // brief 22 (fase 2): presenceStates fundido en WidgetState.presence. BeginPresence
+  // usa GetWidgetState(id).presence; el "no existe entrada" se emula con
+  // presence.everActive==false y el erase con reset a PresenceState{}.
 
   // brief 10 Part E: FLIP (First-Last-Invert-Play) layout animation state, keyed by
   // a stable per-item id. prevPos is the item's last on-screen position; when it
@@ -380,7 +381,8 @@ struct UIContext {
     bool valid = false;
     SpringValue<Vec2> offset;
   };
-  std::unordered_map<uint32_t, FlipState> flipStates;
+  // brief 22 (fase 2): flipStates fundido en WidgetState.flip. LayoutFlipOffset usa
+  // GetWidgetState(id).flip.
 
   // Perf 2.2: Track active animation IDs to avoid iterating all entries
   std::vector<uint32_t> activeColorAnimIds;
@@ -419,7 +421,7 @@ struct UIContext {
   bool AnyAnimationActive() const;
 
   // Sistema de ripple effects
-  std::unordered_map<uint32_t, RippleEffect> rippleEffects;
+  // brief 22 (fase 2): rippleEffects fundido en WidgetState.ripple (raw widget id).
 
   std::unordered_map<uint32_t, bool> boolStates;
   // Id del único ComboBox que puede estar abierto a la vez (0 = ninguno). Al
@@ -893,9 +895,11 @@ struct UIContext {
 
   // GC for state maps — Issue 11: amortized rotation
   std::unordered_map<uint32_t, uint32_t> lastSeenFrame;
-  // brief 10 Part C/E: 13 -> 16 to fold springColors (case 13), springFloats
-  // (case 14) and flipStates (case 15) into the amortized GC rotation.
-  static constexpr uint32_t GC_MAP_COUNT = 16;     // Total maps to GC
+  // brief 22 (fase 2): 16 -> 10. Los mapas de animación (colorAnimations,
+  // floatAnimations, rippleEffects, springColors, springFloats, flipStates) se
+  // fundieron en widgetStates, que tiene su propio GC por lastFrameSeen (abajo en
+  // NewFrame), así que salen de la rotación amortizada.
+  static constexpr uint32_t GC_MAP_COUNT = 10;     // Total maps to GC
   static constexpr uint32_t GC_ROTATE_INTERVAL = 10; // GC one map every N frames
   uint32_t gcMapIndex = 0;                           // Current map being GC'd
 
@@ -1189,7 +1193,7 @@ float StaggerDelaySeconds(int index, float staggerMs, float capMs = 120.0f);
 // Per-item staggered entrance factor [0..1]. On an item's first appearance it starts
 // a Decelerate tween 0→1 delayed by StaggerDelaySeconds(index, staggerMs); returns
 // the current factor each frame (multiply into the item's opacity via PushOpacity,
-// and/or use as a slide/scale factor). Backed by the existing floatAnimations map.
+// and/or use as a slide/scale factor). Backed by WidgetState.floatAnim[0] (brief 22).
 float StaggeredAppear(UIContext* ctx, uint32_t itemId, int index, float staggerMs,
                       float enterResponse = 0.22f);
 

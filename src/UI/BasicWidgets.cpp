@@ -264,7 +264,7 @@ bool Button(const std::string &label, uint32_t iconCodepoint, const Vec2 &size, 
                                   ctx->input.IsKeyPressed(UIKey::Space))
                         ? Vec2(btnPos.x + btnSize.x * 0.5f, btnPos.y + btnSize.y * 0.5f)
                         : Vec2(mouseX, mouseY);
-    auto &ripple = ctx->rippleEffects[buttonId];
+    auto &ripple = ctx->GetWidgetState(buttonId).ripple;
     ripple.AddRipple(clickPos, std::max(btnSize.x, btnSize.y) * 1.5f, 0.4f);
   }
 
@@ -296,11 +296,13 @@ bool Button(const std::string &label, uint32_t iconCodepoint, const Vec2 &size, 
   // brief 10 Part C (pilot): bg/fg/border use interruptible SpringValue<Color>
   // instead of fixed-duration tweens, so a fast hover-in/out reverses continuously
   // without resetting a clock (no "kick"). Configure once (response 0.18s, critically
-  // damped) on first touch, then SetTarget every frame. Stored in springColors
-  // (separate from colorAnimations; brief 22 will unify). .Get() reads unchanged.
-  auto &bgAnim = ctx->springColors[AnimSlot(buttonId, 0)];
-  auto &fgAnim = ctx->springColors[AnimSlot(buttonId, 1)];
-  auto &borderAnim = ctx->springColors[AnimSlot(buttonId, 2)];
+  // damped) on first touch, then SetTarget every frame. .Get() reads unchanged.
+  // brief 22 (fase 2): unificado — los springs viven inline en WidgetState.springColor[]
+  // (slots 0..2 == bg/fg/border), antes ctx->springColors[AnimSlot(buttonId, s)].
+  auto &btnWs = ctx->GetWidgetState(buttonId);
+  auto &bgAnim = btnWs.springColor[0];
+  auto &fgAnim = btnWs.springColor[1];
+  auto &borderAnim = btnWs.springColor[2];
 
   // Inicializar/configurar springs si es necesario (primera vez)
   if (!bgAnim.IsInitialized()) {
@@ -322,9 +324,12 @@ bool Button(const std::string &label, uint32_t iconCodepoint, const Vec2 &size, 
   borderAnim.SetTarget(btnMat.border);
 
   // brief 10 Part C: keep the spring in the active list while settling.
-  if (bgAnim.IsAnimating()) ctx->NotifySpringColorActive(AnimSlot(buttonId, 0));
-  if (fgAnim.IsAnimating()) ctx->NotifySpringColorActive(AnimSlot(buttonId, 1));
-  if (borderAnim.IsAnimating()) ctx->NotifySpringColorActive(AnimSlot(buttonId, 2));
+  // brief 22 (fase 2): la lista activa guarda ahora el raw widget id; el driver
+  // recorre los 4 slots de springColor[]. NotifySpringColorActive deduplica, así
+  // que las tres llamadas colapsan en una única entrada.
+  if (bgAnim.IsAnimating()) ctx->NotifySpringColorActive(buttonId);
+  if (fgAnim.IsAnimating()) ctx->NotifySpringColorActive(buttonId);
+  if (borderAnim.IsAnimating()) ctx->NotifySpringColorActive(buttonId);
 
   // Obtener colores animados
   Color bgColor = bgAnim.Get();
@@ -384,7 +389,7 @@ bool Button(const std::string &label, uint32_t iconCodepoint, const Vec2 &size, 
     }
 
     // Dibujar ripple effects
-    auto &ripple = ctx->rippleEffects[buttonId];
+    auto &ripple = ctx->GetWidgetState(buttonId).ripple;
     for (const auto &r : ripple.GetRipples()) {
       ctx->renderer.DrawRipple(r.center, r.radius, r.opacity);
     }

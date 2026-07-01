@@ -217,7 +217,8 @@ inline bool IsMouseOver(UIContext *ctx, const Vec2 &pos, const Vec2 &size) {
 }
 
 // Perf 1.2: Register animation slots for widgets that use color/float animations
-// Call this only from widgets that actually use ctx->colorAnimations[AnimSlot(...)]
+// (brief 22: la animación de widgets vive ahora en WidgetState; RegisterAnimSlots
+// solo marca lastSeenFrame para el GC rotatorio de los mapas restantes.)
 void RegisterAnimSlots(uint32_t widgetId);
 
 } // namespace FluentUI
