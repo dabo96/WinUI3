@@ -1,6 +1,7 @@
 #include <SDL3/SDL.h>
 #include "core/FluentApp.h"
 #include "core/Context.h"
+#include "core/SDLPlatform.h" // ProcessSDLEvent (SDL→UIEvent seam, brief 20)
 #include "core/DockSystem.h"
 #include "core/LayoutSerializer.h"
 #include "core/OpenGLBackend.h"
@@ -209,7 +210,7 @@ void AppWindow::routeEvent(const SDL_Event& e) {
     } else if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
         open_ = false;
     } else {
-        ctx_->input.ProcessEvent(e);
+        ProcessSDLEvent(ctx_->input, e);
     }
 }
 
@@ -561,7 +562,7 @@ void FluentApp::run() {
                     // brief 18.2: moved — may have crossed to a monitor with a different DPI
                     if (enableDPI_) updateDPIScale();
                 } else {
-                    ctx_->input.ProcessEvent(e);
+                    ProcessSDLEvent(ctx_->input, e);
                 }
             } else {
                 // Route to the correct secondary window
@@ -725,7 +726,7 @@ void FluentApp::processEvent(const SDL_Event& e) {
     } else if (e.type == SDL_EVENT_WINDOW_MOVED) {
         if (enableDPI_) updateDPIScale();
     } else {
-        ctx_->input.ProcessEvent(e);
+        ProcessSDLEvent(ctx_->input, e);
     }
 }
 

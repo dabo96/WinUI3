@@ -1,5 +1,6 @@
 #include <SDL3/SDL.h>
 #include "App.h"
+#include "core/SDLPlatform.h" // ProcessSDLEvent (SDL→UIEvent seam, brief 20)
 #include <SDL3/SDL_vulkan.h>
 #include <cmath>
 #include <cstdio>
@@ -142,7 +143,7 @@ void App::Run() {
                 SDL_GetWindowSize(window, &width, &height);
                 ctx->renderer.SetViewport(width, height);
             } else
-                ctx->input.ProcessEvent(e);
+                ProcessSDLEvent(ctx->input, e);
         }
 
         // Animate progress bar

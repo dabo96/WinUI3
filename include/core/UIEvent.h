@@ -24,7 +24,13 @@ enum class UIEventType {
   TextEditing,  // IME composition (preedit)
   Resize,
   DpiChange,
-  Drop,         // file/text drag-drop
+  // Drag-drop phases (brief 18.7). text carries the payload (file path / text),
+  // x/y the drop position in window coords.
+  DropBegin,
+  DropPosition,
+  DropFile,
+  DropText,
+  DropComplete,
   Focus,
   Quit
 };

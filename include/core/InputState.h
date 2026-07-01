@@ -8,20 +8,20 @@
 #include <string>
 #include <vector>
 #include "core/UIKey.h"
-#include <SDL3/SDL.h>
+#include "core/UIEvent.h" // UIEvent, WindowHandle (brief 20; no SDL in this header)
 
 namespace FluentUI {
 class InputState {
 public:
-  void Update(SDL_Window* window = nullptr);
-  void ProcessEvent(const SDL_Event &e);
+  // Update once per frame; `window` (opaque WindowHandle) is used to refresh the
+  // mouse position for the focused window. Implementation casts it to SDL_Window*.
+  void Update(WindowHandle window = nullptr);
+  // Feed a platform-neutral event (brief 20). The SDL→UIEvent translation lives
+  // in SDLPlatform (ProcessSDLEvent), so this core stays SDL-free.
+  void ProcessEvent(const UIEvent& e);
 
-  bool IsKeyDown(SDL_Scancode sc) const { return keysDown[sc]; }
-  bool IsKeyPressed(SDL_Scancode sc) const { return keysPressed[sc]; }
-  bool IsKeyReleased(SDL_Scancode sc) const { return keysReleased[sc]; }
-
-  // brief 20 Part B: platform-neutral key queries. Widgets use these (UIKey)
-  // instead of SDL scancodes; the UIKey->scancode mapping lives in InputState.cpp.
+  // brief 20: platform-neutral key queries. Key state is stored indexed by UIKey,
+  // so widgets never see SDL scancodes.
   bool IsKeyDown(UIKey key) const;
   bool IsKeyPressed(UIKey key) const;
   bool IsKeyReleased(UIKey key) const;
@@ -85,9 +85,10 @@ public:
 private:
   struct TextInputData;
 
-  std::array<bool, SDL_SCANCODE_COUNT> keysDown{};
-  std::array<bool, SDL_SCANCODE_COUNT> keysPressed{};
-  std::array<bool, SDL_SCANCODE_COUNT> keysReleased{};
+  // Key state indexed by UIKey (brief 20). Sized to the neutral key set.
+  std::array<bool, static_cast<size_t>(UIKey::Count)> keysDown{};
+  std::array<bool, static_cast<size_t>(UIKey::Count)> keysPressed{};
+  std::array<bool, static_cast<size_t>(UIKey::Count)> keysReleased{};
 
   std::array<bool, 5> mouseDown{};
   std::array<bool, 5> mousePressed{};
