@@ -37,7 +37,7 @@ bool BeginPanel(const std::string &id, uint32_t iconCodepoint, const Vec2 &desir
 
   uint32_t panelId = GenerateId("PANEL:", id.c_str());
 
-  // Register in widget tree (Phase 1 — coexists with old panelStates map)
+  // Register in widget tree (Phase 1)
   auto* panelNode = static_cast<PanelNode*>(
       ctx->widgetTree.FindOrCreate(panelId, ctx->frame, [&]() {
           auto node = std::make_unique<PanelNode>(panelId);
@@ -47,7 +47,7 @@ bool BeginPanel(const std::string &id, uint32_t iconCodepoint, const Vec2 &desir
   );
   ctx->widgetTree.PushParent(panelNode);
 
-  auto &state = ctx->panelStates[panelId];
+  auto &state = ctx->GetPanelState(panelId);
   const PanelStyle &panelStyle = ctx->GetEffectivePanelStyle();
   float titleHeight =
       panelStyle.headerText.fontSize + panelStyle.padding.y * 2.0f;
@@ -314,9 +314,12 @@ void EndPanel() {
   ctx->panelStack.pop_back();
   // brief 21: pop the scope pushed in BeginPanel (paired with panelStack).
   PopID();
-  auto it = ctx->panelStates.find(frameCtx.id);
-  if (it == ctx->panelStates.end()) return;
-  auto &state = it->second;
+  // brief 22 (fase 5): el estado de panel vive en widgetStates (ws.panel). El
+  // guard original probaba existencia SIN crear; se preserva con find() para no
+  // crear una entrada espuria si End* corre sin su Begin* pareado.
+  auto wsIt = ctx->widgetStates.find(frameCtx.id);
+  if (wsIt == ctx->widgetStates.end() || !wsIt->second.panel) return;
+  auto &state = *wsIt->second.panel;
 
   if (!ctx->offsetStack.empty()) ctx->offsetStack.pop_back();
   if (frameCtx.layoutPushed) {
@@ -543,7 +546,7 @@ bool BeginScrollView(const std::string &id, const Vec2 &size,
   );
   ctx->widgetTree.PushParent(scrollNode);
 
-  auto &state = ctx->scrollViewStates[scrollViewId];
+  auto &state = ctx->GetScrollState(scrollViewId);
 
   // Resolve {0,0} size from available space (like Splitter does)
   Vec2 resolvedSize = size;
@@ -648,9 +651,11 @@ void EndScrollView() {
 
   ScrollViewFrameContext frameCtx = ctx->scrollViewStack.back();
   ctx->scrollViewStack.pop_back();
-  auto it = ctx->scrollViewStates.find(frameCtx.id);
-  if (it == ctx->scrollViewStates.end()) return;
-  auto &state = it->second;
+  // brief 22 (fase 5): estado de scrollview en widgetStates (ws.scroll). Guard de
+  // existencia sin crear (find), preservando la semántica original.
+  auto wsIt = ctx->widgetStates.find(frameCtx.id);
+  if (wsIt == ctx->widgetStates.end() || !wsIt->second.scroll) return;
+  auto &state = *wsIt->second.scroll;
 
   if (!ctx->layoutStack.empty()) {
     auto &stack = ctx->layoutStack.back();
@@ -733,7 +738,7 @@ static bool BeginTabViewImpl(const std::string &id, int *activeTab,
   );
   ctx->widgetTree.PushParent(tabNode);
 
-  auto &state = ctx->tabViewStates[tabViewId];
+  auto &state = ctx->GetTabState(tabViewId);
 
   if (!state.initialized) {
     state.activeTab = activeTab ? *activeTab : 0;
@@ -920,9 +925,15 @@ void EndTabView() {
   if (!ctx->offsetStack.empty()) ctx->offsetStack.pop_back();
 
   // Measure content BEFORE popping clip rect
-  auto it = ctx->tabViewStates.find(frame.tabViewId);
-  if (it != ctx->tabViewStates.end()) {
-    auto &st = it->second;
+  // brief 22 (fase 5): estado de tabview en widgetStates (ws.tabs). Guard de
+  // existencia sin crear (find), preservando la semántica original; el puntero
+  // se reutiliza en el segundo bloque (dibujo de scrollbar) más abajo.
+  auto wsIt = ctx->widgetStates.find(frame.tabViewId);
+  TabViewState* stPtr = (wsIt != ctx->widgetStates.end() && wsIt->second.tabs)
+                            ? wsIt->second.tabs.get()
+                            : nullptr;
+  if (stPtr) {
+    auto &st = *stPtr;
     float measuredH = endCursor.y - frame.contentStartCursor.y;
     st.contentSize = Vec2(frame.contentAreaSize.x, std::max(frame.contentAreaSize.y, measuredH));
   }
@@ -933,8 +944,8 @@ void EndTabView() {
   // Position at the right edge of the parent's visible area (clip rect),
   // not the TabView's content area — this ensures the scrollbar is always
   // visible even when the TabView is wider than its parent container.
-  if (it != ctx->tabViewStates.end()) {
-    auto &st = it->second;
+  if (stPtr) {
+    auto &st = *stPtr;
     if (st.contentSize.y > frame.contentAreaSize.y) {
       float sbWidth = S(6.0f);
       // Use parent clip's right edge if available, otherwise fall back to content area

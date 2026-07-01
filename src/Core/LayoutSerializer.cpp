@@ -46,7 +46,12 @@ bool LayoutSerializer::SaveLayout(const std::string& filepath, const DockSpace& 
     // Save panel states
     if (ctx) {
         file << "# Panel States\n";
-        for (auto& [id, state] : ctx->panelStates) {
+        // brief 22 (fase 5): recorre solo los widgets con estado de panel real
+        // (ws.panel != nullptr) iterando widgetStates; NO auto-crea entradas, así
+        // se serializa exactamente el mismo conjunto que el antiguo panelStates.
+        for (auto& [id, ws] : ctx->widgetStates) {
+            if (!ws.panel) continue;
+            const auto& state = *ws.panel;
             std::string prefix = "panel." + std::to_string(id);
             file << prefix << ".x=" << state.position.x << "\n";
             file << prefix << ".y=" << state.position.y << "\n";
@@ -65,8 +70,11 @@ bool LayoutSerializer::SaveLayout(const std::string& filepath, const DockSpace& 
 
         // Save tab view active tabs
         file << "# TabView States\n";
-        for (auto& [id, state] : ctx->tabViewStates) {
-            file << "tabview." << id << ".activeTab=" << state.activeTab << "\n";
+        // brief 22 (fase 5): igual que paneles — solo los widgets con estado de
+        // tabview real (ws.tabs != nullptr), sin auto-crear.
+        for (auto& [id, ws] : ctx->widgetStates) {
+            if (!ws.tabs) continue;
+            file << "tabview." << id << ".activeTab=" << ws.tabs->activeTab << "\n";
         }
     }
 
@@ -136,7 +144,7 @@ bool LayoutSerializer::LoadLayout(const std::string& filepath, DockSpace& dockSp
                 if (dot == std::string::npos) continue;
                 uint32_t id = static_cast<uint32_t>(std::stoul(rest.substr(0, dot)));
                 std::string prop = rest.substr(dot + 1);
-                auto& state = ctx->panelStates[id];
+                auto& state = ctx->GetPanelState(id);
 
                 if (prop == "x") state.position.x = std::stof(value);
                 else if (prop == "y") state.position.y = std::stof(value);
@@ -161,7 +169,7 @@ bool LayoutSerializer::LoadLayout(const std::string& filepath, DockSpace& dockSp
                 uint32_t id = static_cast<uint32_t>(std::stoul(rest.substr(0, dot)));
                 std::string prop = rest.substr(dot + 1);
                 if (prop == "activeTab") {
-                    ctx->tabViewStates[id].activeTab = std::stoi(value);
+                    ctx->GetTabState(id).activeTab = std::stoi(value);
                 }
             }
         }

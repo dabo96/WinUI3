@@ -518,7 +518,7 @@ struct UIContext {
     float dragStartScroll = 0.0f;
   };
 
-  std::unordered_map<uint32_t, PanelState> panelStates;
+  // brief 22 (fase 5): panelStates migrado a widgetStates (ws.panel) — GetPanelState(id).
 
   struct ScrollViewState {
     Vec2 scrollOffset{0.0f, 0.0f};
@@ -536,7 +536,7 @@ struct UIContext {
                                // restaurar cursor)
   };
 
-  std::unordered_map<uint32_t, ScrollViewState> scrollViewStates;
+  // brief 22 (fase 5): scrollViewStates migrado a widgetStates (ws.scroll) — GetScrollState(id).
 
   struct TabViewState {
     int activeTab = 0;
@@ -556,7 +556,7 @@ struct UIContext {
     float totalTabsWidth = 0.0f;  // Total width of all tabs (calculated each frame)
   };
 
-  std::unordered_map<uint32_t, TabViewState> tabViewStates;
+  // brief 22 (fase 5): tabViewStates migrado a widgetStates (ws.tabs) — GetTabState(id).
 
   struct TooltipState {
     std::string text;
@@ -899,7 +899,7 @@ struct UIContext {
   // floatAnimations, rippleEffects, springColors, springFloats, flipStates) se
   // fundieron en widgetStates, que tiene su propio GC por lastFrameSeen (abajo en
   // NewFrame), así que salen de la rotación amortizada.
-  static constexpr uint32_t GC_MAP_COUNT = 6;      // Total maps to GC (brief 22 fase 3: 10->6)
+  static constexpr uint32_t GC_MAP_COUNT = 3;      // Total maps to GC (brief 22 fase 3: 10->6; fase 5: 6->3)
   static constexpr uint32_t GC_ROTATE_INTERVAL = 10; // GC one map every N frames
   uint32_t gcMapIndex = 0;                           // Current map being GC'd
 

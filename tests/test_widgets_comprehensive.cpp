@@ -1663,7 +1663,7 @@ TEST_CASE("Responsive: tab overflow activates with narrow container", "[responsi
         EndTabView();
     }
     uint32_t idNarrow = GenerateId("TABVIEW:", "tv_overflow_narrow");
-    float totalWidthNarrow = gpu.ctx->tabViewStates[idNarrow].totalTabsWidth;
+    float totalWidthNarrow = gpu.ctx->GetTabState(idNarrow).totalTabsWidth;
     gpu.endFrame();
 
     // Total tab width should exceed the container
