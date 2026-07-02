@@ -7,7 +7,7 @@ using namespace FluentUI;
 // Set to 1 to run the widget gallery (App) on the standalone Vulkan backend.
 // Set to 0 to run the engine-editor example (EngineEditor) via FluentApp — now on
 // Vulkan, with multi-window validation (menu Window → "Nueva ventana (compartida)").
-#define RUN_WIDGET_GALLERY_VULKAN 0 // gap#4: EngineEditor multiventana Vulkan (menu Window). Vuelve a 1 para la galeria.
+#define RUN_WIDGET_GALLERY_VULKAN 1
 
 #if RUN_WIDGET_GALLERY_VULKAN
 int main(int, char**) {
