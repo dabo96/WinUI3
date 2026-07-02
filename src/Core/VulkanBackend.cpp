@@ -84,6 +84,8 @@ bool VulkanBackend::Init(void* windowHandle, void* existingContext) {
             ownsDevice = false;
             sharedMode = false;
             ownSwapchainOnSharedDevice = true;
+            resourceOwner_ = shared0->ownerBackend  // gap #4: owner backend for adopting resources
+                                 ? static_cast<VulkanBackend*>(shared0->ownerBackend) : nullptr;
             useDynamicRendering = false; // we render into our own swapchain render pass
             instance         = reinterpret_cast<VkInstance>(shared0->instance);
             physicalDevice   = reinterpret_cast<VkPhysicalDevice>(shared0->physicalDevice);
@@ -108,9 +110,7 @@ bool VulkanBackend::Init(void* windowHandle, void* existingContext) {
             // across windows on the same VkDevice). Pipelines stay per-window for now
             // (Phase 2 shares those after a render-pass compatibility check).
             {
-                VulkanBackend* owner = shared0->ownerBackend
-                                           ? static_cast<VulkanBackend*>(shared0->ownerBackend)
-                                           : nullptr;
+                VulkanBackend* owner = resourceOwner_; // gap #4 (set above)
                 if (owner && owner->vertModule != VK_NULL_HANDLE &&
                     owner->layoutTex != VK_NULL_HANDLE) {
                     vertModule    = owner->vertModule;
@@ -2031,6 +2031,23 @@ bool VulkanBackend::CreateAcrylicResources() {
         Log(LogLevel::Info, "Vulkan: acrylic disabled (needs a classic swapchain render pass)");
         return false;
     }
+    // gap #4 Phase 3: adopt the owner's acrylic shaders + layouts if available (format-
+    // independent, like the main UI ones). The acrylic PIPELINES + offscreen RTs stay
+    // per-window (they depend on this window's swapchain load-pass + render targets).
+    if (resourceOwner_ && !ownsShaderResources &&
+        resourceOwner_->acrylicCompVert != VK_NULL_HANDLE &&
+        resourceOwner_->acrylicLayout != VK_NULL_HANDLE) {
+        acrylicCompVert  = resourceOwner_->acrylicCompVert;
+        acrylicCompFrag  = resourceOwner_->acrylicCompFrag;
+        blurVert         = resourceOwner_->blurVert;
+        kawaseDownFrag   = resourceOwner_->kawaseDownFrag;
+        kawaseUpFrag     = resourceOwner_->kawaseUpFrag;
+        acrylicSetLayout = resourceOwner_->acrylicSetLayout;
+        acrylicLayout    = resourceOwner_->acrylicLayout;
+        kawaseLayout     = resourceOwner_->kawaseLayout;
+        ownsAcrylicShaderResources = false;
+        VKDBG("Vulkan: gap#4 adopted owner acrylic shaders + layouts");
+    } else {
     // Shader modules (composite + blur).
     acrylicCompVert = MakeShaderModule(ShadersVK::AcrylicComposite_Vert, ShadersVK::AcrylicComposite_VertSize);
     acrylicCompFrag = MakeShaderModule(ShadersVK::AcrylicComposite_Frag, ShadersVK::AcrylicComposite_FragSize);
@@ -2076,6 +2093,7 @@ bool VulkanBackend::CreateAcrylicResources() {
         kplci.pushConstantRangeCount = 1; kplci.pPushConstantRanges = &kpcr;
         VK_FAIL(vkCreatePipelineLayout(device, &kplci, nullptr, &kawaseLayout), "create kawase pipeline layout");
     }
+    } // else — gap #4: this window created its own acrylic shaders/layouts
 
     // Composite pipeline: no vertex buffer (positions from gl_VertexIndex), triangle
     // strip (4 verts), standard alpha blend, dynamic viewport/scissor.
@@ -2452,17 +2470,17 @@ void VulkanBackend::DestroyAcrylicResources() {
     blurChain.clear();
     dropRT(blurResult);
     dropRT(backdropRT);
-    if (kawaseLayout) { vkDestroyPipelineLayout(device, kawaseLayout, nullptr); kawaseLayout = VK_NULL_HANDLE; }
+    if (kawaseLayout) { if (ownsAcrylicShaderResources) vkDestroyPipelineLayout(device, kawaseLayout, nullptr); kawaseLayout = VK_NULL_HANDLE; }
     blurReady = false;
     if (acrylicDescriptorPool) { vkDestroyDescriptorPool(device, acrylicDescriptorPool, nullptr); acrylicDescriptorPool = VK_NULL_HANDLE; }
     acrylicDescriptor = VK_NULL_HANDLE;
     if (pipeAcrylicComposite) { vkDestroyPipeline(device, pipeAcrylicComposite, nullptr); pipeAcrylicComposite = VK_NULL_HANDLE; }
     if (pipeKawaseDown) { vkDestroyPipeline(device, pipeKawaseDown, nullptr); pipeKawaseDown = VK_NULL_HANDLE; }
     if (pipeKawaseUp)   { vkDestroyPipeline(device, pipeKawaseUp, nullptr);   pipeKawaseUp = VK_NULL_HANDLE; }
-    if (acrylicLayout)    { vkDestroyPipelineLayout(device, acrylicLayout, nullptr); acrylicLayout = VK_NULL_HANDLE; }
-    if (acrylicSetLayout) { vkDestroyDescriptorSetLayout(device, acrylicSetLayout, nullptr); acrylicSetLayout = VK_NULL_HANDLE; }
+    if (acrylicLayout)    { if (ownsAcrylicShaderResources) vkDestroyPipelineLayout(device, acrylicLayout, nullptr); acrylicLayout = VK_NULL_HANDLE; }
+    if (acrylicSetLayout) { if (ownsAcrylicShaderResources) vkDestroyDescriptorSetLayout(device, acrylicSetLayout, nullptr); acrylicSetLayout = VK_NULL_HANDLE; }
     if (acrylicLoadPass)  { vkDestroyRenderPass(device, acrylicLoadPass, nullptr); acrylicLoadPass = VK_NULL_HANDLE; }
-    auto destroyMod = [&](VkShaderModule& m){ if (m) { vkDestroyShaderModule(device, m, nullptr); m = VK_NULL_HANDLE; } };
+    auto destroyMod = [&](VkShaderModule& m){ if (m) { if (ownsAcrylicShaderResources) vkDestroyShaderModule(device, m, nullptr); m = VK_NULL_HANDLE; } };
     destroyMod(acrylicCompVert); destroyMod(acrylicCompFrag);
     destroyMod(blurVert); destroyMod(kawaseDownFrag); destroyMod(kawaseUpFrag);
     acrylicReady = false;

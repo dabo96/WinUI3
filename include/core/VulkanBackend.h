@@ -120,6 +120,11 @@ private:
     // gap #4 Phase 2: false when a secondary window ADOPTED the owner's UI pipelines
     // (render pass was compatible) → must NOT destroy them.
     bool ownsPipelines = true;
+    // gap #4 Phase 3: acrylic shaders/layouts adopted from the owner (pipelines + RTs
+    // stay per-window). resourceOwner_ = the owner backend used to adopt (null unless a
+    // secondary shared-device window).
+    bool ownsAcrylicShaderResources = true;
+    VulkanBackend* resourceOwner_ = nullptr;
     void* window = nullptr;  // native window handle (opaque; cast in the .cpp)
 
     VkInstance       instance       = VK_NULL_HANDLE;
