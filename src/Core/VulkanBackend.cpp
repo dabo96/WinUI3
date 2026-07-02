@@ -124,8 +124,23 @@ bool VulkanBackend::Init(void* windowHandle, void* existingContext) {
                     layoutNoTex   = owner->layoutNoTex;
                     layoutTex     = owner->layoutTex;
                     ownsShaderResources = false; // adopted → Shutdown must NOT free these
-                    VKDBG("Vulkan: gap#4 adopted owner shader modules + layouts");
-                    if (!CreatePipelines(/*createLayouts=*/false)) { Shutdown(); return false; }
+                    // Phase 2: adopt the owner's UI pipelines too IF our render pass is
+                    // compatible with the one they were built against (same color format +
+                    // sample count). This is the common path in multi-window on one device
+                    // (same swapchain format); otherwise build our own (layouts adopted).
+                    bool pipesCompatible = owner->pipeBasic != VK_NULL_HANDLE &&
+                                           colorFormat == owner->colorFormat &&
+                                           sampleCount == owner->sampleCount;
+                    if (pipesCompatible) {
+                        pipeBasic = owner->pipeBasic; pipeText = owner->pipeText;
+                        pipeMSDF  = owner->pipeMSDF;  pipeImage = owner->pipeImage;
+                        pipeLines = owner->pipeLines; pipeSDF  = owner->pipeSDF;
+                        ownsPipelines = false;
+                        VKDBG("Vulkan: gap#4 adopted owner shaders + layouts + PIPELINES");
+                    } else {
+                        VKDBG("Vulkan: gap#4 adopted shaders/layouts; pipelines incompatible -> building own");
+                        if (!CreatePipelines(/*createLayouts=*/false)) { Shutdown(); return false; }
+                    }
                 } else {
                     if (!CreateShaderModules())      { Shutdown(); return false; }
                     if (!CreatePipelines())          { Shutdown(); return false; }
@@ -2543,9 +2558,15 @@ void VulkanBackend::Shutdown() {
     if (sdfQuadIbo) { vkDestroyBuffer(device, sdfQuadIbo, nullptr); sdfQuadIbo = VK_NULL_HANDLE; }
     if (sdfQuadIboMem) { vkFreeMemory(device, sdfQuadIboMem, nullptr); sdfQuadIboMem = VK_NULL_HANDLE; }
 
-    auto destroyPipe = [&](VkPipeline& p){ if (p) { vkDestroyPipeline(device, p, nullptr); p = VK_NULL_HANDLE; } };
-    destroyPipe(pipeBasic); destroyPipe(pipeText); destroyPipe(pipeMSDF);
-    destroyPipe(pipeImage); destroyPipe(pipeLines); destroyPipe(pipeSDF);
+    // gap #4 Phase 2: only the owner frees the shared UI pipelines. A secondary that
+    // ADOPTED them (ownsPipelines=false) just drops the handles below.
+    if (ownsPipelines) {
+        auto destroyPipe = [&](VkPipeline p){ if (p) vkDestroyPipeline(device, p, nullptr); };
+        destroyPipe(pipeBasic); destroyPipe(pipeText); destroyPipe(pipeMSDF);
+        destroyPipe(pipeImage); destroyPipe(pipeLines); destroyPipe(pipeSDF);
+    }
+    pipeBasic = VK_NULL_HANDLE; pipeText = VK_NULL_HANDLE; pipeMSDF = VK_NULL_HANDLE;
+    pipeImage = VK_NULL_HANDLE; pipeLines = VK_NULL_HANDLE; pipeSDF = VK_NULL_HANDLE;
     // gap #4: only the resource owner frees the shared shader modules + layouts. A
     // secondary window that ADOPTED them (ownsShaderResources=false) just drops the
     // handles below without destroying (the owner outlives the secondaries).

@@ -117,6 +117,9 @@ private:
     // gap #4: true when this backend created its own shader modules / pipeline layouts;
     // false when a secondary window ADOPTED them from the owner (must NOT destroy them).
     bool ownsShaderResources = true;
+    // gap #4 Phase 2: false when a secondary window ADOPTED the owner's UI pipelines
+    // (render pass was compatible) → must NOT destroy them.
+    bool ownsPipelines = true;
     void* window = nullptr;  // native window handle (opaque; cast in the .cpp)
 
     VkInstance       instance       = VK_NULL_HANDLE;
