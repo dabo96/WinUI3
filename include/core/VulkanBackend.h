@@ -114,6 +114,9 @@ private:
     // brief 08 Part B: secondary window on a shared device — owns its surface/
     // swapchain/render pass/sync and presents, but NOT the device/instance.
     bool ownSwapchainOnSharedDevice = false;
+    // gap #4: true when this backend created its own shader modules / pipeline layouts;
+    // false when a secondary window ADOPTED them from the owner (must NOT destroy them).
+    bool ownsShaderResources = true;
     void* window = nullptr;  // native window handle (opaque; cast in the .cpp)
 
     VkInstance       instance       = VK_NULL_HANDLE;
@@ -317,7 +320,9 @@ private:
     bool CreateStandaloneRenderPass();
     bool CreateSyncAndCommands();               // standalone only
     bool CreateShaderModules();
-    bool CreatePipelines();
+    // gap #4: createLayouts=false when a secondary window has already ADOPTED the
+    // owner's descriptor-set/pipeline layouts (then this only builds the pipelines).
+    bool CreatePipelines(bool createLayouts = true);
     bool CreateDynamicBuffers();
     bool CreateSamplerAndDescriptorInfra();
 

@@ -103,8 +103,34 @@ bool VulkanBackend::Init(void* windowHandle, void* existingContext) {
                 Shutdown(); return false;
             }
             if (!CreateSwapchain())              { Shutdown(); return false; } // + render pass + framebuffers
-            if (!CreateShaderModules())          { Shutdown(); return false; }
-            if (!CreatePipelines())              { Shutdown(); return false; }
+            // gap #4 Phase 1: adopt the owner's device-level shader modules + pipeline
+            // layouts instead of recreating them (format-independent, safe to share
+            // across windows on the same VkDevice). Pipelines stay per-window for now
+            // (Phase 2 shares those after a render-pass compatibility check).
+            {
+                VulkanBackend* owner = shared0->ownerBackend
+                                           ? static_cast<VulkanBackend*>(shared0->ownerBackend)
+                                           : nullptr;
+                if (owner && owner->vertModule != VK_NULL_HANDLE &&
+                    owner->layoutTex != VK_NULL_HANDLE) {
+                    vertModule    = owner->vertModule;
+                    basicFrag     = owner->basicFrag;
+                    textFrag      = owner->textFrag;
+                    msdfFrag      = owner->msdfFrag;
+                    imageFrag     = owner->imageFrag;
+                    sdfVertModule = owner->sdfVertModule;
+                    sdfFrag       = owner->sdfFrag;
+                    texSetLayout  = owner->texSetLayout;
+                    layoutNoTex   = owner->layoutNoTex;
+                    layoutTex     = owner->layoutTex;
+                    ownsShaderResources = false; // adopted → Shutdown must NOT free these
+                    VKDBG("Vulkan: gap#4 adopted owner shader modules + layouts");
+                    if (!CreatePipelines(/*createLayouts=*/false)) { Shutdown(); return false; }
+                } else {
+                    if (!CreateShaderModules())      { Shutdown(); return false; }
+                    if (!CreatePipelines())          { Shutdown(); return false; }
+                }
+            }
             if (!CreateDynamicBuffers())         { Shutdown(); return false; }
             if (!CreateSamplerAndDescriptorInfra()) { Shutdown(); return false; }
             // #5: best-effort real acrylic (own swapchain → capturable backdrop).
@@ -565,7 +591,8 @@ bool VulkanBackend::CreateShaderModules() {
            sdfVertModule && sdfFrag;
 }
 
-bool VulkanBackend::CreatePipelines() {
+bool VulkanBackend::CreatePipelines(bool createLayouts) {
+  if (createLayouts) {
     // Descriptor set layout: one combined image sampler at binding 0 (fragment).
     VkDescriptorSetLayoutBinding b{};
     b.binding = 0;
@@ -593,6 +620,7 @@ bool VulkanBackend::CreatePipelines() {
     plTex.pushConstantRangeCount = 1;
     plTex.pPushConstantRanges = &pcr;
     VK_FAIL(vkCreatePipelineLayout(device, &plTex, nullptr, &layoutTex), "create layoutTex");
+  } // createLayouts (gap #4: skipped when a secondary window adopted the owner's layouts)
 
     pipeBasic = MakePipeline(basicFrag, layoutNoTex, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, false);
     pipeText  = MakePipeline(textFrag,  layoutTex,   VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, false);
@@ -1255,6 +1283,7 @@ bool VulkanBackend::GetSharedContext(VulkanSharedContext* out) const {
     out->dynamicRendering = false;
     // Mark it as a request for a secondary window with its own swapchain.
     out->ownSwapchain     = true;
+    out->ownerBackend     = (void*)this; // gap #4: let the secondary adopt our shaders/layouts
     return true;
 }
 
@@ -2517,14 +2546,22 @@ void VulkanBackend::Shutdown() {
     auto destroyPipe = [&](VkPipeline& p){ if (p) { vkDestroyPipeline(device, p, nullptr); p = VK_NULL_HANDLE; } };
     destroyPipe(pipeBasic); destroyPipe(pipeText); destroyPipe(pipeMSDF);
     destroyPipe(pipeImage); destroyPipe(pipeLines); destroyPipe(pipeSDF);
-    if (layoutNoTex) { vkDestroyPipelineLayout(device, layoutNoTex, nullptr); layoutNoTex = VK_NULL_HANDLE; }
-    if (layoutTex)   { vkDestroyPipelineLayout(device, layoutTex, nullptr);   layoutTex = VK_NULL_HANDLE; }
-    if (texSetLayout){ vkDestroyDescriptorSetLayout(device, texSetLayout, nullptr); texSetLayout = VK_NULL_HANDLE; }
-
-    auto destroyShader = [&](VkShaderModule& m){ if (m) { vkDestroyShaderModule(device, m, nullptr); m = VK_NULL_HANDLE; } };
-    destroyShader(vertModule); destroyShader(basicFrag); destroyShader(textFrag);
-    destroyShader(msdfFrag); destroyShader(imageFrag);
-    destroyShader(sdfVertModule); destroyShader(sdfFrag);
+    // gap #4: only the resource owner frees the shared shader modules + layouts. A
+    // secondary window that ADOPTED them (ownsShaderResources=false) just drops the
+    // handles below without destroying (the owner outlives the secondaries).
+    if (ownsShaderResources) {
+        if (layoutNoTex) vkDestroyPipelineLayout(device, layoutNoTex, nullptr);
+        if (layoutTex)   vkDestroyPipelineLayout(device, layoutTex, nullptr);
+        if (texSetLayout) vkDestroyDescriptorSetLayout(device, texSetLayout, nullptr);
+        auto destroyShader = [&](VkShaderModule m){ if (m) vkDestroyShaderModule(device, m, nullptr); };
+        destroyShader(vertModule); destroyShader(basicFrag); destroyShader(textFrag);
+        destroyShader(msdfFrag); destroyShader(imageFrag);
+        destroyShader(sdfVertModule); destroyShader(sdfFrag);
+    }
+    layoutNoTex = VK_NULL_HANDLE; layoutTex = VK_NULL_HANDLE; texSetLayout = VK_NULL_HANDLE;
+    vertModule = VK_NULL_HANDLE; basicFrag = VK_NULL_HANDLE; textFrag = VK_NULL_HANDLE;
+    msdfFrag = VK_NULL_HANDLE; imageFrag = VK_NULL_HANDLE;
+    sdfVertModule = VK_NULL_HANDLE; sdfFrag = VK_NULL_HANDLE;
 
     // Window-owned objects: present in standalone AND in the shared-device,
     // own-swapchain secondary-window mode. Destroyed without touching the device.

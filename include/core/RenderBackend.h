@@ -99,6 +99,13 @@ struct VulkanSharedContext {
     // The device/instance are NOT owned and never destroyed by this backend.
     // Populate it from the main UI backend via VulkanBackend::GetSharedContext().
     bool     ownSwapchain    = false;
+
+    // gap #4 (multi-window pipeline sharing): opaque pointer to the OWNER VulkanBackend
+    // (the main window's) so a secondary window can ADOPT its device-level shader
+    // modules / layouts instead of recreating them. Only meaningful with ownSwapchain;
+    // set by VulkanBackend::GetSharedContext(). Never dereferenced outside VulkanBackend.
+    // The owner must outlive the secondary windows.
+    void*    ownerBackend    = nullptr; // VulkanBackend*
 };
 
 struct RenderVertex {
