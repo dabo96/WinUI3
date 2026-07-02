@@ -567,8 +567,11 @@ void MarkdownView(const std::string &id, const std::string &markdown,
       }
       case Kind::ListItem: {
         Color bullet = baseColor;
-        ctx->renderer.DrawText(Vec2(pos.x + 4.0f, y + (lineH - baseFs) * 0.5f),
-                               "\xE2\x80\xA2", bullet, baseFs); // U+2022
+        // U+2022 (•) isn't in the MSDF atlas → it renders invisible via DrawText. Draw
+        // the list bullet as a filled dot instead (same approach as PasswordBox),
+        // vertically centered on the line.
+        ctx->renderer.DrawCircle(Vec2(pos.x + 7.0f, y + lineH * 0.5f),
+                                 baseFs * 0.14f, bullet, true);
         float h = RenderInline(ctx, ParseInline(b.text),
                                Vec2(pos.x + listIndent, y), maxW - listIndent, baseFs,
                                false, baseColor);
