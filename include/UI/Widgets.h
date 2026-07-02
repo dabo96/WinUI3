@@ -216,7 +216,7 @@ void ProgressBar(float fraction, const Vec2 &size = Vec2(0, 0), const std::strin
 /// @param placeholder  Dimmed hint text shown when empty and unfocused.
 /// @param maxLength    Maximum number of characters (0 = unlimited).
 /// @return true when the text changes.
-bool TextInput(const std::string &label, std::string *value, float width = 200.0f, bool multiline = false, std::optional<Vec2> pos = std::nullopt, const char* placeholder = nullptr, size_t maxLength = 0);
+bool TextInput(const std::string &label, std::string *value, float width = 200.0f, bool multiline = false, std::optional<Vec2> pos = std::nullopt, const char* placeholder = nullptr, size_t maxLength = 0, bool password = false);
 
 /// TextInput overload accepting callbacks for editing/completion/history/charFilter hooks.
 /// @param callback     Invoked when one of the unmasked events fires; may mutate buffer/cursorPos.
@@ -792,7 +792,8 @@ bool TokenizingTextBox(const std::string& id, std::vector<std::string>* tokens,
 /// on focus (brief 18). @return true when the value changes.
 bool PasswordBox(const std::string& id, std::string* value,
                  const std::string& placeholder = "",
-                 std::optional<Vec2> pos = std::nullopt);
+                 std::optional<Vec2> pos = std::nullopt,
+                 float width = 300.0f);
 
 /// MarkdownView: render a read-only subset of Markdown — headings (#..###),
 /// **bold** / *italic* / `code`, unordered lists (- / *), block quotes (>), links

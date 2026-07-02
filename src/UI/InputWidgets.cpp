@@ -661,7 +661,8 @@ static void LineBounds(const std::string &text, size_t pos, size_t &outStart,
 }
 
 bool TextInput(const std::string &label, std::string *value, float width,
-               bool multiline, std::optional<Vec2> pos, const char* placeholder, size_t maxLength) {
+               bool multiline, std::optional<Vec2> pos, const char* placeholder, size_t maxLength,
+               bool password) {
   UIContext *ctx = GetContext();
   if (!ctx)
     return false;
@@ -764,9 +765,53 @@ bool TextInput(const std::string &label, std::string *value, float width,
     ClearSelection();
   };
 
+  // ── Password mode (masked display). Everything below is inert when !password. ──
+  bool revealLocal = false;
+  bool *revealPtr = &revealLocal;
+  if (password) revealPtr = &ctx->GetWidgetState(AnimSlot(id, 3)).boolVal;
+  bool &reveal = *revealPtr;
+
+  // Codepoint<->byte mapping for per-codepoint masking (fixed-advance bullets).
+  auto pwdByteToCp = [&](size_t b) -> size_t {
+    const char *p = textRef.data(); const char *e = p + textRef.size();
+    const char *stop = p + std::min(b, textRef.size());
+    size_t n = 0; while (p < stop) { DecodeUTF8(p, e); ++n; } return n;
+  };
+  auto pwdCpToByte = [&](size_t k) -> size_t {
+    const char *p = textRef.data(); const char *e = p + textRef.size();
+    size_t n = 0; while (p < e && n < k) { DecodeUTF8(p, e); ++n; }
+    return static_cast<size_t>(p - textRef.data());
+  };
+  // Pixel width of the display-prefix of `bytes` bytes. Masked: nCp * bullet-advance.
+  // Unmasked: IDENTICAL to MeasureTextCached(textRef.substr(0,bytes)) — normal path unchanged.
+  auto dispWidth = [&](size_t bytes) -> float {
+    if (password && !reveal) {
+      float bw = inputTextStyle.fontSize * 0.5f; // password dot advance (match the draw)
+      return static_cast<float>(pwdByteToCp(bytes)) * bw;
+    }
+    return MeasureTextCached(ctx, textRef.substr(0, std::min(bytes, textRef.size())),
+                             inputTextStyle.fontSize).x;
+  };
+  // localX -> byte offset. Masked: fixed-advance hit-test; else the normal one.
+  auto hitToByte = [&](float localX) -> size_t {
+    if (!password || reveal) return FindCaretPosition(textRef, localX, ctx);
+    float bw = inputTextStyle.fontSize * 0.5f; // password dot advance (match the draw)
+    size_t k = bw > 0.0f ? static_cast<size_t>(std::max(0.0f, (localX + bw * 0.5f) / bw)) : 0;
+    k = std::min(k, pwdByteToCp(textRef.size()));
+    return pwdCpToByte(k);
+  };
+
+  // Eye reveal-toggle geometry (right edge, square). eyeW=0 when !password so the
+  // hover/width/right-clamp math below collapses to the normal single-field layout.
+  float eyeW = password ? fieldSize.y : 0.0f;
+  Vec2 eyePos(fieldPos.x + fieldSize.x - eyeW, fieldPos.y);
+  Vec2 eyeSize(eyeW, fieldSize.y);
+
   Vec2 mousePos(ctx->input.MouseX(), ctx->input.MouseY());
-  bool hover = PointInRect(mousePos, fieldPos, fieldSize) &&
-               !IsMouseInputBlocked(ctx);
+  bool blocked = IsMouseInputBlocked(ctx);
+  bool hoverEye = password && PointInRect(mousePos, eyePos, eyeSize) && !blocked;
+  bool hover = PointInRect(mousePos, fieldPos, Vec2(fieldSize.x - eyeW, fieldSize.y)) &&
+               !blocked;
   bool leftPressed = ctx->input.IsMousePressed(0);
   bool leftDown = ctx->input.IsMouseDown(0);
 
@@ -776,7 +821,9 @@ bool TextInput(const std::string &label, std::string *value, float width,
   }
 
   if (leftPressed) {
-    if (hover) {
+    if (hoverEye) {
+      reveal = !reveal; // password: toggle mask/reveal
+    } else if (hover) {
       ctx->activeWidgetId = id;
       ctx->activeWidgetType = ActiveWidgetType::TextInput;
 
@@ -800,7 +847,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
         newCaret = lineStartOff + posInLine;
       } else {
         float localX = mousePos.x - (fieldPos.x + panelStyle.padding.x) + scroll;
-        newCaret = FindCaretPosition(textRef, std::max(localX, 0.0f), ctx);
+        newCaret = hitToByte(std::max(localX, 0.0f));
       }
 
       // Multi-click detection
@@ -869,7 +916,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
       newCaret = lineStartOff + posInLine;
     } else {
       float localX = mousePos.x - (fieldPos.x + panelStyle.padding.x) + scroll;
-      newCaret = FindCaretPosition(textRef, std::max(localX, 0.0f), ctx);
+      newCaret = hitToByte(std::max(localX, 0.0f));
     }
     if (newCaret != caret) {
       caret = newCaret;
@@ -945,14 +992,14 @@ bool TextInput(const std::string &label, std::string *value, float width,
     }
     // Ctrl+C: Copy
     else if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::C)) {
-      if (HasSelection()) {
+      if (!password && HasSelection()) { // password: copy disabled
         std::string selected = textRef.substr(SelectionStart(), SelectionEnd() - SelectionStart());
         ctx->input.SetClipboardText(selected);
       }
     }
     // Ctrl+X: Cut
     else if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::X)) {
-      if (HasSelection()) {
+      if (!password && HasSelection()) { // password: cut disabled
         std::string selected = textRef.substr(SelectionStart(), SelectionEnd() - SelectionStart());
         ctx->input.SetClipboardText(selected);
         DeleteSelection();
@@ -1229,9 +1276,14 @@ bool TextInput(const std::string &label, std::string *value, float width,
   Color bgColor = InputFieldBackground(ctx, hover && !hasFocus);
 
   if (hasFocus) {
-    DrawFocusRing(ctx, fieldPos, fieldSize, panelStyle.cornerRadius);
-    bgColor = accentState.hover;
-    bgColor.a = 0.15f;
+    // Focus: subtle accent tint (kept OPAQUE), no filled focus-ring halo. The halo
+    // (DrawFocusRing) draws an accent rect slightly LARGER than the field, which on a
+    // wide text box reads as a solid blue bar that seems to "grow" on click. Fluent
+    // text boxes mark focus with an accent BORDER instead (drawn below).
+    Color acc = accentState.hover;
+    bgColor = Color(bgColor.r + (acc.r - bgColor.r) * 0.15f,
+                    bgColor.g + (acc.g - bgColor.g) * 0.15f,
+                    bgColor.b + (acc.b - bgColor.b) * 0.15f, 1.0f);
   }
 
   ctx->renderer.DrawRectFilled(fieldPos, fieldSize, bgColor,
@@ -1240,11 +1292,10 @@ bool TextInput(const std::string &label, std::string *value, float width,
   // Drawn AFTER the fill, clipped to the rounded interior.
   ctx->renderer.DrawInsetShadow(fieldPos, fieldSize, panelStyle.cornerRadius, 2.0f,
                                 Color(0.0f, 0.0f, 0.0f, 0.16f));
-  // Borde 1px visible salvo cuando el focus ring ya lo marca.
-  if (!hasFocus) {
-    ctx->renderer.DrawRect(fieldPos, fieldSize, InputFieldBorder(ctx, hover),
-                           panelStyle.cornerRadius);
-  }
+  // Border: accent on focus (crisp 1px outline), neutral otherwise.
+  ctx->renderer.DrawRect(fieldPos, fieldSize,
+                         hasFocus ? accentState.normal : InputFieldBorder(ctx, hover),
+                         panelStyle.cornerRadius);
 
   float textPadding = panelStyle.padding.x * 0.5f;
 
@@ -1414,33 +1465,45 @@ bool TextInput(const std::string &label, std::string *value, float width,
     // ================================================================
     // Single-line rendering (original code)
     // ================================================================
-    float availableWidth = fieldSize.x - textPadding * 2.0f;
-    Vec2 textSize = MeasureTextCached(ctx, textRef, inputTextStyle.fontSize);
-    float caretOffset =
-        MeasureTextCached(ctx, textRef.substr(0, caret), inputTextStyle.fontSize)
-            .x;
+    float availableWidth = fieldSize.x - textPadding * 2.0f - eyeW;
+    float fullWidth = dispWidth(textRef.size());
+    float caretOffset = dispWidth(caret);
 
     if (caretOffset - scroll > availableWidth)
       scroll = caretOffset - availableWidth;
     else if (caretOffset - scroll < 0.0f)
       scroll = caretOffset;
     scroll =
-        std::clamp(scroll, 0.0f, std::max(0.0f, textSize.x - availableWidth));
+        std::clamp(scroll, 0.0f, std::max(0.0f, fullWidth - availableWidth));
 
     Vec2 textPos(fieldPos.x + textPadding - scroll,
                  fieldPos.y + (fieldSize.y - inputTextStyle.fontSize) * 0.5f);
+
+    // Password: clip masked dots/text to the text area (excl. the eye button).
+    // FlushBatch FIRST: the field bg/border are already issued but still PENDING in the
+    // batch (PushClipRect does not auto-flush). Without this, the tighter scissor below
+    // applies to the whole batch at flush time and clips the field's rounded rect to a
+    // square inset by textPadding on both sides. Flushing commits the field chrome with
+    // the parent clip before the scissor changes.
+    bool pushedClip = false;
+    if (password) {
+      ctx->renderer.FlushBatch();
+      ctx->renderer.PushClipRect(Vec2(fieldPos.x + textPadding, fieldPos.y),
+                                 Vec2(std::max(0.0f, availableWidth), fieldSize.y));
+      pushedClip = true;
+    }
 
     // Draw selection highlight
     if (hasFocus && HasSelection()) {
       size_t selStart = SelectionStart();
       size_t selEnd = SelectionEnd();
-      float selStartX = MeasureTextCached(ctx, textRef.substr(0, selStart), inputTextStyle.fontSize).x;
-      float selEndX = MeasureTextCached(ctx, textRef.substr(0, selEnd), inputTextStyle.fontSize).x;
+      float selStartX = dispWidth(selStart);
+      float selEndX = dispWidth(selEnd);
       float hlLeft = textPos.x + selStartX;
       float hlRight = textPos.x + selEndX;
       // Clamp to field bounds
       float fieldLeft = fieldPos.x + textPadding;
-      float fieldRight = fieldPos.x + fieldSize.x - textPadding;
+      float fieldRight = fieldPos.x + fieldSize.x - textPadding - eyeW;
       hlLeft = std::clamp(hlLeft, fieldLeft, fieldRight);
       hlRight = std::clamp(hlRight, fieldLeft, fieldRight);
       if (hlRight > hlLeft) {
@@ -1456,6 +1519,18 @@ bool TextInput(const std::string &label, std::string *value, float width,
       Color placeholderColor = inputTextStyle.color;
       placeholderColor.a *= 0.4f;
       ctx->renderer.DrawText(textPos, placeholder, placeholderColor, inputTextStyle.fontSize);
+    } else if (password && !reveal) {
+      // Masked: filled dots via DrawCircle (U+2022 isn't in the MSDF atlas). Spacing =
+      // 0.5*fontSize ≈ average character advance, so the field width barely changes when
+      // the eye reveals the real text. textPos already includes -scroll (dots scroll w/ caret).
+      float dotAdv = inputTextStyle.fontSize * 0.5f; // MUST match dispWidth/hitToByte
+      float r = inputTextStyle.fontSize * 0.16f;
+      float cy = textPos.y + inputTextStyle.fontSize * 0.5f;
+      size_t n = pwdByteToCp(textRef.size());
+      for (size_t i = 0; i < n; ++i) {
+        float cx = textPos.x + (static_cast<float>(i) + 0.5f) * dotAdv;
+        ctx->renderer.DrawCircle(Vec2(cx, cy), r, inputTextStyle.color, true);
+      }
     } else {
       ctx->renderer.DrawText(textPos, textRef, inputTextStyle.color,
                              inputTextStyle.fontSize);
@@ -1495,6 +1570,16 @@ bool TextInput(const std::string &label, std::string *value, float width,
         ctx->renderer.DrawRectFilled(caretPos, caretSize, caretColor, 0.0f);
       }
     }
+    if (pushedClip) { ctx->renderer.FlushBatch(); ctx->renderer.PopClipRect(); }
+  }
+
+  // Password: eye reveal-toggle button (right edge). Always single-line.
+  if (password) {
+    Color eyeColor = inputTextStyle.color;
+    eyeColor.a = hoverEye ? 1.0f : 0.6f;
+    DrawWidgetIcon(ctx, eyePos, eyeSize, reveal ? Icons::Eye : Icons::EyeOff,
+                   eyeColor, inputTextStyle.fontSize,
+                   (eyeW - inputTextStyle.fontSize) * 0.5f, 0.0f);
   }
 
   ctx->lastItemPos = widgetPos;
@@ -3321,337 +3406,22 @@ void SelectableText(const std::string &id, const std::string &text,
 // disabled so the secret cannot leave via the clipboard. Paste IS allowed.
 // Claims IME per-field on focus (ctx->imeOwnerId), like TextInput.
 bool PasswordBox(const std::string &id, std::string *value,
-                 const std::string &placeholder, std::optional<Vec2> pos) {
-  UIContext *ctx = GetContext();
-  if (!ctx)
-    return false;
-
-  const TextStyle &ts = ctx->style.GetTextStyle(TypographyStyle::Body);
-  const PanelStyle &panelStyle = ctx->style.panel;
-  const ColorState &accentState = ctx->style.button.background;
-  float fs = ts.fontSize;
-  float fieldH = fs + 16.0f;
-
-  Vec2 totalSize(220.0f, fieldH);
-  LayoutConstraints c = ConsumeNextConstraints(SizeConstraint::Fill);
-  Vec2 finalSize = ApplyConstraints(ctx, c, totalSize);
-  finalSize.y = std::max(finalSize.y, fieldH);
-  Vec2 widgetPos = pos.has_value()
-                       ? ResolveAbsolutePosition(ctx, pos.value(), finalSize)
-                       : ctx->cursorPos;
-  Vec2 fieldPos = widgetPos;
-  Vec2 fieldSize(finalSize.x, fieldH);
-
-  uint32_t wid = GenerateId("PWD:", id.c_str());
-  ctx->focusableWidgets.push_back(wid);
-
-  std::string *textPtr = value;
-  if (!textPtr) {
-    textPtr = &ctx->GetWidgetState(wid).stringVal; // brief 22 (fase 3)
-  }
-  std::string &textRef = *textPtr;
-
-  // brief 22 (fase 4): caret/anchor en TextEditState. Primer frame → caret al
-  // final (try_emplace original); anchor default ya es SIZE_MAX.
-  bool firstTextFrame = ctx->GetWidgetState(wid).text == nullptr;
-  auto &tstate = ctx->GetTextState(wid);
-  if (firstTextFrame) tstate.caret = textRef.size();
-  size_t &caret = tstate.caret;
-  caret = std::min(caret, textRef.size());
-  size_t &selAnchor = tstate.anchor;
-  bool &reveal = ctx->GetWidgetState(AnimSlot(wid, 3)).boolVal; // brief 22 (fase 3)
-
-  auto HasSelection = [&]() { return selAnchor != SIZE_MAX && selAnchor != caret; };
-  auto SelStart = [&]() -> size_t { return HasSelection() ? std::min(selAnchor, caret) : caret; };
-  auto SelEnd = [&]() -> size_t { return HasSelection() ? std::max(selAnchor, caret) : caret; };
-  auto ClearSel = [&]() { selAnchor = SIZE_MAX; };
-  auto DelSel = [&]() {
-    if (!HasSelection())
-      return;
-    size_t s = SelStart(), e = SelEnd();
-    textRef.erase(s, e - s);
-    caret = s;
-    ClearSel();
-  };
-
-  // codepoint <-> byte mapping (masking is per-codepoint, not per-byte).
-  auto byteToCp = [&](size_t b) -> size_t {
-    const char *p = textRef.data();
-    const char *end = textRef.data() + textRef.size();
-    const char *stop = textRef.data() + std::min(b, textRef.size());
-    size_t n = 0;
-    while (p < stop) {
-      DecodeUTF8(p, end);
-      ++n;
-    }
-    return n;
-  };
-  auto cpToByte = [&](size_t k) -> size_t {
-    const char *p = textRef.data();
-    const char *end = textRef.data() + textRef.size();
-    size_t n = 0;
-    while (p < end && n < k) {
-      DecodeUTF8(p, end);
-      ++n;
-    }
-    return static_cast<size_t>(p - textRef.data());
-  };
-  auto totalCp = [&]() -> size_t { return byteToCp(textRef.size()); };
-  // Máscara: el • (U+2022) no está en el atlas MSDF, así que NO se dibuja con DrawText
-  // — el draw pinta puntos con DrawCircle. Este BULLET solo alimenta la MEDICIÓN
-  // (displayStr/dispPrefix); su avance por carácter = GetGlyphAdvance(0x2022) = fs*0.3.
-  const std::string BULLET = "\xE2\x80\xA2"; // U+2022 (solo para medir)
-  auto displayStr = [&]() -> std::string {
-    if (reveal)
-      return textRef;
-    std::string s;
-    size_t n = totalCp();
-    s.reserve(n * BULLET.size());
-    for (size_t i = 0; i < n; ++i)
-      s += BULLET;
-    return s;
-  };
-  // display-byte length of the prefix up to byte caret `b`.
-  auto dispPrefix = [&](size_t b) -> std::string {
-    if (reveal)
-      return textRef.substr(0, std::min(b, textRef.size()));
-    std::string s;
-    size_t k = byteToCp(b);
-    for (size_t i = 0; i < k; ++i)
-      s += BULLET;
-    return s;
-  };
-  auto hitToByte = [&](float localX) -> size_t {
-    if (reveal)
-      return FindCaretPosition(textRef, localX, ctx);
-    float bw = ctx->renderer.GetGlyphAdvance(0x2022, fs); // debe coincidir con BULLET
-    size_t k = bw > 0.0f ? static_cast<size_t>(std::max(0.0f, (localX + bw * 0.5f) / bw)) : 0;
-    k = std::min(k, totalCp());
-    return cpToByte(k);
-  };
-
-  float textPadding = panelStyle.padding.x * 0.5f;
-  float eyeW = fieldH;
-  Vec2 eyePos(fieldPos.x + fieldSize.x - eyeW, fieldPos.y);
-  Vec2 eyeSize(eyeW, fieldSize.y);
-  float textAreaRight = fieldPos.x + fieldSize.x - eyeW;
-
-  Vec2 mousePos(ctx->input.MouseX(), ctx->input.MouseY());
-  bool blocked = IsMouseInputBlocked(ctx);
-  bool hoverField = PointInRect(mousePos, fieldPos, Vec2(fieldSize.x - eyeW, fieldSize.y)) && !blocked;
-  bool hoverEye = PointInRect(mousePos, eyePos, eyeSize) && !blocked;
-  if (hoverField)
-    ctx->desiredCursor = UIContext::CursorType::IBeam;
-
-  bool leftPressed = ctx->input.IsMousePressed(0);
-  bool leftDown = ctx->input.IsMouseDown(0);
-
-  if (leftPressed) {
-    if (hoverEye) {
-      reveal = !reveal;
-    } else if (hoverField) {
-      ctx->activeWidgetId = wid;
-      ctx->activeWidgetType = ActiveWidgetType::TextInput;
-      ctx->focusedWidgetId = wid;
-      float localX = mousePos.x - (fieldPos.x + textPadding);
-      size_t nc = hitToByte(std::max(localX, 0.0f));
-      if (ctx->input.ShiftDown() && selAnchor != SIZE_MAX) {
-        caret = nc;
-      } else {
-        caret = nc;
-        selAnchor = caret;
-        ClearSel();
-      }
-    } else if (ctx->activeWidgetId == wid &&
-               ctx->activeWidgetType == ActiveWidgetType::TextInput) {
-      ctx->activeWidgetId = 0;
-      ctx->activeWidgetType = ActiveWidgetType::None;
-    }
-  }
-  if (!leftPressed && leftDown && ctx->activeWidgetId == wid &&
-      ctx->activeWidgetType == ActiveWidgetType::TextInput) {
-    float localX = mousePos.x - (fieldPos.x + textPadding);
-    caret = hitToByte(std::max(localX, 0.0f));
-  }
-
-  bool hasFocus = ctx->activeWidgetId == wid &&
-                  ctx->activeWidgetType == ActiveWidgetType::TextInput;
-  bool valueChanged = false;
-
-  // brief 18.4: claim IME per-field while focused; release on blur.
-  if (ctx->window) {
-    if (hasFocus) {
-      if (ctx->imeOwnerId != wid) {
-        SDL_StartTextInput(static_cast<SDL_Window*>(ctx->window));
-        ctx->imeOwnerId = wid;
-      }
-      SDL_Rect area{static_cast<int>(fieldPos.x), static_cast<int>(fieldPos.y),
-                    static_cast<int>(fieldSize.x), static_cast<int>(fieldSize.y)};
-      SDL_SetTextInputArea(static_cast<SDL_Window*>(ctx->window), &area, 0);
-    } else if (ctx->imeOwnerId == wid) {
-      SDL_StopTextInput(static_cast<SDL_Window*>(ctx->window));
-      ctx->imeOwnerId = 0;
-    }
-  }
-
-  if (hasFocus) {
-    bool ctrlHeld = ctx->input.CtrlDown();
-    bool shiftHeld = ctx->input.ShiftDown();
-
-    if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::A)) {
-      selAnchor = 0;
-      caret = textRef.size();
-    }
-    // Ctrl+C / Ctrl+X are intentionally NOT handled (do not leak the secret).
-    else if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::V)) {
-      std::string clip = ctx->input.GetClipboardText();
-      for (char &ch : clip)
-        if (ch == '\n' || ch == '\r')
-          ch = ' ';
-      if (!clip.empty()) {
-        if (HasSelection())
-          DelSel();
-        textRef.insert(caret, clip);
-        caret += clip.size();
-        valueChanged = true;
-      }
-    } else {
-      if (!ctrlHeld) {
-        const std::string &inputText = ctx->input.TextInputBuffer();
-        if (!inputText.empty()) {
-          if (HasSelection())
-            DelSel();
-          textRef.insert(caret, inputText);
-          caret += inputText.size();
-          valueChanged = true;
-        }
-      }
-      if (ctx->input.IsKeyPressed(UIKey::Backspace)) {
-        if (HasSelection()) {
-          DelSel();
-          valueChanged = true;
-        } else if (caret > 0) {
-          size_t prev = Utf8PrevCodepoint(textRef, caret);
-          textRef.erase(prev, caret - prev);
-          caret = prev;
-          valueChanged = true;
-        }
-      } else if (ctx->input.IsKeyPressed(UIKey::Delete)) {
-        if (HasSelection()) {
-          DelSel();
-          valueChanged = true;
-        } else if (caret < textRef.size()) {
-          size_t next = Utf8NextCodepoint(textRef, caret);
-          textRef.erase(caret, next - caret);
-          valueChanged = true;
-        }
-      } else if (ctx->input.IsKeyPressed(UIKey::Left)) {
-        if (shiftHeld && selAnchor == SIZE_MAX)
-          selAnchor = caret;
-        else if (!shiftHeld)
-          ClearSel();
-        if (caret > 0)
-          caret = Utf8PrevCodepoint(textRef, caret);
-      } else if (ctx->input.IsKeyPressed(UIKey::Right)) {
-        if (shiftHeld && selAnchor == SIZE_MAX)
-          selAnchor = caret;
-        else if (!shiftHeld)
-          ClearSel();
-        if (caret < textRef.size())
-          caret = Utf8NextCodepoint(textRef, caret);
-      } else if (ctx->input.IsKeyPressed(UIKey::Home)) {
-        if (shiftHeld && selAnchor == SIZE_MAX)
-          selAnchor = caret;
-        else if (!shiftHeld)
-          ClearSel();
-        caret = 0;
-      } else if (ctx->input.IsKeyPressed(UIKey::End)) {
-        if (shiftHeld && selAnchor == SIZE_MAX)
-          selAnchor = caret;
-        else if (!shiftHeld)
-          ClearSel();
-        caret = textRef.size();
-      } else if (ctx->input.IsKeyPressed(UIKey::Enter) ||
-                 ctx->input.IsKeyPressed(UIKey::KeypadEnter)) {
-        ctx->activeWidgetId = 0;
-        ctx->activeWidgetType = ActiveWidgetType::None;
-      }
-    }
-  }
-
-  // ---- draw ----
-  Color bgColor = InputFieldBackground(ctx, hoverField && !hasFocus);
-  if (hasFocus) {
-    DrawFocusRing(ctx, fieldPos, fieldSize, panelStyle.cornerRadius);
-    bgColor = accentState.hover;
-    bgColor.a = 0.15f;
-  }
-  ctx->renderer.DrawRectFilled(fieldPos, fieldSize, bgColor, panelStyle.cornerRadius);
-  ctx->renderer.DrawInsetShadow(fieldPos, fieldSize, panelStyle.cornerRadius, 2.0f,
-                                Color(0.0f, 0.0f, 0.0f, 0.16f));
-  if (!hasFocus)
-    ctx->renderer.DrawRect(fieldPos, fieldSize, InputFieldBorder(ctx, hoverField),
-                           panelStyle.cornerRadius);
-
-  std::string disp = displayStr();
-  Vec2 textPos(fieldPos.x + textPadding,
-               fieldPos.y + (fieldSize.y - fs) * 0.5f);
-
-  ctx->renderer.PushClipRect(Vec2(fieldPos.x + textPadding, fieldPos.y),
-                             Vec2(std::max(0.0f, textAreaRight - fieldPos.x - textPadding * 2.0f),
-                                  fieldSize.y));
-  if (hasFocus && HasSelection()) {
-    float sx = MeasureTextCached(ctx, dispPrefix(SelStart()), fs).x;
-    float ex = MeasureTextCached(ctx, dispPrefix(SelEnd()), fs).x;
-    Color sel = accentState.normal;
-    sel.a = 0.35f;
-    ctx->renderer.DrawRectFilled(Vec2(textPos.x + sx, fieldPos.y + 2.0f),
-                                 Vec2(std::max(0.0f, ex - sx), fieldSize.y - 4.0f),
-                                 sel, 2.0f);
-  }
-  if (textRef.empty() && !hasFocus && !placeholder.empty()) {
-    Color ph = ts.color;
-    ph.a *= 0.4f;
-    ctx->renderer.DrawText(textPos, placeholder, ph, fs);
-  } else if (reveal) {
-    ctx->renderer.DrawText(textPos, disp, ts.color, fs);
-  } else {
-    // Máscara: dibuja puntos reales con DrawCircle (el • no está en el atlas MSDF).
-    // El espaciado = GetGlyphAdvance(0x2022) (fs*0.3), el MISMO avance que ya asumen
-    // caret/selección/hit-test → las posiciones quedan sincronizadas sin tocar el layout.
-    float dotAdv = ctx->renderer.GetGlyphAdvance(0x2022, fs);
-    float r = fs * 0.11f;
-    float cy = textPos.y + fs * 0.5f;
-    size_t n = totalCp();
-    for (size_t i = 0; i < n; ++i) {
-      float cx = textPos.x + (static_cast<float>(i) + 0.5f) * dotAdv;
-      ctx->renderer.DrawCircle(Vec2(cx, cy), r, ts.color, true);
-    }
-  }
-  if (hasFocus && !HasSelection()) {
-    float caretX = textPos.x + MeasureTextCached(ctx, dispPrefix(caret), fs).x;
-    float blink = 0.5f + 0.5f * std::sin(ctx->frame * 0.1f);
-    Color cc = accentState.normal;
-    cc.a = blink;
-    ctx->renderer.DrawRectFilled(Vec2(caretX, fieldPos.y + textPadding * 0.5f),
-                                 Vec2(1.5f, fieldSize.y - textPadding), cc, 0.0f);
-  }
-  ctx->renderer.PopClipRect();
-
-  // Eye toggle (Lucide). Eye = revealed, EyeOff = masked.
-  Color eyeColor = ts.color;
-  eyeColor.a = hoverEye ? 1.0f : 0.6f;
-  DrawWidgetIcon(ctx, eyePos, eyeSize, reveal ? Icons::Eye : Icons::EyeOff,
-                 eyeColor, fs, (eyeW - fs) * 0.5f, 0.0f);
-
-  ctx->lastItemPos = widgetPos;
-  if (pos.has_value())
-    ctx->lastItemSize = finalSize;
-  else
-    AdvanceCursor(ctx, finalSize);
-  SetLastItem(wid, widgetPos, widgetPos + finalSize, hoverField, hasFocus,
-              hasFocus, valueChanged);
-  return valueChanged;
+                 const std::string &placeholder, std::optional<Vec2> pos, float width) {
+  // Thin wrapper over the single-line TextInput in password mode (masked dots + eye
+  // toggle, copy/cut disabled). Reuses TextInput's field chrome, IME, selection and
+  // scroll so the two controls cannot drift apart.
+  // A password field is a BOUNDED control (the reveal button is part of it), so pin it
+  // to a fixed width via SetNextConstraints instead of letting a vertical layout stretch
+  // it full-width — at full width the rounded box + eye read as detached. Callers can
+  // override `width`. Hidden-label ("##") convention gives a stable id in its own space.
+  LayoutConstraints c;
+  c.width = SizeConstraint::Fixed;
+  c.fixedWidth = width;
+  SetNextConstraints(c);
+  std::string label = "##PWD:" + id;
+  const char *ph = placeholder.empty() ? nullptr : placeholder.c_str();
+  return TextInput(label, value, width, /*multiline*/ false, pos, ph,
+                   /*maxLength*/ 0, /*password*/ true);
 }
 
 // Shared: case-insensitive substring search; returns byte offset or npos.
