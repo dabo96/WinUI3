@@ -18,6 +18,7 @@ namespace FluentUI {
 struct UIContext;
 class DockSpace;
 class RenderBackend;
+class PlatformBackend; // brief 25: platform seam (SDL lives behind this)
 enum class DockPosition; // defined in DockSystem.h
 
 /// Application configuration passed to FluentApp constructor.
@@ -78,9 +79,11 @@ private:
     // brief 09 Fase 1: backend-agnostic. The window owns a UIContext created with
     // CreateStandaloneContext(window, parentCtx) so it SHARES the parent's GPU
     // device / GL context and resource pool (brief 08). No own GL context.
+    // brief 25: `platform` is borrowed from the owning FluentApp (all OS/window
+    // calls route through it); the AppWindow never owns or destroys it.
     AppWindow(const std::string& title, int width, int height,
               WindowHandle parentWindow, void* parentGLContext,
-              UIContext* parentCtx);
+              UIContext* parentCtx, PlatformBackend* platform);
 
     // Process one frame (called by FluentApp in the main loop). Sets this context
     // current, builds + renders the panel, and presents via the backend. For GL it
@@ -95,6 +98,7 @@ private:
 
     WindowHandle window_ = nullptr;      // native window handle (opaque; cast in the .cpp)
     RenderBackend* backend_ = nullptr;   // Own backend (for cleanup); shares parent device
+    PlatformBackend* platform_ = nullptr; // brief 25: borrowed from FluentApp (not owned)
     UIContext* ctx_ = nullptr;
     // brief 09: the SHARED GL context (parent's) this window renders with. Stored
     // only so GL resource cleanup can be made current at destruction. Null on Vulkan.
@@ -276,6 +280,12 @@ private:
     // main-window dock zone, preview it; on release re-dock and destroy the window.
     void updateFloatingRedock();
 
+
+    // brief 25: the platform seam. Owns the window/event/OS side (SDLPlatform by
+    // default via CreateDefaultPlatform(); NullPlatform / host platform when
+    // embedded). Declared first so it outlives every other member and is destroyed
+    // LAST (its SDL_Quit must run after the window/context are torn down).
+    std::unique_ptr<PlatformBackend> platform_;
 
     WindowHandle window_ = nullptr;         // native window handle (opaque; cast in the .cpp)
     void* mainGLContext_ = nullptr;         // GL context (opaque; cast in the .cpp)

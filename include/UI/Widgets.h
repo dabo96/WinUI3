@@ -428,9 +428,12 @@ bool NumberBox(const std::string& label, double* value,
 /// onboarding. Built on BeginFlyout. Shows until the user closes it (the "seen"
 /// state is persisted by id in WidgetState.boolVal). @return true when the action button
 /// (actionText, if non-empty) is pressed.
+/// @param open optional one-shot trigger: set *open=true (e.g. from a button) to
+///        (re)show the tip on demand; it is consumed back to false. When null, the
+///        tip keeps its default auto-show-once behavior.
 bool TeachingTip(const std::string& id, const Rect& targetRect,
                  const std::string& title, const std::string& body,
-                 const std::string& actionText = "");
+                 const std::string& actionText = "", bool* open = nullptr);
 
 /// Result of a standardized ContentDialog (brief 14 section 9).
 enum class DialogResult { None, Primary, Secondary, Close };

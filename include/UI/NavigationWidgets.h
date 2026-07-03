@@ -98,9 +98,10 @@ struct TitleBarResult {
 /// Barra de título custom: icono + título a la izquierda, `centerContent` opcional
 /// al centro y caption buttons (minimizar/maximizar/cerrar) a la derecha. Publica
 /// las zonas draggable / no-draggable en el UIContext para que el callback de
-/// hit-test de SDL (registrado por FluentApp con AppConfig::useCustomTitleBar)
-/// mueva/redimensione la ventana sin que los controles inicien arrastre.
-/// Min/Max actúan directamente vía SDL; Close encola un CLOSE_REQUESTED.
+/// hit-test (registrado por FluentApp con AppConfig::useCustomTitleBar) mueva/
+/// redimensione la ventana sin que los controles inicien arrastre.
+/// brief 26: Min/Max/Restore y Close actúan por el puerto de plataforma
+/// (GetPlatform(ctx)->MinimizeWindow/... / RequestWindowClose), no vía SDL directo.
 /// Reutilizable en cualquier ventana (incl. flotantes del brief 09).
 TitleBarResult TitleBar(const std::string& id, const std::string& title,
                         uint32_t icon = 0,

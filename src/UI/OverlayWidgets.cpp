@@ -1204,28 +1204,43 @@ void MenuFlyout(const std::string &id, const Rect &anchorRect,
 // ════════════════════════════════════════════════════════════════════════════
 bool TeachingTip(const std::string &id, const Rect &targetRect,
                  const std::string &title, const std::string &body,
-                 const std::string &actionText) {
+                 const std::string &actionText, bool *open) {
   UIContext *ctx = GetContext();
   if (!ctx)
     return false;
 
   uint32_t seenKey = GenerateId("TEACHTIP_SEEN:", id.c_str());
-  bool &seen = ctx->GetWidgetState(seenKey).boolVal; // brief 22 (fase 3)
-  if (seen)
-    return false;
-
-  std::string flyoutId = "TEACHTIP:" + id;
-  // Abrir una sola vez. Si el flyout se cerró (click fuera/Esc) y ya se había
-  // abierto, marcar "ya visto" y no volver a mostrar.
   uint32_t openedKey = GenerateId("TEACHTIP_OPENED:", id.c_str());
-  bool &openedOnce = ctx->GetWidgetState(openedKey).boolVal; // brief 22 (fase 3)
-  if (!IsFlyoutOpen(flyoutId)) {
-    if (!openedOnce) {
-      OpenFlyout(flyoutId);
-      openedOnce = true;
-    } else {
-      seen = true;
+  std::string flyoutId = "TEACHTIP:" + id;
+
+  // Dos modos:
+  //  - open != nullptr  → coachmark CONTROLADA por el llamador: se muestra SOLO
+  //    cuando pone *open=true (p.ej. desde un botón), anclada fresca al targetRect.
+  //    NO hay auto-show, así que nunca aparece sola al arrancar. Al cerrarse (click
+  //    fuera / Got it), vuelve a aparecer al siguiente *open=true.
+  //  - open == nullptr  → coachmark AUTOMÁTICA: se muestra una vez al aparecer y se
+  //    recuerda como "vista".
+  // NOTA (fix bug): NO se mantienen refs bool& a widgetStates a través de llamadas
+  // que insertan (BeginFlyout/Label/Button rehashean el unordered_map e invalidan la
+  // ref → el latch se corrompía). Se escribe/lee con GetWidgetState fresco cada vez.
+  if (open) {
+    if (*open) {
+      *open = false;
+      OpenFlyout(flyoutId); // (re)abre anclada al targetRect actual (single-open)
+    }
+    if (!IsFlyoutOpen(flyoutId))
       return false;
+  } else {
+    if (ctx->GetWidgetState(seenKey).boolVal)
+      return false;
+    if (!IsFlyoutOpen(flyoutId)) {
+      if (!ctx->GetWidgetState(openedKey).boolVal) {
+        OpenFlyout(flyoutId);
+        ctx->GetWidgetState(openedKey).boolVal = true;
+      } else {
+        ctx->GetWidgetState(seenKey).boolVal = true;
+        return false;
+      }
     }
   }
 
@@ -1241,11 +1256,11 @@ bool TeachingTip(const std::string &id, const Rect &targetRect,
     BeginHorizontal(8.0f);
     if (!actionText.empty() && Button(actionText)) {
       actioned = true;
-      seen = true;
+      ctx->GetWidgetState(seenKey).boolVal = true; // auto-mode: no re-auto-show
       CloseFlyout(flyoutId);
     }
     if (Button("Got it")) {
-      seen = true;
+      ctx->GetWidgetState(seenKey).boolVal = true;
       CloseFlyout(flyoutId);
     }
     EndHorizontal();

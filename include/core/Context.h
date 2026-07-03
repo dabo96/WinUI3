@@ -23,6 +23,7 @@ namespace FluentUI {
 
 class RenderBackend;
 struct SharedResourcePool;
+class PlatformBackend; // brief 26: platform seam reachable from widgets via GetPlatform(ctx)
 
 // ─── brief 13: regiones de hit-test de la TitleBar custom ─────────────────────
 // El widget TitleBar() (hilo de UI) publica aquí la zona arrastrable (caption) y
@@ -882,11 +883,16 @@ struct UIContext {
   bool anyTooltipHoveredThisFrame = false;
 
   // Mouse cursor management
+  // Cursor id order MUST match PlatformBackend::SetCursor's neutral mapping.
   enum class CursorType { Arrow, IBeam, Hand, ResizeH, ResizeV, ResizeNESW, ResizeNWSE };
   CursorType desiredCursor = CursorType::Arrow;
   CursorType currentCursor = CursorType::Arrow;
-  void* systemCursors[7] = {}; // native cursor handle (opaque; cast in Context.cpp)
-  bool cursorsInitialized = false;
+
+  // brief 26 de-SDL: the platform this context is driven by (set by FluentApp; the
+  // owned window's SDLPlatform, or a host's NullPlatform). Widgets reach OS services
+  // through GetPlatform(ctx), which falls back to a shared NullPlatform when unset
+  // (headless tests) so a null platform never crashes the UI.
+  PlatformBackend* platform = nullptr;
 
   // Scroll consumed flag - reset each frame in NewFrame()
   bool scrollConsumedThisFrame = false;
@@ -1155,6 +1161,11 @@ void DestroyContext();
 void* RegisterExternalTexture(void* nativeView, void* sampler = nullptr, int layout = 0);
 // Release a handle returned by RegisterExternalTexture (frees only the wrapper).
 void DestroyExternalTexture(void* handle);
+
+// brief 26 de-SDL: reach the platform backend from anywhere with a UIContext.
+// Returns ctx->platform when set, else a shared process-wide NullPlatform so callers
+// (widgets, headless tests) never dereference null. Never returns nullptr.
+PlatformBackend* GetPlatform(UIContext* ctx);
 
 // Multi-context support (Phase 4: Multi-Window)
 // SetCurrentContext swaps which context is used by NewFrame/Render/widgets

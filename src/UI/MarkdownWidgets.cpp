@@ -1,4 +1,4 @@
-#include <SDL3/SDL.h>
+#include "core/PlatformBackend.h" // brief 26: OS services via GetPlatform(ctx)
 // brief 17 — MarkdownView: render a read-only subset of Markdown.
 //
 // Supported: ATX headings (#..######), inline **bold** / *italic* / `code`,
@@ -204,7 +204,7 @@ float RenderInline(UIContext *ctx, const std::vector<Seg> &segs, Vec2 start,
       if (IsMouseOver(ctx, lpos, lsize)) {
         ctx->desiredCursor = UIContext::CursorType::Hand;
         if (ctx->input.IsMousePressed(0) && !t.url.empty())
-          SDL_OpenURL(t.url.c_str());
+          GetPlatform(ctx)->OpenURL(t.url.c_str());
       }
     }
   };

@@ -1,14 +1,14 @@
-#include <SDL3/SDL.h>
 #include "core/FluentApp.h"
 #include "core/Context.h"
-#include "core/SDLPlatform.h" // TranslateSDLEvent (SDL→UIEvent seam, brief 20)
+#include "core/PlatformBackend.h" // brief 25: platform seam (SDL lives behind this)
 #include "core/DockSystem.h"
 #include "core/LayoutSerializer.h"
-#include "core/OpenGLBackend.h"
+#ifdef FLUENTUI_HAS_GL
+#include "core/OpenGLBackend.h"  // GL multi-window path; unused symbols under GL=OFF
+#endif
 #include "core/Accessibility.h"   // brief 18.3: InitUIAutomation/ShutdownUIAutomation
 #include "UI/Widgets.h"
 #include "Theme/FluentTheme.h"
-#include <SDL3/SDL_vulkan.h>
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
@@ -17,71 +17,47 @@
 namespace FluentUI {
 
 namespace {
-// brief 08/09: choose the OS-window creation flag for the active backend.
-//   - OpenGL → SDL_WINDOW_OPENGL.
-//   - Vulkan → SDL_WINDOW_VULKAN *only* when SDL was built with a Vulkan driver
-//     (so SDL_Vulkan_CreateSurface works). When SDL lacks Vulkan, the backend
-//     creates a native Win32 surface from the HWND, which needs no Vulkan flag;
-//     we keep SDL_WINDOW_OPENGL there to preserve the proven standalone path.
-// Mirrors VulkanBackend::CreateSurfaceForWindow's SDL-vs-native gate.
-Uint64 BackendWindowFlag() {
-    if (GetPreferredBackend() == RenderBackendType::Vulkan) {
-        if (SDL_Vulkan_LoadLibrary(nullptr)) {
-            uint32_t extCount = 0;
-            const char* const* exts = SDL_Vulkan_GetInstanceExtensions(&extCount);
-            if (exts && extCount > 0) return SDL_WINDOW_VULKAN;
-        }
-        // SDL has no Vulkan driver → native HWND surface path.
-    }
-    return SDL_WINDOW_OPENGL;
-}
+// brief 13/25: neutral hit-test callback for borderless windows with a custom
+// title bar. The platform installs it (SetWindowHitTest) and calls it during the
+// OS event pump with a point in window (logical) coordinates — the same space the
+// renderer viewport and widget rects use, so no DPI conversion is needed. This is
+// SDL-free: the platform translates the UIHitTest result to its native form.
+UIHitTest CustomTitleBarHitTest(int px, int py, void* user) {
+    UIContext* ctx = static_cast<UIContext*>(user);
+    if (!ctx) return UIHitTest::Normal;
 
-// brief 20 (F-c): the window/GL-context handles are stored as opaque void* in the
-// (SDL-free) headers; these cast them back to the SDL types for internal use.
-inline SDL_Window*   asWin(WindowHandle h) { return static_cast<SDL_Window*>(h); }
-inline SDL_GLContext asGL(void* h)         { return static_cast<SDL_GLContext>(h); }
-
-// brief 13: SDL hit-test callback for borderless windows with a custom title bar.
-// Runs on the thread that pumps the OS event queue (the main thread here, during
-// SDL_PollEvent). Reads the zones published by FluentUI::TitleBar() under the
-// context mutex. `area` is in window-point coordinates, the same space the
-// renderer viewport (SDL_GetWindowSize) and the widget rects use, so no DPI
-// conversion is needed.
-SDL_HitTestResult CustomTitleBarHitTest(SDL_Window* win, const SDL_Point* area,
-                                        void* data) {
-    UIContext* ctx = static_cast<UIContext*>(data);
-    if (!ctx || !area) return SDL_HITTEST_NORMAL;
-
-    int w = 0, h = 0;
-    SDL_GetWindowSize(win, &w, &h);
+    // Window size == renderer viewport (kept in sync on resize), same space as the
+    // hit-test point. Avoids a platform round-trip from inside the callback.
+    Vec2 vp = ctx->renderer.GetViewportSize();
+    int w = static_cast<int>(vp.x), h = static_cast<int>(vp.y);
 
     std::lock_guard<std::mutex> lk(ctx->titleBarHit.mutex);
     TitleBarHitRegions& tb = ctx->titleBarHit;
-    float fx = static_cast<float>(area->x), fy = static_cast<float>(area->y);
+    float fx = static_cast<float>(px), fy = static_cast<float>(py);
 
     // Resize borders take precedence at the window edges.
     if (tb.resizable && tb.resizeBorder > 0.0f) {
         float b = tb.resizeBorder;
         bool left = fx < b, right = fx > (float)w - b;
         bool top = fy < b, bottom = fy > (float)h - b;
-        if (top && left) return SDL_HITTEST_RESIZE_TOPLEFT;
-        if (top && right) return SDL_HITTEST_RESIZE_TOPRIGHT;
-        if (bottom && left) return SDL_HITTEST_RESIZE_BOTTOMLEFT;
-        if (bottom && right) return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
-        if (top) return SDL_HITTEST_RESIZE_TOP;
-        if (bottom) return SDL_HITTEST_RESIZE_BOTTOM;
-        if (left) return SDL_HITTEST_RESIZE_LEFT;
-        if (right) return SDL_HITTEST_RESIZE_RIGHT;
+        if (top && left) return UIHitTest::ResizeTopLeft;
+        if (top && right) return UIHitTest::ResizeTopRight;
+        if (bottom && left) return UIHitTest::ResizeBottomLeft;
+        if (bottom && right) return UIHitTest::ResizeBottomRight;
+        if (top) return UIHitTest::ResizeTop;
+        if (bottom) return UIHitTest::ResizeBottom;
+        if (left) return UIHitTest::ResizeLeft;
+        if (right) return UIHitTest::ResizeRight;
     }
 
     // Draggable caption strip, minus the interactive exclusions (caption buttons,
     // center content) which must stay clickable.
     if (tb.active && tb.caption.Contains(Vec2(fx, fy))) {
         for (const Rect& ex : tb.exclusions)
-            if (ex.Contains(Vec2(fx, fy))) return SDL_HITTEST_NORMAL;
-        return SDL_HITTEST_DRAGGABLE;
+            if (ex.Contains(Vec2(fx, fy))) return UIHitTest::Normal;
+        return UIHitTest::Draggable;
     }
-    return SDL_HITTEST_NORMAL;
+    return UIHitTest::Normal;
 }
 
 // brief 18.7: deliver positioned OS drops (files / text) to the context's sinks.
@@ -98,17 +74,16 @@ void dispatchOSDrops(UIContext* ctx) {
     }
 }
 
-// brief 18.3: attach the platform accessibility provider to an OS window. Pulls
-// the native HWND out of SDL on Windows (as an opaque void*, so this TU needs no
-// <windows.h>); no-op elsewhere.
-void AttachAccessibility(SDL_Window* window, UIContext* ctx) {
+// brief 18.3/25: attach the platform accessibility provider to an OS window. Pulls
+// the native HWND from the platform on Windows (as an opaque void*, so this TU
+// needs no <windows.h> and no SDL); no-op elsewhere.
+void AttachAccessibility(PlatformBackend* platform, WindowHandle window, UIContext* ctx) {
 #ifdef _WIN32
-    if (!window) return;
-    void* hwnd = SDL_GetPointerProperty(
-        SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+    if (!platform || !window) return;
+    void* hwnd = platform->GetNativeWindowHandle(window);
     if (hwnd) InitUIAutomation(hwnd, ctx);
 #else
-    (void)window; (void)ctx;
+    (void)platform; (void)window; (void)ctx;
 #endif
 }
 } // namespace
@@ -117,14 +92,13 @@ void AttachAccessibility(SDL_Window* window, UIContext* ctx) {
 
 AppWindow::AppWindow(const std::string& title, int width, int height,
                      WindowHandle parentWindow, void* parentGLContext,
-                     UIContext* parentCtx) {
+                     UIContext* parentCtx, PlatformBackend* platform)
+    : platform_(platform) {
     // brief 09 Fase 1: create the OS window with the flag matching the active
-    // backend (GL → SDL_WINDOW_OPENGL; Vulkan → SDL_WINDOW_VULKAN when SDL has a
-    // Vulkan driver, else a native-HWND-surface window). Same gate as the main window.
-    window_ = SDL_CreateWindow(title.c_str(), width, height,
-                                BackendWindowFlag() | SDL_WINDOW_RESIZABLE);
+    // backend (chosen internally by the platform). Same gate as the main window.
+    window_ = platform_->CreateWindowHandle(title.c_str(), width, height, UIWindow_Resizable);
     if (!window_) {
-        Log(LogLevel::Error, "AppWindow: Failed to create window: %s", SDL_GetError());
+        Log(LogLevel::Error, "AppWindow: Failed to create window");
         return;
     }
 
@@ -132,21 +106,22 @@ AppWindow::AppWindow(const std::string& title, int width, int height,
     UIContext* savedGlobalCtx = GetContext();
 
     // brief 08/09: share the parent's GPU device / GL context + resource pool.
-    // (GL: reuses the SAME SDL_GLContext; Vulkan: surface+swapchain over the shared
+    // (GL: reuses the SAME GL context; Vulkan: surface+swapchain over the shared
     // device.) CreateStandaloneContext makes the new context current as a side effect.
     ctx_ = CreateStandaloneContext(window_, parentCtx, &backend_);
+    if (ctx_) ctx_->platform = platform_; // brief 26: widgets reach OS services via GetPlatform(ctx)
     if (!ctx_) {
         Log(LogLevel::Error, "AppWindow: Failed to create shared context");
-        SDL_DestroyWindow(asWin(window_));
+        platform_->DestroyWindowHandle(window_);
         window_ = nullptr;
         SetCurrentContext(savedGlobalCtx);
-        if (parentGLContext) SDL_GL_MakeCurrent(asWin(parentWindow), asGL(parentGLContext));
+        platform_->MakeContextCurrent(parentWindow, parentGLContext);
         return;
     }
 
     // Remember the shared GL context (parent's) for GL resource cleanup later.
-    // Null on Vulkan (SDL_GL_GetCurrentContext returns null without a GL context).
-    sharedGLContext_ = SDL_GL_GetCurrentContext();
+    // Null on Vulkan (no current GL context).
+    sharedGLContext_ = platform_->GetCurrentGLContext();
 
     ctx_->renderer.SetViewport(width, height);
     // brief 18.4: IME is now claimed per text field on focus (see TextInput), not
@@ -157,7 +132,7 @@ AppWindow::AppWindow(const std::string& title, int width, int height,
 
     // Restore the parent window's GL context and global context so the main window
     // keeps rendering normally.
-    if (parentGLContext) SDL_GL_MakeCurrent(asWin(parentWindow), asGL(parentGLContext));
+    platform_->MakeContextCurrent(parentWindow, parentGLContext);
     SetCurrentContext(savedGlobalCtx);
 }
 
@@ -167,7 +142,7 @@ AppWindow::~AppWindow() {
     // window's own atlas textures, buffers) targets the right context. On Vulkan
     // sharedGLContext_ is null and DeleteTexture drains the device itself.
     if (window_ && sharedGLContext_) {
-        SDL_GL_MakeCurrent(asWin(window_), asGL(sharedGLContext_));
+        platform_->MakeContextCurrent(window_, sharedGLContext_);
     }
 
     if (ctx_) {
@@ -186,8 +161,8 @@ AppWindow::~AppWindow() {
     sharedGLContext_ = nullptr;
 
     if (window_) {
-        SDL_StopTextInput(asWin(window_));
-        SDL_DestroyWindow(asWin(window_));
+        platform_->StopTextInput(window_);
+        platform_->DestroyWindowHandle(window_);
         window_ = nullptr;
     }
 }
@@ -201,7 +176,7 @@ void AppWindow::routeEvent(const UIEvent& e) {
 
     if (e.type == UIEventType::Resize) {
         int w, h;
-        SDL_GetWindowSize(asWin(window_), &w, &h);
+        platform_->GetFramebufferSize(window_, w, h);
         ctx_->renderer.SetViewport(w, h);
         // Update DPI for this window
         updateDPIScale();
@@ -219,7 +194,7 @@ void AppWindow::routeEvent(const UIEvent& e) {
 
 void AppWindow::updateDPIScale() {
     if (!ctx_ || !window_) return;
-    float scale = SDL_GetWindowDisplayScale(asWin(window_));
+    float scale = platform_->GetDpiScale(window_);
     if (scale <= 0.0f) scale = 1.0f;
     ctx_->dpiScale = scale;
     ctx_->renderer.SetDPIScale(scale); // Phase A4: keep AA fringe at 1 physical pixel
@@ -250,7 +225,7 @@ void AppWindow::processFrame(float dt, WindowHandle parentWindow, void* parentGL
     ctx_->renderer.Present(); // GL: SwapWindow(window_); Vulkan: presented in EndFrame
 
     // Restore the parent's GL context + global context (GL only; null on Vulkan).
-    if (parentGLContext) SDL_GL_MakeCurrent(asWin(parentWindow), asGL(parentGLContext));
+    platform_->MakeContextCurrent(parentWindow, parentGLContext);
     SetCurrentContext(savedCtx);
 }
 
@@ -262,7 +237,7 @@ namespace {
 // -> cwd/assets/fonts/lucide.ttf -> $FLUENTUI_ASSETS_DIR/fonts/lucide.ttf.
 // Returns empty when nothing exists. We try every location even if some
 // std::filesystem queries throw (e.g. permissions) — soft-fail is the contract.
-std::string ResolveIconFontPath(const std::string& explicitPath) {
+std::string ResolveIconFontPath(const std::string& explicitPath, PlatformBackend* platform) {
     namespace fs = std::filesystem;
     auto tryFile = [](const fs::path& p) -> std::string {
         std::error_code ec;
@@ -279,8 +254,9 @@ std::string ResolveIconFontPath(const std::string& explicitPath) {
             explicitPath.c_str());
     }
 
-    // Executable directory. SDL3 returns a const char* owned by SDL — do NOT free.
-    if (const char* exeBase = SDL_GetBasePath()) {
+    // Executable directory (queried via the platform seam).
+    std::string exeBase = platform ? platform->GetBasePath() : std::string();
+    if (!exeBase.empty()) {
         fs::path candidate = fs::path(exeBase) / "assets" / "fonts" / "lucide.ttf";
         std::string hit = tryFile(candidate);
         if (!hit.empty()) return hit;
@@ -306,13 +282,14 @@ std::string ResolveIconFontPath(const std::string& explicitPath) {
     return {};
 }
 
-void AutoLoadIconFont(UIContext* ctx, const std::string& explicitPath, int pixelHeight) {
+void AutoLoadIconFont(UIContext* ctx, const std::string& explicitPath, int pixelHeight,
+                      PlatformBackend* platform) {
     if (!ctx) return;
     // The renderer auto-loads a default Lucide font during initialization, so
     // icons already work everywhere. Only act here when the user supplied an
     // explicit path (to override the default) or when nothing got loaded yet.
     if (explicitPath.empty() && ctx->renderer.IsIconFontLoaded()) return;
-    std::string path = ResolveIconFontPath(explicitPath);
+    std::string path = ResolveIconFontPath(explicitPath, platform);
     if (path.empty()) {
         Log(LogLevel::Warning,
             "FluentApp: lucide.ttf not found — icons will not be drawn. "
@@ -329,50 +306,49 @@ void AutoLoadIconFont(UIContext* ctx, const std::string& explicitPath, int pixel
 FluentApp::FluentApp(const std::string& title, const AppConfig& config)
     : targetFPS_(config.targetFPS), enableDPI_(config.enableDPI) {
 
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
-        Log(LogLevel::Error, "FluentApp: SDL_Init failed: %s", SDL_GetError());
+    // brief 25: create + initialize the default (SDL) platform. This initializes
+    // SDL; the platform owns SDL and shuts it down when destroyed (after everything
+    // else — see the member declaration order in FluentApp.h).
+    platform_ = CreateDefaultPlatform();
+    if (!platform_) {
+        Log(LogLevel::Error, "FluentApp: platform initialization failed");
         return;
     }
 
-    Uint64 flags = BackendWindowFlag();
-    if (config.resizable) flags |= SDL_WINDOW_RESIZABLE;
-    flags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    uint32_t flags = UIWindow_HighDPI;
+    if (config.resizable) flags |= UIWindow_Resizable;
     // brief 13: borderless chrome so the custom TitleBar() drives the window.
-    if (config.useCustomTitleBar) flags |= SDL_WINDOW_BORDERLESS;
+    if (config.useCustomTitleBar) flags |= UIWindow_Borderless;
 
-    window_ = SDL_CreateWindow(title.c_str(), config.width, config.height, flags);
+    window_ = platform_->CreateWindowHandle(title.c_str(), config.width, config.height, flags);
     if (!window_) {
-        Log(LogLevel::Error, "FluentApp: SDL_CreateWindow failed: %s", SDL_GetError());
-        SDL_Quit();
-        return;
+        Log(LogLevel::Error, "FluentApp: window creation failed");
+        return; // platform_ dtor tears down SDL
     }
 
     ctx_ = CreateContext(window_);
+    if (ctx_) ctx_->platform = platform_.get(); // brief 26: widgets reach OS services via GetPlatform(ctx)
     if (!ctx_) {
         Log(LogLevel::Error, "FluentApp: Failed to create UIContext");
-        SDL_DestroyWindow(asWin(window_));
-        SDL_Quit();
+        platform_->DestroyWindowHandle(window_);
         window_ = nullptr;
-        return;
+        return; // platform_ dtor tears down SDL
     }
 
     // Cache the main GL context for later restoration after secondary window ops
-    mainGLContext_ = SDL_GL_GetCurrentContext();
+    mainGLContext_ = platform_->GetCurrentGLContext();
 
     ctx_->style = config.darkMode ? GetDarkFluentStyle() : GetDefaultFluentStyle();
 
-    AutoLoadIconFont(ctx_, config.iconFontPath, config.iconFontSize);
+    AutoLoadIconFont(ctx_, config.iconFontPath, config.iconFontSize, platform_.get());
 
     // brief 13: install the hit-test so TitleBar() can drag/resize the window.
     if (config.useCustomTitleBar) {
-        if (!SDL_SetWindowHitTest(asWin(window_), CustomTitleBarHitTest, ctx_)) {
-            Log(LogLevel::Warning, "FluentApp: SDL_SetWindowHitTest failed: %s",
-                SDL_GetError());
-        }
+        platform_->SetWindowHitTest(window_, &CustomTitleBarHitTest, ctx_);
     }
 
     int w, h;
-    SDL_GetWindowSize(asWin(window_), &w, &h);
+    platform_->GetFramebufferSize(window_, w, h);
     ctx_->renderer.SetViewport(w, h);
 
     if (enableDPI_) {
@@ -380,13 +356,13 @@ FluentApp::FluentApp(const std::string& title, const AppConfig& config)
     }
 
     // brief 18.4: text input is started per focused field (see TextInput), not globally.
-    lastTime_ = SDL_GetTicks();
+    lastTime_ = platform_->GetTicksMs();
     initialized_ = true;
 
     // brief 18.3: attach the Windows UI Automation provider to the main window so
     // screen readers (Narrator/NVDA) see a FluentUI automation peer. Opt-in
     // (subclasses the window proc). No-op on non-Windows.
-    if (config.enableAccessibility) AttachAccessibility(asWin(window_), ctx_);
+    if (config.enableAccessibility) AttachAccessibility(platform_.get(), window_, ctx_);
 }
 
 FluentApp::FluentApp(const std::string& title, int width, int height)
@@ -401,11 +377,16 @@ FluentApp::FluentApp(WindowHandle externalWindow, void* externalGLContext,
         return;
     }
 
+    // brief 25: host-owned SDL — the engine already initialized SDL and owns the
+    // window/context. Use a platform that does NOT own SDL (no init/quit).
+    platform_ = CreateHostPlatform();
+
     window_ = externalWindow;
     mainGLContext_ = externalGLContext;
 
     // Pass the external GL context so the backend reuses it instead of creating a new one
     ctx_ = CreateContext(window_, mainGLContext_);
+    if (ctx_) ctx_->platform = platform_.get(); // brief 26: widgets reach OS services via GetPlatform(ctx)
     if (!ctx_) {
         Log(LogLevel::Error, "FluentApp: Failed to create UIContext");
         window_ = nullptr;
@@ -414,10 +395,10 @@ FluentApp::FluentApp(WindowHandle externalWindow, void* externalGLContext,
 
     ctx_->style = darkMode ? GetDarkFluentStyle() : GetDefaultFluentStyle();
 
-    AutoLoadIconFont(ctx_, /*explicitPath=*/std::string(), /*pixelHeight=*/16);
+    AutoLoadIconFont(ctx_, /*explicitPath=*/std::string(), /*pixelHeight=*/16, platform_.get());
 
     int w, h;
-    SDL_GetWindowSize(asWin(window_), &w, &h);
+    platform_->GetFramebufferSize(window_, w, h);
     ctx_->renderer.SetViewport(w, h);
 
     if (enableDPI_) {
@@ -425,7 +406,7 @@ FluentApp::FluentApp(WindowHandle externalWindow, void* externalGLContext,
     }
 
     // brief 18.4: text input is started per focused field (see TextInput), not globally.
-    lastTime_ = SDL_GetTicks();
+    lastTime_ = platform_->GetTicksMs();
     initialized_ = true;
 }
 
@@ -443,64 +424,21 @@ FluentApp::~FluentApp() {
     if (ctx_) DestroyContext();
 
     if (ownsWindow_) {
-        // We created the window and SDL — clean them up
-        if (window_) {
-            SDL_StopTextInput(asWin(window_));
-            SDL_DestroyWindow(asWin(window_));
+        // We created the window — destroy it via the platform. SDL shutdown runs when
+        // platform_ (declared first, destroyed last) is torn down after this body.
+        if (window_ && platform_) {
+            platform_->StopTextInput(window_);
+            platform_->DestroyWindowHandle(window_);
         }
-        SDL_Quit();
-    } else if (window_) {
+    } else if (window_ && platform_) {
         // External window: leave window/SDL alone but undo the StartTextInput
         // we issued in the external-window constructor.
-        SDL_StopTextInput(asWin(window_));
+        platform_->StopTextInput(window_);
     }
 }
 
 void FluentApp::root(std::function<void(UIBuilder&)> buildFn) {
     rootBuilder_ = std::move(buildFn);
-}
-
-// Helper: extract SDL window ID from any event type
-// brief 20 (F-c2): file-local (no longer a FluentApp member) — extracts the target
-// window id from a raw SDL event so the loop can route it. SDL stays in the .cpp.
-static SDL_WindowID getEventWindowID(const SDL_Event& e) {
-    switch (e.type) {
-        case SDL_EVENT_WINDOW_RESIZED:
-        case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
-        case SDL_EVENT_WINDOW_MOVED:
-        case SDL_EVENT_WINDOW_FOCUS_GAINED:
-        case SDL_EVENT_WINDOW_FOCUS_LOST:
-        case SDL_EVENT_WINDOW_SHOWN:
-        case SDL_EVENT_WINDOW_HIDDEN:
-        case SDL_EVENT_WINDOW_EXPOSED:
-        case SDL_EVENT_WINDOW_MINIMIZED:
-        case SDL_EVENT_WINDOW_MAXIMIZED:
-        case SDL_EVENT_WINDOW_RESTORED:
-        case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
-        case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
-            return e.window.windowID;
-        case SDL_EVENT_KEY_DOWN:
-        case SDL_EVENT_KEY_UP:
-            return e.key.windowID;
-        case SDL_EVENT_TEXT_INPUT:
-            return e.text.windowID;
-        case SDL_EVENT_MOUSE_MOTION:
-            return e.motion.windowID;
-        case SDL_EVENT_MOUSE_BUTTON_DOWN:
-        case SDL_EVENT_MOUSE_BUTTON_UP:
-            return e.button.windowID;
-        case SDL_EVENT_MOUSE_WHEEL:
-            return e.wheel.windowID;
-        case SDL_EVENT_DROP_BEGIN:
-        case SDL_EVENT_DROP_POSITION:
-        case SDL_EVENT_DROP_FILE:
-        case SDL_EVENT_DROP_TEXT:
-        case SDL_EVENT_DROP_COMPLETE:
-            // brief 18.7: route OS drops to the window they target (multi-window).
-            return e.drop.windowID;
-        default:
-            return 0;
-    }
 }
 
 void FluentApp::run() {
@@ -515,11 +453,9 @@ void FluentApp::run() {
     InitMotionFromOS();
     running_ = true;
 
-    SDL_WindowID mainWindowID = SDL_GetWindowID(asWin(window_));
-
     while (running_) {
         // Ensure main window GL context is current at frame start
-        if (mainGLContext_) SDL_GL_MakeCurrent(asWin(window_), asGL(mainGLContext_)); // GL-only; null on Vulkan
+        platform_->MakeContextCurrent(window_, mainGLContext_); // GL-only; no-op on Vulkan
         SetCurrentContext(ctx_);
 
         // Update main window input
@@ -532,28 +468,21 @@ void FluentApp::run() {
         // (hosts drive their own loop and never call run()), and skipped whenever an
         // animation is in flight so motion stays smooth.
         if (secondaryWindows_.empty() && !ctx_->AnyAnimationActive()) {
-            SDL_Event we;
-            if (SDL_WaitEventTimeout(&we, 100)) {
-                SDL_PushEvent(&we); // re-queue for the unified poll loop below
-            }
+            platform_->WaitEvents(100); // blocks up to 100ms, re-queues the wake event
         }
 
-        // Poll ALL events and route to correct window
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_EVENT_QUIT) {
+        // Poll ALL events (already translated to neutral UIEvents, tagged with the
+        // target WindowHandle) and route to the correct window.
+        UIEvent ui;
+        while (platform_->PollEvent(ui)) {
+            if (ui.type == UIEventType::Quit) {
                 running_ = false;
                 break;
             }
 
-            SDL_WindowID eventWinID = getEventWindowID(e);
+            WindowHandle target = ui.window;
 
-            // brief 20 (F-c2): translate to a neutral UIEvent; routing stays here in
-            // the SDL driver (by window id), but handlers speak UIEvent.
-            UIEvent ui;
-            if (!TranslateSDLEvent(e, ui)) continue; // untranslated SDL event → skip
-
-            if (eventWinID == mainWindowID || eventWinID == 0) {
+            if (target == window_ || target == nullptr) {
                 // Main window or global event
                 if (ui.type == UIEventType::WindowClose) {
                     // brief 13: custom TitleBar close button posts this for the main
@@ -562,7 +491,7 @@ void FluentApp::run() {
                     break;
                 } else if (ui.type == UIEventType::Resize) {
                     int w, h;
-                    SDL_GetWindowSize(asWin(window_), &w, &h);
+                    platform_->GetFramebufferSize(window_, w, h);
                     ctx_->renderer.SetViewport(w, h);
                     if (enableDPI_) updateDPIScale();
                 } else if (ui.type == UIEventType::DpiChange) {
@@ -572,10 +501,9 @@ void FluentApp::run() {
                     ctx_->input.ProcessEvent(ui);
                 }
             } else {
-                // Route to the correct secondary window
+                // Route to the correct secondary window (matched by WindowHandle)
                 for (auto& win : secondaryWindows_) {
-                    if (win->isOpen() && win->window() &&
-                        SDL_GetWindowID(asWin(win->window())) == eventWinID) {
+                    if (win->isOpen() && win->window() && win->window() == target) {
                         win->routeEvent(ui);
                         break;
                     }
@@ -590,7 +518,7 @@ void FluentApp::run() {
         // native dialogs or other OS events corrupting the cached size)
         {
             int w, h;
-            SDL_GetWindowSize(asWin(window_), &w, &h);
+            platform_->GetFramebufferSize(window_, w, h);
             Vec2 currentVP = ctx_->renderer.GetViewportSize();
             if (w > 0 && h > 0 && (static_cast<int>(currentVP.x) != w || static_cast<int>(currentVP.y) != h)) {
                 ctx_->renderer.SetViewport(w, h);
@@ -606,8 +534,21 @@ void FluentApp::run() {
         // brief 18.7: dispatch positioned OS drops to the context-level sinks.
         dispatchOSDrops(ctx_);
 
+        // Skip the frame while the main window is minimized (0x0 framebuffer): the
+        // backend (esp. Vulkan) stalls on a zero-extent swapchain. Events above were
+        // already processed (so a restore is picked up); idle briefly to avoid a busy
+        // spin. This is what makes the custom TitleBar's minimize button safe.
+        {
+            int fbw = 0, fbh = 0;
+            platform_->GetFramebufferSize(window_, fbw, fbh);
+            if (fbw <= 0 || fbh <= 0) {
+                platform_->Delay(16);
+                continue;
+            }
+        }
+
         // Main window frame
-        if (mainGLContext_) SDL_GL_MakeCurrent(asWin(window_), asGL(mainGLContext_)); // GL-only; null on Vulkan
+        platform_->MakeContextCurrent(window_, mainGLContext_); // GL-only; no-op on Vulkan
         SetCurrentContext(ctx_);
 
         NewFrame(dt);
@@ -660,16 +601,16 @@ void FluentApp::run() {
         }
 
         // Restore main GL context after secondary windows
-        if (mainGLContext_) SDL_GL_MakeCurrent(asWin(window_), asGL(mainGLContext_)); // GL-only; null on Vulkan
+        platform_->MakeContextCurrent(window_, mainGLContext_); // GL-only; no-op on Vulkan
         SetCurrentContext(ctx_);
 
         // FPS cap
         if (targetFPS_ > 0) {
-            uint64_t frameEnd = SDL_GetTicks();
+            uint64_t frameEnd = platform_->GetTicksMs();
             uint64_t elapsed = frameEnd - (lastTime_ - static_cast<uint64_t>(dt * 1000.0f));
             uint64_t targetMs = 1000 / static_cast<uint64_t>(targetFPS_);
             if (elapsed < targetMs) {
-                SDL_Delay(static_cast<Uint32>(targetMs - elapsed));
+                platform_->Delay(static_cast<uint32_t>(targetMs - elapsed));
             }
         }
     }
@@ -710,7 +651,7 @@ void FluentApp::enableDarkMode(bool dark) {
 }
 
 float FluentApp::computeDelta() {
-    uint64_t now = SDL_GetTicks();
+    uint64_t now = platform_->GetTicksMs();
     float dt = static_cast<float>(now - lastTime_) / 1000.0f;
     dt = std::min(dt, 0.1f);
     lastTime_ = now;
@@ -724,7 +665,7 @@ void FluentApp::processEvent(const UIEvent& e) {
 
     if (e.type == UIEventType::Resize) {
         int w, h;
-        SDL_GetWindowSize(asWin(window_), &w, &h);
+        platform_->GetFramebufferSize(window_, w, h);
         ctx_->renderer.SetViewport(w, h);
         if (enableDPI_) updateDPIScale();
     } else if (e.type == UIEventType::DpiChange) {
@@ -737,7 +678,7 @@ void FluentApp::processEvent(const UIEvent& e) {
 void FluentApp::beginFrame(float dt) {
     if (!initialized_ || !ctx_ || !window_) return;
 
-    if (mainGLContext_) SDL_GL_MakeCurrent(asWin(window_), asGL(mainGLContext_)); // GL-only; null on Vulkan
+    platform_->MakeContextCurrent(window_, mainGLContext_); // GL-only; no-op on Vulkan
     SetCurrentContext(ctx_);
 
     ctx_->input.Update(window_);
@@ -745,7 +686,7 @@ void FluentApp::beginFrame(float dt) {
     // Re-sync viewport
     {
         int w, h;
-        SDL_GetWindowSize(asWin(window_), &w, &h);
+        platform_->GetFramebufferSize(window_, w, h);
         Vec2 vp = ctx_->renderer.GetViewportSize();
         if (w > 0 && h > 0 && (static_cast<int>(vp.x) != w || static_cast<int>(vp.y) != h)) {
             ctx_->renderer.SetViewport(w, h);
@@ -780,7 +721,7 @@ void FluentApp::endFrame() {
 
     RenderDeferredDropdowns();
     Render();
-    // NOTE: does NOT call SDL_GL_SwapWindow — the caller's engine does that.
+    // NOTE: does NOT swap/present buffers — the caller's engine does that.
 }
 
 // --- Layout Serialization ---
@@ -801,14 +742,15 @@ bool FluentApp::loadLayout(const std::string& filepath) {
 
 AppWindow* FluentApp::createWindow(const std::string& title, int width, int height) {
     // Ensure main GL context is current before creating a child
-    if (mainGLContext_) SDL_GL_MakeCurrent(asWin(window_), asGL(mainGLContext_)); // GL-only; null on Vulkan
+    platform_->MakeContextCurrent(window_, mainGLContext_); // GL-only; no-op on Vulkan
     SetCurrentContext(ctx_);
 
-    std::unique_ptr<AppWindow> win(new AppWindow(title, width, height, window_, mainGLContext_, ctx_));
+    std::unique_ptr<AppWindow> win(
+        new AppWindow(title, width, height, window_, mainGLContext_, ctx_, platform_.get()));
     if (!win->window()) return nullptr;
 
     // Double-check main GL context is current after window creation
-    if (mainGLContext_) SDL_GL_MakeCurrent(asWin(window_), asGL(mainGLContext_)); // GL-only; null on Vulkan
+    platform_->MakeContextCurrent(window_, mainGLContext_); // GL-only; no-op on Vulkan
     SetCurrentContext(ctx_);
 
     AppWindow* ptr = win.get();
@@ -835,7 +777,7 @@ AppWindow* FluentApp::detachPanelToWindow(const std::string& panelId,
     AppWindow* win = createWindow(panelId, width, height);
     if (!win) return nullptr;
     if (win->window()) {
-        SDL_SetWindowPosition(asWin(win->window()), x, y);
+        platform_->SetWindowPosition(win->window(), x, y);
     }
     // Phase E5: tag the window with its panel id so it can be serialized later.
     win->panelId_ = panelId;
@@ -879,7 +821,8 @@ AppWindow* FluentApp::autoDetachPanel(const std::string& panelId, int screenX, i
     // be moved and dropped back onto a dock zone (re-dock handled in the main loop).
     AppWindow* rawWin = win;
     std::string pid = panelId;
-    win->root([rawWin, pid, content](UIBuilder& ui) {
+    PlatformBackend* plat = platform_.get();
+    win->root([rawWin, pid, content, plat](UIBuilder& ui) {
         UIContext* c = rawWin->context();
         if (!c) return;
         const float vw = c->renderer.GetViewportSize().x;
@@ -898,18 +841,18 @@ AppWindow* FluentApp::autoDetachPanel(const std::string& panelId, int screenX, i
         const bool pressed = c->input.IsMousePressed(0);
         const bool down = c->input.IsMouseDown(0);
         if (overTitle && pressed && rawWin->window_) {
-            float gx = 0, gy = 0; SDL_GetGlobalMouseState(&gx, &gy);
-            int wx = 0, wy = 0; SDL_GetWindowPosition(asWin(rawWin->window_), &wx, &wy);
+            float gx = 0, gy = 0; plat->GetGlobalMousePos(gx, gy);
+            int wx = 0, wy = 0; plat->GetWindowPosition(rawWin->window_, wx, wy);
             rawWin->titleDragging_ = true;
             rawWin->titleDragDX_ = static_cast<int>(gx) - wx;
             rawWin->titleDragDY_ = static_cast<int>(gy) - wy;
             c->desiredCursor = UIContext::CursorType::Hand;
         }
         if (rawWin->titleDragging_ && down && rawWin->window_) {
-            float gx = 0, gy = 0; SDL_GetGlobalMouseState(&gx, &gy);
-            SDL_SetWindowPosition(asWin(rawWin->window_),
-                                  static_cast<int>(gx) - rawWin->titleDragDX_,
-                                  static_cast<int>(gy) - rawWin->titleDragDY_);
+            float gx = 0, gy = 0; plat->GetGlobalMousePos(gx, gy);
+            plat->SetWindowPosition(rawWin->window_,
+                                    static_cast<int>(gx) - rawWin->titleDragDX_,
+                                    static_cast<int>(gy) - rawWin->titleDragDY_);
             c->desiredCursor = UIContext::CursorType::Hand;
         }
         if (!down) rawWin->titleDragging_ = false;
@@ -946,9 +889,9 @@ void FluentApp::updateFloatingRedock() {
     }
 
     if (dragging) {
-        float gx = 0, gy = 0; SDL_GetGlobalMouseState(&gx, &gy);
-        int mwx = 0, mwy = 0; SDL_GetWindowPosition(asWin(window_), &mwx, &mwy);
-        int mww = 0, mwh = 0; SDL_GetWindowSize(asWin(window_), &mww, &mwh);
+        float gx = 0, gy = 0; platform_->GetGlobalMousePos(gx, gy);
+        int mwx = 0, mwy = 0; platform_->GetWindowPosition(window_, mwx, mwy);
+        int mww = 0, mwh = 0; platform_->GetFramebufferSize(window_, mww, mwh);
         const float lx = gx - mwx, ly = gy - mwy;
 
         redockWin_ = dragging;
@@ -1002,8 +945,8 @@ std::vector<ViewportInfo> FluentApp::getViewports() const {
         ViewportInfo v;
         v.panelId = w->panelId();
         int x = 0, y = 0, ww = 0, hh = 0;
-        SDL_GetWindowPosition(asWin(w->window_), &x, &y);
-        SDL_GetWindowSize(asWin(w->window_), &ww, &hh);
+        platform_->GetWindowPosition(w->window_, x, y);
+        platform_->GetFramebufferSize(w->window_, ww, hh);
         v.x = x; v.y = y;
         v.width = ww > 0 ? ww : v.width;
         v.height = hh > 0 ? hh : v.height;
@@ -1036,8 +979,8 @@ void FluentApp::setDPIScale(float scale) {
 }
 
 void FluentApp::updateDPIScale() {
-    if (!ctx_ || !window_) return;
-    float scale = SDL_GetWindowDisplayScale(asWin(window_));
+    if (!ctx_ || !window_ || !platform_) return;
+    float scale = platform_->GetDpiScale(window_);
     if (scale <= 0.0f) scale = 1.0f;
     ctx_->dpiScale = scale;
     ctx_->renderer.SetDPIScale(scale); // Phase A4

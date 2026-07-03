@@ -1,8 +1,12 @@
-#include <SDL3/SDL.h>
 #include "core/Context.h"
 #include "core/Renderer.h"
+#include "core/NullPlatform.h" // brief 26: GetPlatform fallback (SDL-free)
+#ifdef FLUENTUI_HAS_GL
 #include "core/OpenGLBackend.h"
+#endif
+#ifdef FLUENTUI_HAS_VULKAN
 #include "core/VulkanBackend.h"
+#endif
 #include "core/SharedResourcePool.h"
 #include "Theme/FluentTheme.h"
 #include <cassert>
@@ -27,12 +31,26 @@ namespace FluentUI {
     RenderBackendType GetPreferredBackend() { return g_preferredBackend; }
 
     // Factory: instantiate the configured backend (not yet initialized).
+    // This is one of the two places (with CreateDefaultPlatform) that branch on the
+    // FLUENTUI_HAS_* feature defines (brief 26-B); a requested backend that wasn't
+    // compiled in falls back to whichever one is available.
     static RenderBackend* CreateBackendInstance() {
         switch (g_preferredBackend) {
+#ifdef FLUENTUI_HAS_VULKAN
             case RenderBackendType::Vulkan: return new VulkanBackend();
-            case RenderBackendType::OpenGL:
-            default:                        return new OpenGLBackend();
+#endif
+#ifdef FLUENTUI_HAS_GL
+            case RenderBackendType::OpenGL: return new OpenGLBackend();
+#endif
+            default: break;
         }
+#if defined(FLUENTUI_HAS_GL)
+        return new OpenGLBackend();
+#elif defined(FLUENTUI_HAS_VULKAN)
+        return new VulkanBackend();
+#else
+#   error "FluentUI: no render backend compiled (enable FLUENTUI_BACKEND_GL or FLUENTUI_BACKEND_VULKAN)"
+#endif
     }
 
     void SetLogCallback(LogCallback callback) {
@@ -285,26 +303,14 @@ namespace FluentUI {
         return *ws.drag;
     }
 
-    // Helper: initialize system cursors for a context
-    static void InitCursors(UIContext* ctx) {
-        ctx->systemCursors[static_cast<int>(UIContext::CursorType::Arrow)]     = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
-        ctx->systemCursors[static_cast<int>(UIContext::CursorType::IBeam)]     = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_TEXT);
-        ctx->systemCursors[static_cast<int>(UIContext::CursorType::Hand)]      = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
-        ctx->systemCursors[static_cast<int>(UIContext::CursorType::ResizeH)]   = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_EW_RESIZE);
-        ctx->systemCursors[static_cast<int>(UIContext::CursorType::ResizeV)]   = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NS_RESIZE);
-        ctx->systemCursors[static_cast<int>(UIContext::CursorType::ResizeNESW)]= SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NESW_RESIZE);
-        ctx->systemCursors[static_cast<int>(UIContext::CursorType::ResizeNWSE)]= SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NWSE_RESIZE);
-        ctx->cursorsInitialized = true;
-    }
-
-    // Helper: destroy system cursors for a context
-    static void DestroyCursors(UIContext* ctx) {
-        if (ctx->cursorsInitialized) {
-            for (auto& cursor : ctx->systemCursors) {
-                if (cursor) { SDL_DestroyCursor(static_cast<SDL_Cursor*>(cursor)); cursor = nullptr; }
-            }
-            ctx->cursorsInitialized = false;
-        }
+    // brief 26 de-SDL: platform accessor. System cursors now live in SDLPlatform;
+    // the context only tracks the desired/current CursorType and applies it via the
+    // platform at end of frame. The fallback NullPlatform is a shared, leak-free
+    // singleton so widgets/tests without an assigned platform never crash.
+    PlatformBackend* GetPlatform(UIContext* ctx) {
+        if (ctx && ctx->platform) return ctx->platform;
+        static NullPlatform s_fallback;
+        return &s_fallback;
     }
 
     UIContext* CreateContext(WindowHandle window, void* existingGLContext) {
@@ -352,9 +358,6 @@ namespace FluentUI {
         }
 
         g_ctx->style = GetDarkFluentStyle();
-
-        // Initialize system cursors
-        InitCursors(g_ctx);
 
         g_ctx->initialized = true;
         Log(LogLevel::Info, "FluentUI Context created successfully");
@@ -430,7 +433,6 @@ namespace FluentUI {
         }
 
         ctx->style = GetDarkFluentStyle();
-        InitCursors(ctx);
         ctx->initialized = true;
 
         ctx->backend = backend;
@@ -504,7 +506,6 @@ namespace FluentUI {
         }
 
         ctx->style = GetDarkFluentStyle();
-        InitCursors(ctx);
         ctx->initialized = true;
 
         if (outBackend) *outBackend = backend;
@@ -513,7 +514,6 @@ namespace FluentUI {
 
     void DestroyStandaloneContext(UIContext* ctx, RenderBackend* backend) {
         if (!ctx) return;
-        DestroyCursors(ctx);
         ctx->renderer.Shutdown();
         if (backend) {
             backend->Shutdown();
@@ -524,7 +524,6 @@ namespace FluentUI {
 
     void DestroyContext() {
         if (!g_ctx) return;
-        DestroyCursors(g_ctx);
         g_ctx->renderer.Shutdown();
         if (g_backend) {
             g_backend->Shutdown();
@@ -876,12 +875,9 @@ namespace FluentUI {
 
         g_ctx->renderer.EndFrame();
 
-        // Apply mouse cursor at end of frame
-        if (g_ctx->cursorsInitialized && g_ctx->desiredCursor != g_ctx->currentCursor) {
-            int idx = static_cast<int>(g_ctx->desiredCursor);
-            if (idx >= 0 && idx < 7 && g_ctx->systemCursors[idx]) {
-                SDL_SetCursor(static_cast<SDL_Cursor*>(g_ctx->systemCursors[idx]));
-            }
+        // Apply mouse cursor at end of frame (brief 26: via the platform seam).
+        if (g_ctx->desiredCursor != g_ctx->currentCursor) {
+            GetPlatform(g_ctx)->SetCursor(static_cast<int>(g_ctx->desiredCursor));
             g_ctx->currentCursor = g_ctx->desiredCursor;
         }
     }

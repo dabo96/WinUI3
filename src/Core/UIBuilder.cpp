@@ -1,7 +1,7 @@
-#include <SDL3/SDL.h>
 #include "core/UIBuilder.h"
 #include "UI/Widgets.h"
 #include "core/Context.h"
+#include "core/PlatformBackend.h" // brief 26: OS services via GetPlatform(ctx)
 #include "core/DockSystem.h"
 
 namespace FluentUI {
@@ -676,7 +676,7 @@ void UIBuilder::dockSpace(std::function<void(UIBuilder&)> content) {
                                         mx > viewport.x || my > viewport.y);
                 if (outsideViewport && drag.onPanelDragOut) {
                     float gx = 0.0f, gy = 0.0f;
-                    SDL_GetGlobalMouseState(&gx, &gy);
+                    GetPlatform(ctx)->GetGlobalMousePos(gx, gy);
                     std::string panelId = drag.panelId;
                     auto cb = drag.onPanelDragOut;
                     drag.Reset();

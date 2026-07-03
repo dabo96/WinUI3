@@ -1,4 +1,4 @@
-#include <SDL3/SDL.h>
+#include "core/PlatformBackend.h" // brief 26: IME/time via GetPlatform(ctx)
 #include "UI/Widgets.h"
 #include "UI/WidgetHelpers.h"
 #include "UI/Icons.h"
@@ -852,7 +852,7 @@ bool TextInput(const std::string &label, std::string *value, float width,
 
       // Multi-click detection
       auto &clickInfo = ts.clickInfo; // brief 22 (fase 4)
-      uint64_t now = SDL_GetTicks();
+      uint64_t now = GetPlatform(ctx)->GetTicksMs();
       const uint64_t MULTICLICK_MS = 350;
       const float MULTICLICK_DIST = 4.0f;
       float dx = mousePos.x - clickInfo.lastClickPos.x;
@@ -935,19 +935,17 @@ bool TextInput(const std::string &label, std::string *value, float width,
   //     composing below). Works for single- and multi-line fields alike.
   //   - on blur of the field that owned IME: SDL_StopTextInput.
   if (ctx->window) {
+    int ax = static_cast<int>(fieldPos.x), ay = static_cast<int>(fieldPos.y);
+    int aw = static_cast<int>(fieldSize.x), ah = static_cast<int>(fieldSize.y);
     if (hasFocus) {
       if (ctx->imeOwnerId != id) {
-        SDL_StartTextInput(static_cast<SDL_Window*>(ctx->window));
+        GetPlatform(ctx)->StartTextInput(ctx->window, ax, ay, aw, ah);
         ctx->imeOwnerId = id;
+      } else {
+        GetPlatform(ctx)->SetTextInputArea(ctx->window, ax, ay, aw, ah);
       }
-      SDL_Rect imeArea;
-      imeArea.x = static_cast<int>(fieldPos.x);
-      imeArea.y = static_cast<int>(fieldPos.y);
-      imeArea.w = static_cast<int>(fieldSize.x);
-      imeArea.h = static_cast<int>(fieldSize.y);
-      SDL_SetTextInputArea(static_cast<SDL_Window*>(ctx->window), &imeArea, 0);
     } else if (ctx->imeOwnerId == id) {
-      SDL_StopTextInput(static_cast<SDL_Window*>(ctx->window));
+      GetPlatform(ctx)->StopTextInput(ctx->window);
       ctx->imeOwnerId = 0;
     }
   }
@@ -994,21 +992,21 @@ bool TextInput(const std::string &label, std::string *value, float width,
     else if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::C)) {
       if (!password && HasSelection()) { // password: copy disabled
         std::string selected = textRef.substr(SelectionStart(), SelectionEnd() - SelectionStart());
-        ctx->input.SetClipboardText(selected);
+        GetPlatform(ctx)->SetClipboardText(selected.c_str());
       }
     }
     // Ctrl+X: Cut
     else if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::X)) {
       if (!password && HasSelection()) { // password: cut disabled
         std::string selected = textRef.substr(SelectionStart(), SelectionEnd() - SelectionStart());
-        ctx->input.SetClipboardText(selected);
+        GetPlatform(ctx)->SetClipboardText(selected.c_str());
         DeleteSelection();
         valueChanged = true;
       }
     }
     // Ctrl+V: Paste
     else if (ctrlHeld && ctx->input.IsKeyPressed(UIKey::V)) {
-      std::string clipStr = ctx->input.GetClipboardText();
+      std::string clipStr = GetPlatform(ctx)->GetClipboardText();
       if (!clipStr.empty()) {
         if (HasSelection()) {
           DeleteSelection();
@@ -1553,13 +1551,11 @@ bool TextInput(const std::string &label, std::string *value, float width,
         ctx->renderer.DrawRectFilled(Vec2(compPos.x, underlineY),
                                      Vec2(compSize.x, 1.0f), accentState.normal, 0.0f);
 
-        // Set text input area for IME candidate window positioning
-        SDL_Rect inputArea;
-        inputArea.x = static_cast<int>(caretX);
-        inputArea.y = static_cast<int>(fieldPos.y);
-        inputArea.w = static_cast<int>(compSize.x);
-        inputArea.h = static_cast<int>(fieldSize.y);
-        SDL_SetTextInputArea(static_cast<SDL_Window*>(ctx->window), &inputArea, 0);
+        // Set text input area for IME candidate window positioning (refined to caret).
+        GetPlatform(ctx)->SetTextInputArea(ctx->window, static_cast<int>(caretX),
+                                           static_cast<int>(fieldPos.y),
+                                           static_cast<int>(compSize.x),
+                                           static_cast<int>(fieldSize.y));
       } else {
         // Normal caret blink
         float blinkAlpha = 0.5f + 0.5f * std::sin(ctx->frame * 0.1f);
@@ -1762,7 +1758,7 @@ bool DragFloat(const std::string& label, float* value, float speed,
   // --- Normal / Dragging mode ---
   else {
     if (hoverField && leftPressed) {
-      uint64_t now = SDL_GetTicks();
+      uint64_t now = GetPlatform(ctx)->GetTicksMs();
       uint64_t elapsed = now - state.lastClickTime;
       state.lastClickTime = now;
 
@@ -2085,7 +2081,7 @@ bool DragFloat3(const std::string& label, float values[3], float speed,
     // --- Normal / Dragging ---
     else {
       if (hoverField && leftPressed) {
-        uint64_t now = SDL_GetTicks();
+        uint64_t now = GetPlatform(ctx)->GetTicksMs();
         uint64_t elapsed = now - state.lastClickTime;
         state.lastClickTime = now;
 
@@ -3287,7 +3283,7 @@ void SelectableText(const std::string &id, const std::string &text,
       focused = true;
       size_t hit = hitTest(mousePos);
       auto &ci = ctx->GetTextState(wid).clickInfo; // brief 22 (fase 4)
-      uint64_t now = SDL_GetTicks();
+      uint64_t now = GetPlatform(ctx)->GetTicksMs();
       const uint64_t MS = 350;
       const float DIST = 4.0f;
       bool multi = (now - ci.lastClickTime) <= MS &&
@@ -3334,7 +3330,7 @@ void SelectableText(const std::string &id, const std::string &text,
                             ctx->input.IsKeyPressed(UIKey::Insert))) {
       if (hasSel) {
         size_t s = std::min(anchor, caret), e = std::max(anchor, caret);
-        ctx->input.SetClipboardText(text.substr(s, e - s));
+        GetPlatform(ctx)->SetClipboardText(text.substr(s, e - s).c_str());
       }
     } else if (ctx->input.IsKeyPressed(UIKey::Left)) {
       if (!shiftHeld && hasSel) {

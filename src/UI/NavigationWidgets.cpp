@@ -7,7 +7,7 @@
 #include "Theme/FluentTheme.h"
 #include "core/Context.h"
 #include "core/Renderer.h"
-#include <SDL3/SDL.h>
+#include "core/PlatformBackend.h" // brief 26: window ops via GetPlatform(ctx)
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -523,9 +523,7 @@ TitleBarResult TitleBar(const std::string& id, const std::string& title,
   float fullW = ctx->renderer.GetViewportSize().x;
   Vec2 barSize(std::max(1.0f, fullW - barPos.x), barH);
 
-  SDL_Window* win = static_cast<SDL_Window*>(ctx->window);
-  bool maximized =
-      win && (SDL_GetWindowFlags(win) & SDL_WINDOW_MAXIMIZED) != 0;
+  bool maximized = GetPlatform(ctx)->IsWindowMaximized(ctx->window);
 
   // Fondo (cabecera ligeramente distinta del cuerpo).
   Color bg = AdjustContainerBackground(ctx->style.backgroundColor,
@@ -578,27 +576,18 @@ TitleBarResult TitleBar(const std::string& id, const std::string& title,
 
   if (capBtn(capX, 0)) {
     res.minimizePressed = true;
-    if (win)
-      SDL_MinimizeWindow(win);
+    GetPlatform(ctx)->MinimizeWindow(ctx->window);
   }
   if (capBtn(capX + capBtnW, 1)) {
     res.maximizePressed = true;
-    if (win) {
-      if (maximized)
-        SDL_RestoreWindow(win);
-      else
-        SDL_MaximizeWindow(win);
-    }
+    if (maximized)
+      GetPlatform(ctx)->RestoreWindow(ctx->window);
+    else
+      GetPlatform(ctx)->MaximizeWindow(ctx->window);
   }
   if (capBtn(capX + capBtnW * 2.0f, 2)) {
     res.closePressed = true;
-    if (win) {
-      SDL_Event ev;
-      SDL_zero(ev);
-      ev.type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
-      ev.window.windowID = SDL_GetWindowID(win);
-      SDL_PushEvent(&ev);
-    }
+    GetPlatform(ctx)->RequestWindowClose(ctx->window);
   }
 
   // Contenido central opcional (búsqueda / CommandBar). Región fija centrada y

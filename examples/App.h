@@ -4,6 +4,7 @@
 #include "FluentGUI.h"
 #include <vector>
 #include <string>
+#include <memory>
 
 class App
 {
@@ -31,6 +32,10 @@ private:
 
     SDL_Window* window;
     FluentUI::UIContext* ctx;
+    // brief 26: this example owns its SDL loop, so it plugs a *host* SDLPlatform
+    // (does NOT own SDL init/quit) into the context. Widgets reach OS services
+    // (cursor, clipboard, IME, OpenURL, window ops) through it via GetPlatform(ctx).
+    std::unique_ptr<FluentUI::PlatformBackend> platform_;
     uint64_t lastTime;
     bool m_useVulkan = false;  // chosen from GetPreferredBackend() at construction
 
@@ -104,6 +109,7 @@ private:
     int m_ratingHalf = 5; // half-star units (0..2*maxStars)
     bool m_contentDialogOpen = false;
     std::string m_dialogName;
+    bool m_teachingTipOpen = false;
 
     // --- Feedback tab state (brief 15) ---
     int m_toastCounter = 0;

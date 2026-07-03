@@ -1,4 +1,4 @@
-#include <SDL3/SDL.h>
+#include "core/PlatformBackend.h" // brief 26: OS services via GetPlatform(ctx)
 #include "UI/Widgets.h"
 #include "UI/WidgetHelpers.h"
 #include "Theme/FluentTheme.h"
@@ -764,7 +764,7 @@ bool HyperlinkButton(const std::string &text, const std::string &url,
   }
 
   if (activated && !url.empty()) {
-    SDL_OpenURL(url.c_str());
+    GetPlatform(ctx)->OpenURL(url.c_str());
   }
 
   ctx->lastItemPos = pos;

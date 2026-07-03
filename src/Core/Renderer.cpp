@@ -3,7 +3,9 @@
 #include "core/SharedResourcePool.h"
 #include "core/Elevation.h"
 #include "Theme/Style.h"
-#include <SDL3/SDL.h>
+#ifdef FLUENTUI_HAS_SDL
+#include <SDL3/SDL.h> // only for SDL_GetBasePath extra asset root; gated for embedded builds
+#endif
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -42,6 +44,9 @@ namespace FluentUI {
     {
         std::vector<std::filesystem::path> roots;
         try { PushUniquePath(roots, std::filesystem::current_path()); } catch (...) {}
+#ifdef FLUENTUI_HAS_SDL
+        // Extra roots from the executable directory upward (owned/SDL builds). Embedded
+        // hosts (no SDL) rely on current_path()/explicitly-set asset paths.
         if (const char* base = SDL_GetBasePath())
         {
             std::filesystem::path basePath(base);
@@ -54,6 +59,7 @@ namespace FluentUI {
                 current = parent;
             }
         }
+#endif
         return roots;
     }
 

@@ -55,8 +55,14 @@ App::App(const char *titulo)
         return;
     }
 
+    // brief 26: plug a host SDL platform so widgets route OS services (cursor,
+    // clipboard, IME, OpenURL, window min/max/close) through the platform seam.
+    // Host mode = does NOT own SDL_Init/Quit (this example does that itself).
+    platform_ = CreateHostPlatform();
+    ctx->platform = platform_.get();
+
     ctx->style = GetDarkFluentStyle();
-    
+
     // IMPORTANTE: Sincronizar viewport inicial
     int w, h;
     SDL_GetWindowSize(window, &w, &h);
@@ -112,6 +118,7 @@ App::App(const char *titulo)
 
 App::~App() {
     DestroyContext();
+    platform_.reset(); // free the host platform's cursor cache while SDL is still up
     SDL_StopTextInput(window);
     SDL_DestroyWindow(window);
     SDL_Quit();
@@ -136,7 +143,8 @@ void App::Run() {
         ctx->input.Update(window);
 
         while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_EVENT_QUIT)
+            if (e.type == SDL_EVENT_QUIT ||
+                e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) // TitleBar close button
                 running = false;
             else if (e.type == SDL_EVENT_WINDOW_RESIZED) {
                 int width, height;
@@ -144,6 +152,13 @@ void App::Run() {
                 ctx->renderer.SetViewport(width, height);
             } else
                 ProcessSDLEvent(ctx->input, e);
+        }
+
+        // Skip rendering while minimized: the framebuffer is 0x0 and the backend
+        // (esp. Vulkan) stalls on a zero-extent swapchain. Idle until restored.
+        if (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) {
+            SDL_Delay(16);
+            continue;
         }
 
         // Animate progress bar
@@ -1024,11 +1039,13 @@ void App::BuildControls() {
     // --- TeachingTip ---
     Label("TeachingTip", std::nullopt, TypographyStyle::Subtitle);
     Spacing(4);
-    Button("Feature button", Icons::Lightbulb);
+    if (Button("Feature button", Icons::Lightbulb)) {
+        m_teachingTipOpen = true; // dispara la coachmark a demanda
+    }
     Rect tipTarget(ctx->lastItemPos, ctx->lastItemSize);
     if (TeachingTip("demo_teaching_tip", tipTarget, "New feature!",
                     "This button now does something amazing. Try it out.",
-                    "Got it")) {
+                    "Try it", &m_teachingTipOpen)) {
         m_statusText = "TeachingTip acknowledged";
     }
 
@@ -1312,6 +1329,11 @@ void App::BuildLayout() {
 // --- Tab 10: Navigation (brief 13) ------------------------------------------
 
 void App::BuildNavigation() {
+    // NOTA: TitleBar (window chrome) es el único widget sin ejemplo aquí porque es
+    // chrome de ventana completa (barra de ancho total + caption buttons pegados al
+    // borde derecho + drag/resize por hit-test), no un widget in-content. Su demo
+    // real está en main.cpp con RUN_TITLEBAR_DEMO=1 (FluentApp borderless).
+
     // Sidebar navigation items with sub-items and a badge.
     std::vector<NavItem> navItems = {
         {"home",     "Home",     Icons::Home,     0, {}},

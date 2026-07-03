@@ -1,5 +1,9 @@
 #include "core/FileDialog.h"
-#include <SDL3/SDL.h>       // full SDL: the header no longer pulls it in (de-SDL'd)
+// brief 26: native file dialogs are provided by SDL. In the embedded build
+// (PLATFORM_SDL=OFF) they are unavailable; the stubs at the bottom of this file
+// report every request as cancelled so callers degrade gracefully.
+#ifdef FLUENTUI_HAS_SDL
+#include <SDL3/SDL.h>
 #include <SDL3/SDL_dialog.h>
 
 namespace FluentUI {
@@ -129,3 +133,26 @@ void ShowOpenFolderDialog(WindowHandle window,
 }
 
 } // namespace FluentUI
+
+#else // !FLUENTUI_HAS_SDL — embedded build: native dialogs unavailable.
+
+namespace FluentUI {
+
+// Report every request as cancelled (empty selection, filterIndex -1). An embedded
+// host that needs file pickers provides its own via the engine's platform layer.
+void ShowOpenFileDialog(WindowHandle, const std::vector<FileFilter>&,
+                        const std::string&, bool, FileDialogCallback callback) {
+    if (callback) callback({}, -1);
+}
+void ShowSaveFileDialog(WindowHandle, const std::vector<FileFilter>&,
+                        const std::string&, FileDialogCallback callback) {
+    if (callback) callback({}, -1);
+}
+void ShowOpenFolderDialog(WindowHandle, const std::string&, bool,
+                          FileDialogCallback callback) {
+    if (callback) callback({}, -1);
+}
+
+} // namespace FluentUI
+
+#endif // FLUENTUI_HAS_SDL

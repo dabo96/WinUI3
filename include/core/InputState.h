@@ -73,11 +73,9 @@ public:
   float DropY() const { return dropY; }
   bool OSDragActive() const { return osDragActive; }
 
-  // OS clipboard helpers (platform-centralized). UTF-8 in/out.
-  // Brief 18.1: reusable by TextInput/SelectableText/PasswordBox/NumberBox.
-  void SetClipboardText(const std::string& utf8);  // the OS clipboard write
-  std::string GetClipboardText();                   // the OS clipboard read (frees with the allocator)
-  bool HasClipboardText();                           // the OS clipboard query
+  // brief 26: OS clipboard now routes through PlatformBackend (GetPlatform(ctx)->
+  // Set/GetClipboardText) at the call sites, so the SDL clipboard code no longer
+  // lives in InputState.
 
 public:
   bool anyKeyPressed = false;

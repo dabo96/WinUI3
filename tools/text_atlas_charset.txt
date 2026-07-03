@@ -1,0 +1,11 @@
+# Charset del atlas MSDF de texto (Segoe UI) -> assets/fonts/atlas.{json,png}
+# Formato de msdf-atlas-gen: codepoints decimales o hex (0x), rangos [ini, fin] inclusivos,
+# separados por comas o espacios. NO uses '#' inline: aqui las lineas que empiezan por '#'
+# son comentarios propios (msdf-atlas-gen ignora lineas sin entradas validas, pero por
+# seguridad el script pasa SOLO la ultima linea con las entradas).
+#
+# Cobertura:
+#   0x20-0x7E  ASCII imprimible completo (incluye  " # $ % & ' : ; @ \ ^ _ ` { | } ~ )
+#   0xA0-0xFF  Latin-1 Supplement completo (acentos ES/PT/FR/DE, ¿ ¡ ç « » ° º ª ...)
+#   tipograficos: – — ‘ ’ “ ” • … €
+[0x20, 0x7E], [0xA0, 0xFF], 0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2026, 0x20AC

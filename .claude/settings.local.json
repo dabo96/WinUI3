@@ -115,7 +115,14 @@
       "Bash(echo \"inc-exit=$?\")",
       "Bash(echo \"e1=$?\")",
       "Bash(echo \"e2=$?\")",
-      "Bash(echo \"acceptance-exit=$?\")"
+      "Bash(echo \"acceptance-exit=$?\")",
+      "Bash(curl -sL --max-time 20 \"https://api.github.com/repos/Chlumsky/msdf-atlas-gen/releases/latest\" -o rel.json)",
+      "Bash(cp C:/Users/dbc_1/AppData/Local/Temp/claude/C--Users-dbc-1-Documents-WinUI3/fe434c4c-c1a2-445c-ab75-7f04daca8b12/scratchpad/atlas_new.json C:/Users/dbc_1/Documents/WinUI3/assets/fonts/atlas.json)",
+      "Bash(cp C:/Users/dbc_1/AppData/Local/Temp/claude/C--Users-dbc-1-Documents-WinUI3/fe434c4c-c1a2-445c-ab75-7f04daca8b12/scratchpad/atlas_new.png C:/Users/dbc_1/Documents/WinUI3/assets/fonts/atlas.png)",
+      "Bash(export MSDF_ATLAS_GEN=\"C:/Users/dbc_1/AppData/Local/Temp/claude/C--Users-dbc-1-Documents-WinUI3/fe434c4c-c1a2-445c-ab75-7f04daca8b12/scratchpad/mag/msdf-atlas-gen/msdf-atlas-gen.exe\")",
+      "Bash(chmod +x tools/gen_text_atlas.sh)",
+      "Bash(bash tools/gen_text_atlas.sh)",
+      "Bash(echo \"=== exit check \\($?\\) ===\")"
     ],
     "deny": [
       "Bash(git push:*)",

@@ -504,9 +504,14 @@ void OpenGLBackend::DrawBatch(ShaderType type, const RenderVertex* vertices, siz
             lastTextColor = textColor;
         }
     }
-    if (uniforms->pxRange != -1 && lastPxRange != 4.0f) {
-        glUniform1f(uniforms->pxRange, 4.0f);
-        lastPxRange = 4.0f;
+    // El atlas MSDF de texto se horneo con distanceRange=12. Esta fragmento calcula la
+    // franja de AA con dot() sobre los 2 ejes SIN el factor 0.5 del calculo canonico de
+    // msdfgen -> es 2x mas agresivo, asi que el match correcto aqui es 12*0.5 = 6 (no 12,
+    // que se pasa de nitido y sale dentado). Solo el texto MSDF; formas SDF e iconos = 4.
+    float wantPxRange = (type == ShaderType::MSDF) ? 5.0f : 4.0f;
+    if (uniforms->pxRange != -1 && lastPxRange != wantPxRange) {
+        glUniform1f(uniforms->pxRange, wantPxRange);
+        lastPxRange = wantPxRange;
     }
 
     if (textureHandle) {

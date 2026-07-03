@@ -5,10 +5,7 @@ add_library(FluentUI
     Core/FontMSDF.cpp
     Core/MSDFGenerator.cpp
     Core/InputState.cpp
-    Core/OpenGLBackend.cpp
-    Core/VulkanBackend.cpp
     Core/UIBuilder.cpp
-    Core/FluentApp.cpp
     Core/DockSystem.cpp
     Core/LayoutSerializer.cpp
     Core/FontManager.cpp
@@ -37,5 +34,18 @@ add_library(FluentUI
     Demo/ItemPicker.cpp
     Theme/FluentTheme.cpp
     Theme/Material.cpp)
+
+# Conditional sources (brief 26-B): each backend / the SDL platform compiles only
+# when enabled. The embedded profile (PLATFORM_SDL=OFF) drops the owned driver
+# (FluentApp) and SDLPlatform entirely; the host drives CreateStandaloneContext.
+if(FLUENTUI_BACKEND_GL)
+    target_sources(FluentUI PRIVATE Core/OpenGLBackend.cpp)
+endif()
+if(FLUENTUI_BACKEND_VULKAN)
+    target_sources(FluentUI PRIVATE Core/VulkanBackend.cpp)
+endif()
+if(FLUENTUI_PLATFORM_SDL)
+    target_sources(FluentUI PRIVATE Core/SDLPlatform.cpp Core/FluentApp.cpp)
+endif()
 
 # Include dirs are set in the parent CMakeLists.txt via BUILD_INTERFACE/INSTALL_INTERFACE

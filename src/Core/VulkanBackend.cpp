@@ -11,8 +11,12 @@
 #include "core/VulkanBackend.h"
 #include "core/EmbeddedShadersVulkan.h"
 #include "core/Context.h"
+#ifdef FLUENTUI_HAS_SDL
+// SDL is used ONLY by the standalone (owned-window) device/surface path. Embedded
+// hosts (SDL=OFF) drive Vulkan through an external device/surface (VulkanSharedContext).
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
+#endif
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
@@ -66,7 +70,7 @@ VulkanBackend::~VulkanBackend() { Shutdown(); }
 // Init
 // ───────────────────────────────────────────────────────────────────────────
 bool VulkanBackend::Init(void* windowHandle, void* existingContext) {
-    window = static_cast<SDL_Window*>(windowHandle);
+    window = windowHandle; // opaque native window handle (SDL_Window* or HWND)
 
     if (existingContext) {
         auto* shared0 = static_cast<VulkanSharedContext*>(existingContext);
@@ -291,6 +295,7 @@ bool VulkanBackend::CreateInstanceAndDevice() {
     // only if it succeeds; otherwise go straight to the native Win32 path.
     bool useSdlSurface = false;
     std::vector<const char*> exts;
+#ifdef FLUENTUI_HAS_SDL
     if (SDL_Vulkan_LoadLibrary(nullptr)) {
         uint32_t sdlExtCount = 0;
         const char* const* sdlExts = SDL_Vulkan_GetInstanceExtensions(&sdlExtCount);
@@ -299,6 +304,7 @@ bool VulkanBackend::CreateInstanceAndDevice() {
             useSdlSurface = true;
         }
     }
+#endif
     if (!useSdlSurface) {
 #if defined(_WIN32)
         exts = { VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME };
@@ -353,6 +359,7 @@ bool VulkanBackend::CreateInstanceAndDevice() {
 // support, otherwise the native Win32 path. Used by both the standalone device
 // path and the shared-device secondary-window path (brief 08 Part B).
 bool VulkanBackend::CreateSurfaceForWindow() {
+#ifdef FLUENTUI_HAS_SDL
     bool useSdlSurface = false;
     if (SDL_Vulkan_LoadLibrary(nullptr)) {
         uint32_t sdlExtCount = 0;
@@ -367,9 +374,15 @@ bool VulkanBackend::CreateSurfaceForWindow() {
         }
         return true;
     }
+#endif
 #if defined(_WIN32)
+#ifdef FLUENTUI_HAS_SDL
     HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(
         SDL_GetWindowProperties(static_cast<SDL_Window*>(window)), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+#else
+    // No SDL: a native host passes the HWND directly as the opaque window handle.
+    HWND hwnd = static_cast<HWND>(window);
+#endif
     if (!hwnd) {
         Log(LogLevel::Error, "Vulkan: could not obtain HWND for native surface");
         return false;
@@ -1612,7 +1625,10 @@ void VulkanBackend::RecordDraw(ShaderType type, const RenderVertex* vertices, si
         pc.textColor[2] = textColor.b;
     }
     pc.textColor[3] = textColor.a;
-    pc.pxRange = 4.0f;
+    // El atlas MSDF se horneo con distanceRange=12, pero msdf.frag calcula la franja de AA
+    // con dot() sobre los 2 ejes SIN el factor 0.5 canonico -> es 2x mas agresivo, asi que
+    // el match correcto es 12*0.5 = 6 (12 se pasa y sale dentado). Solo el texto MSDF.
+    pc.pxRange = (type == ShaderType::MSDF) ? 5.0f : 4.0f;
     vkCmdPushConstants(currentCmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(pc), &pc);
 
