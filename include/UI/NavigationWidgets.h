@@ -9,6 +9,7 @@
 // UI/Widgets.h con una sola línea (la TitleBar se entrelaza además con FluentApp,
 // que registra el hit-test cuando AppConfig::useCustomTitleBar = true).
 #include "Math/Vec2.h"
+#include "Math/Rect.h"
 #include <string>
 #include <vector>
 #include <functional>
@@ -95,16 +96,46 @@ struct TitleBarResult {
     bool closePressed = false;
 };
 
-/// Barra de título custom: icono + título a la izquierda, `centerContent` opcional
-/// al centro y caption buttons (minimizar/maximizar/cerrar) a la derecha. Publica
-/// las zonas draggable / no-draggable en el UIContext para que el callback de
-/// hit-test (registrado por FluentApp con AppConfig::useCustomTitleBar) mueva/
-/// redimensione la ventana sin que los controles inicien arrastre.
+/// Configuración de la barra (brief 30). Todo opcional con valores por defecto.
+struct TitleBarConfig {
+    float height        = 40.0f;  ///< Alto de la barra (px lógicos; se escala por DPI).
+    bool  captionButtons = true;  ///< Dibuja min/max/cerrar a la derecha (auto-excluidos del arrastre).
+    float resizeBorder  = 6.0f;   ///< Grosor de los bordes de redimensión (0 al maximizar).
+};
+
+/// Barra de título custom / window chrome (brief 13 + 30). **Una sola función**, el
+/// 4º parámetro decide el modo:
+///   - `content == nullptr` (por defecto): barra básica → icono + `title` a la
+///     izquierda y caption buttons (min/max/cerrar) a la derecha.
+///   - `content != nullptr`: **tú** compones la barra dibujando widgets normales
+///     dentro del callback (usa IconLabel/Label para el título, `TitleBarSpacer()`
+///     para alinear, y cualquier control). `title`/`icon` se ignoran en este modo.
+/// En AMBOS modos aparecen los caption buttons salvo que `cfg.captionButtons=false`.
+///
+/// Zonas de arrastre automáticas: todo el ancho es arrastrable EXCEPTO el bbox de
+/// los widgets interactivos (los que pasan por focusableWidgets) y los caption
+/// buttons; labels, iconos y huecos entre widgets quedan arrastrables. Overrides
+/// manuales con TitleBarDragExclude / TitleBarDragRegion.
+///
 /// brief 26: Min/Max/Restore y Close actúan por el puerto de plataforma
-/// (GetPlatform(ctx)->MinimizeWindow/... / RequestWindowClose), no vía SDL directo.
-/// Reutilizable en cualquier ventana (incl. flotantes del brief 09).
+/// (GetPlatform(ctx)->MinimizeWindow/... / RequestWindowClose). Doble-clic para
+/// maximizar lo aporta el SO (Draggable → HTCAPTION). Reutilizable en cualquier
+/// ventana (incl. flotantes del brief 09).
 TitleBarResult TitleBar(const std::string& id, const std::string& title,
                         uint32_t icon = 0,
-                        std::function<void()> centerContent = nullptr);
+                        std::function<void()> content = nullptr,
+                        const TitleBarConfig& cfg = {});
+
+// ─── Helpers para usar DENTRO del `content` de TitleBar() ─────────────────────
+/// Espacio flexible: reparte el hueco libre entre los spacers y empuja el resto
+/// del contenido hacia la derecha (patrón izq | spacer | centro | spacer | der).
+/// `minWidth` (px lógicos) es el ancho mínimo garantizado. Fuera de una TitleBar
+/// no hace nada.
+void TitleBarSpacer(float minWidth = 0.0f);
+/// Fuerza NO-arrastre en `r` (para contenido interactivo custom que no publica
+/// bbox vía SetLastItem). Coordenadas de viewport.
+void TitleBarDragExclude(const Rect& r);
+/// Fuerza arrastre en `r`, anulando cualquier exclusión que lo solape.
+void TitleBarDragRegion(const Rect& r);
 
 } // namespace FluentUI

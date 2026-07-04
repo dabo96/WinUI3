@@ -51,8 +51,11 @@ UIHitTest CustomTitleBarHitTest(int px, int py, void* user) {
     }
 
     // Draggable caption strip, minus the interactive exclusions (caption buttons,
-    // center content) which must stay clickable.
+    // interactive content) which must stay clickable. forcedDrag rects win over
+    // exclusions (brief 30: TitleBarDragRegion re-enables drag over content).
     if (tb.active && tb.caption.Contains(Vec2(fx, fy))) {
+        for (const Rect& fd : tb.forcedDrag)
+            if (fd.Contains(Vec2(fx, fy))) return UIHitTest::Draggable;
         for (const Rect& ex : tb.exclusions)
             if (ex.Contains(Vec2(fx, fy))) return UIHitTest::Normal;
         return UIHitTest::Draggable;

@@ -38,6 +38,7 @@ struct TitleBarHitRegions {
   bool active = false;          ///< Un TitleBar() se construyó este frame.
   Rect caption;                 ///< Rect arrastrable (mover ventana).
   std::vector<Rect> exclusions; ///< Sub-rects NO arrastrables dentro del caption.
+  std::vector<Rect> forcedDrag; ///< Sub-rects que fuerzan arrastre (anulan una exclusión).
   float resizeBorder = 6.0f;    ///< Grosor (px) de los bordes de redimensión.
   bool resizable = true;        ///< Habilita zonas RESIZE_* en los bordes.
 };
@@ -1002,6 +1003,25 @@ struct UIContext {
   // de the platform hit-test (ver TitleBarHitRegions arriba). active se limpia en
   // NewFrame y lo re-fija el widget cada frame.
   TitleBarHitRegions titleBarHit;
+
+  // brief 30: captura activa solo dentro del `content` de una TitleBar componible.
+  // SetLastItem() apila aquí el bbox de cada widget cuando active==true; al cerrar,
+  // TitleBar() cruza esos ids con focusableWidgets[focusStart..] para excluir del
+  // arrastre solo los interactivos (labels/iconos y huecos quedan arrastrables).
+  struct TitleBarCapture {
+    bool active = false;
+    uint32_t id = 0;                               ///< id de la titlebar (clave del cache de spacers).
+    size_t focusStart = 0;                         ///< focusableWidgets.size() al abrir el content.
+    std::vector<std::pair<uint32_t, Rect>> items;  ///< (id, bbox) de cada SetLastItem en scope.
+    std::vector<Rect> manualExclude, manualDrag;   ///< de TitleBarDragExclude / TitleBarDragRegion.
+    float contentStartX = 0.0f, contentRight = 0.0f; ///< límites horizontales del área de contenido.
+    int   spacerCount = 0;                         ///< nº de TitleBarSpacer() este frame.
+    float flexAdded = 0.0f;                        ///< px flexibles inyectados por los spacers este frame.
+  };
+  TitleBarCapture titleBarCapture;
+  // Cache por-titlebar para el spacer flexible (medición con 1 frame de retardo):
+  // id -> (ancho natural del contenido sin flex, nº de spacers).
+  std::unordered_map<uint32_t, std::pair<float, int>> titleBarSpacerCache;
 
   // --- Phase B1: Last item published state ---
   // Each widget that returns a bool (button, textInput, slider, drag, checkbox, etc.)

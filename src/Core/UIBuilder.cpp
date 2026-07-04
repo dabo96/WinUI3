@@ -877,8 +877,8 @@ int UIBuilder::breadcrumbBar(const std::string& id,
 }
 
 TitleBarResult UIBuilder::titleBar(const std::string& id, const std::string& title,
-                                   uint32_t icon, std::function<void()> centerContent) {
-    return TitleBar(id, title, icon, std::move(centerContent));
+                                   uint32_t icon, std::function<void()> content) {
+    return TitleBar(id, title, icon, std::move(content));
 }
 
 // ─── BRIEF 17: Texto y contenido rico (sugar) ───────────────────────────────

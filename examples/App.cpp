@@ -193,10 +193,14 @@ void App::BuildUI() {
     // Custom window chrome: our TitleBar() drives drag/resize + min/max/close.
     // (The window is borderless and the hit-test was installed in the ctor.)
     ctx->cursorPos = Vec2(0.0f, 0.0f);
-    // 4º parámetro = contenido central editable (estilo titlebar de WinUI3): aquí un
-    // buscador. La TitleBar lo marca como exclusión de arrastre, así que sigue siendo
-    // interactivo (escribir / clic en sugerencias) sin mover la ventana.
-    TitleBar("app_titlebar", m_windowTitle, 0, [&] {
+    // TitleBar componible (brief 30): el MENÚ va dentro de la barra (izquierda), el
+    // buscador al centro, y los caption buttons (min/max/cerrar) a la derecha los
+    // añade la propia TitleBar. Sin título. Menús y buscador quedan excluidos del
+    // arrastre (los menús a mano, el AutoSuggestBox automáticamente); los huecos que
+    // reparten los TitleBarSpacer siguen siendo arrastrables.
+    TitleBar("app_titlebar", "", 0, [&] {
+        BuildMenuBar();
+        TitleBarSpacer();
         AutoSuggestBox("titlebar_search", &m_searchText,
             [](const std::string& q) {
                 std::vector<std::string> all = {
@@ -214,20 +218,16 @@ void App::BuildUI() {
                 }
                 return out;
             }, "Buscar sección...");
+        TitleBarSpacer();
     });
-    // Exact bar height (TitleBar advances the cursor by height + style.spacing, so
-    // reading cursorPos.y would leave a gap before the menu bar).
+    // Alto real de la barra (TitleBar avanza el cursor por su altura). El menú y el
+    // buscador ya viven dentro, así que el contenido arranca justo debajo.
     float titleBarH = ctx->lastItemSize.y;
-
-    // Menu bar stacks just below the title bar.
-    ctx->menuBarOffsetY = titleBarH;
-    BuildMenuBar();
 
     Vec2 viewport = ctx->renderer.GetViewportSize();
 
-    // Main content area below the title bar + menu bar
-    float menuBarH = 32.0f;
-    float topChrome = titleBarH + menuBarH;
+    // Main content area below the title bar
+    float topChrome = titleBarH;
     Vec2 contentPos(ctx->style.padding, topChrome + ctx->style.padding);
     Vec2 contentSize(viewport.x - ctx->style.padding * 2.0f,
                      viewport.y - topChrome - ctx->style.padding * 2.0f);
@@ -295,57 +295,54 @@ void App::BuildUI() {
 // --- Menu Bar ---------------------------------------------------------------
 
 void App::BuildMenuBar() {
-    if (BeginMenuBar()) {
-        if (BeginMenu("File")) {
-            if (MenuItem("New"))
-                m_statusText = "File > New clicked";
-            if (MenuItem("Open"))
-                m_statusText = "File > Open clicked";
-            if (MenuItem("Save"))
-                m_statusText = "File > Save clicked";
-            MenuSeparator();
-            if (MenuItem("Exit"))
-                m_statusText = "File > Exit clicked";
-            EndMenu();
-        }
-        if (BeginMenu("Edit")) {
-            if (MenuItem("Undo"))
-                m_statusText = "Edit > Undo clicked";
-            if (MenuItem("Redo"))
-                m_statusText = "Edit > Redo clicked";
-            MenuSeparator();
-            if (MenuItem("Cut"))
-                m_statusText = "Edit > Cut clicked";
-            if (MenuItem("Copy"))
-                m_statusText = "Edit > Copy clicked";
-            if (MenuItem("Paste"))
-                m_statusText = "Edit > Paste clicked";
-            EndMenu();
-        }
-        if (BeginMenu("View")) {
-            if (MenuItem("Toggle Theme")) {
-                m_isDarkTheme = !m_isDarkTheme;
-                ctx->style =
-                    m_isDarkTheme ? GetDarkFluentStyle() : GetDefaultFluentStyle();
-                m_statusText =
-                    m_isDarkTheme ? "Switched to Dark Theme" : "Switched to Light Theme";
-            }
-            MenuSeparator();
-            if (MenuItem("Zoom In"))
-                m_statusText = "View > Zoom In";
-            if (MenuItem("Zoom Out"))
-                m_statusText = "View > Zoom Out";
-            EndMenu();
-        }
-        if (BeginMenu("Help")) {
-            if (MenuItem("About"))
-                m_modalOpen = true;
-            if (MenuItem("Documentation"))
-                m_statusText = "Help > Documentation";
-            EndMenu();
-        }
-        EndMenuBar();
+    // Menús inline DENTRO de la TitleBar componible: no usamos BeginMenuBar (que
+    // pintaría su propia barra full-width y su propio layout); dibujamos los
+    // BeginMenu directamente en el layout horizontal de la titlebar. Como BeginMenu
+    // no publica bbox a focusableWidgets, su zona no se auto-excluye del arrastre,
+    // así que la marcamos a mano con TitleBarDragExclude (además de evitar el drag,
+    // esto permite que el clic llegue al menú en vez de tragárselo como HTCAPTION).
+    float menuX0 = ctx->cursorPos.x;
+
+    if (BeginMenu("File")) {
+        if (MenuItem("New"))  m_statusText = "File > New clicked";
+        if (MenuItem("Open")) m_statusText = "File > Open clicked";
+        if (MenuItem("Save")) m_statusText = "File > Save clicked";
+        MenuSeparator();
+        if (MenuItem("Exit")) m_statusText = "File > Exit clicked";
+        EndMenu();
     }
+    if (BeginMenu("Edit")) {
+        if (MenuItem("Undo")) m_statusText = "Edit > Undo clicked";
+        if (MenuItem("Redo")) m_statusText = "Edit > Redo clicked";
+        MenuSeparator();
+        if (MenuItem("Cut"))   m_statusText = "Edit > Cut clicked";
+        if (MenuItem("Copy"))  m_statusText = "Edit > Copy clicked";
+        if (MenuItem("Paste")) m_statusText = "Edit > Paste clicked";
+        EndMenu();
+    }
+    if (BeginMenu("View")) {
+        if (MenuItem("Toggle Theme")) {
+            m_isDarkTheme = !m_isDarkTheme;
+            ctx->style =
+                m_isDarkTheme ? GetDarkFluentStyle() : GetDefaultFluentStyle();
+            m_statusText =
+                m_isDarkTheme ? "Switched to Dark Theme" : "Switched to Light Theme";
+        }
+        MenuSeparator();
+        if (MenuItem("Zoom In"))  m_statusText = "View > Zoom In";
+        if (MenuItem("Zoom Out")) m_statusText = "View > Zoom Out";
+        EndMenu();
+    }
+    if (BeginMenu("Help")) {
+        if (MenuItem("About")) m_modalOpen = true;
+        if (MenuItem("Documentation")) m_statusText = "Help > Documentation";
+        EndMenu();
+    }
+
+    // Excluir del arrastre toda la franja ocupada por los menús. La altura (200) se
+    // recorta sola contra el rect del caption, así que sobra-cubrir es inofensivo.
+    float menuX1 = ctx->cursorPos.x;
+    TitleBarDragExclude(Rect(Vec2(menuX0, 0.0f), Vec2(menuX1 - menuX0, 200.0f)));
 }
 
 // --- Tab 0: Basic Widgets ---------------------------------------------------

@@ -507,46 +507,21 @@ int BreadcrumbBar(const std::string& id, const std::vector<std::string>& crumbs)
   return result;
 }
 
-// ─── 5) TitleBar custom ──────────────────────────────────────────────────────
+// ─── 5) TitleBar custom / window chrome (brief 13 + 30) ──────────────────────
 
-TitleBarResult TitleBar(const std::string& id, const std::string& title,
-                        uint32_t icon, std::function<void()> centerContent) {
-  TitleBarResult res;
-  UIContext* ctx = GetContext();
-  if (!ctx)
-    return res;
+namespace {
+// Espaciado horizontal entre items del contenido componible de la TitleBar.
+inline float TitleBarItemSpacing(UIContext* ctx) { return S(8.0f); }
 
+// Dibuja los caption buttons (min/max/cerrar) a la derecha y los cablea al puerto
+// de plataforma. Rellena `res` (qué se pulsó) y `outRect` (rect ocupado, para
+// excluirlo del arrastre). Compartido por ambos modos de TitleBar().
+void DrawCaptionButtons(UIContext* ctx, Vec2 barPos, Vec2 barSize, float barH,
+                        bool maximized, TitleBarResult& res, Rect& outRect) {
   const TextStyle& body = ctx->style.GetTextStyle(TypographyStyle::Body);
-  float fontSize = body.fontSize;
-  float barH = S(40.0f);
-  Vec2 barPos = ctx->cursorPos;
-  float fullW = ctx->renderer.GetViewportSize().x;
-  Vec2 barSize(std::max(1.0f, fullW - barPos.x), barH);
-
-  bool maximized = GetPlatform(ctx)->IsWindowMaximized(ctx->window);
-
-  // Fondo (cabecera ligeramente distinta del cuerpo).
-  Color bg = AdjustContainerBackground(ctx->style.backgroundColor,
-                                       ctx->style.isDarkTheme);
-  ctx->renderer.DrawRectFilled(barPos, barSize, bg, 0.0f);
-
-  // Izquierda: icono + título.
-  float pad = S(12.0f);
-  float lx = barPos.x + pad;
-  float iconSize = S(18.0f);
-  if (icon) {
-    ctx->renderer.DrawIconGlyph(
-        Vec2(lx, barPos.y + (barH - iconSize) * 0.5f), icon, body.color, iconSize);
-    lx += iconSize + S(8.0f);
-  }
-  if (!title.empty())
-    ctx->renderer.DrawText(Vec2(lx, barPos.y + (barH - fontSize) * 0.5f), title,
-                           body.color, fontSize);
-
-  // Caption buttons (min/max/close) a la derecha.
   float capBtnW = S(46.0f);
   float capX = barPos.x + barSize.x - capBtnW * 3.0f;
-  Rect captionButtonsRect(Vec2(capX, barPos.y), Vec2(capBtnW * 3.0f, barH));
+  outRect = Rect(Vec2(capX, barPos.y), Vec2(capBtnW * 3.0f, barH));
 
   auto capBtn = [&](float bx, int kind) -> bool {
     Vec2 bp(bx, barPos.y);
@@ -580,44 +555,158 @@ TitleBarResult TitleBar(const std::string& id, const std::string& title,
   }
   if (capBtn(capX + capBtnW, 1)) {
     res.maximizePressed = true;
-    if (maximized)
-      GetPlatform(ctx)->RestoreWindow(ctx->window);
-    else
-      GetPlatform(ctx)->MaximizeWindow(ctx->window);
+    if (maximized) GetPlatform(ctx)->RestoreWindow(ctx->window);
+    else           GetPlatform(ctx)->MaximizeWindow(ctx->window);
   }
   if (capBtn(capX + capBtnW * 2.0f, 2)) {
     res.closePressed = true;
     GetPlatform(ctx)->RequestWindowClose(ctx->window);
   }
+}
+} // namespace
 
-  // Contenido central opcional (búsqueda / CommandBar). Región fija centrada y
-  // recortada; se marca completa como exclusión de arrastre.
-  bool hasCenter = (bool)centerContent;
-  Rect centerRect;
-  if (hasCenter) {
-    float cW = std::min(S(360.0f), barSize.x * 0.5f);
-    float cX = barPos.x + (barSize.x - cW) * 0.5f;
-    centerRect = Rect(Vec2(cX, barPos.y), Vec2(cW, barH));
-    ctx->renderer.PushClipRect(centerRect.pos, centerRect.size);
+void TitleBarSpacer(float minWidth) {
+  UIContext* ctx = GetContext();
+  if (!ctx) return;
+  auto& cap = ctx->titleBarCapture;
+  if (!cap.active) return;
+  cap.spacerCount++;
+
+  // Reparte el hueco libre usando la medición del frame anterior (sin flex): así
+  // el contenido tras el/los spacer(s) queda alineado a la derecha sin medir dos
+  // veces en immediate mode. Converge en 1 frame al redimensionar.
+  float naturalW = 0.0f; int cachedSpacers = 0;
+  auto it = ctx->titleBarSpacerCache.find(cap.id);
+  if (it != ctx->titleBarSpacerCache.end()) {
+    naturalW = it->second.first;
+    cachedSpacers = it->second.second;
+  }
+  float avail = std::max(0.0f, cap.contentRight - cap.contentStartX);
+  float freeSpace = std::max(0.0f, avail - naturalW);
+  float per = (cachedSpacers > 0) ? freeSpace / static_cast<float>(cachedSpacers) : 0.0f;
+  float w = std::max(S(minWidth), per);
+  cap.flexAdded += w;
+  AdvanceCursor(ctx, Vec2(w, 0.0f)); // avanza dentro del layout horizontal
+}
+
+void TitleBarDragExclude(const Rect& r) {
+  UIContext* ctx = GetContext();
+  if (ctx && ctx->titleBarCapture.active) ctx->titleBarCapture.manualExclude.push_back(r);
+}
+
+void TitleBarDragRegion(const Rect& r) {
+  UIContext* ctx = GetContext();
+  if (ctx && ctx->titleBarCapture.active) ctx->titleBarCapture.manualDrag.push_back(r);
+}
+
+TitleBarResult TitleBar(const std::string& id, const std::string& title,
+                        uint32_t icon, std::function<void()> content,
+                        const TitleBarConfig& cfg) {
+  TitleBarResult res;
+  UIContext* ctx = GetContext();
+  if (!ctx)
+    return res;
+
+  const TextStyle& body = ctx->style.GetTextStyle(TypographyStyle::Body);
+  float fontSize = body.fontSize;
+  float barH = (cfg.height > 0.0f) ? S(cfg.height) : S(40.0f);
+  Vec2 barPos = ctx->cursorPos;
+  float fullW = ctx->renderer.GetViewportSize().x;
+  Vec2 barSize(std::max(1.0f, fullW - barPos.x), barH);
+
+  bool maximized = GetPlatform(ctx)->IsWindowMaximized(ctx->window);
+
+  // Fondo (cabecera ligeramente distinta del cuerpo).
+  Color bg = AdjustContainerBackground(ctx->style.backgroundColor,
+                                       ctx->style.isDarkTheme);
+  ctx->renderer.DrawRectFilled(barPos, barSize, bg, 0.0f);
+
+  // Reserva a la derecha el ancho de los caption buttons; el contenido se acota a
+  // [barPos.x, capX].
+  float pad = S(12.0f);
+  float capReserved = cfg.captionButtons ? S(46.0f) * 3.0f : 0.0f;
+  float capX = barPos.x + barSize.x - capReserved;
+  Rect captionButtonsRect;
+
+  if (content) {
+    // ── Modo componible: el usuario dibuja la barra (brief 30) ──
+    auto& cap = ctx->titleBarCapture;
+    cap.active = true;
+    cap.id = GenerateId("TBAR:", id.c_str());
+    cap.focusStart = ctx->focusableWidgets.size();
+    cap.items.clear();
+    cap.manualExclude.clear();
+    cap.manualDrag.clear();
+    cap.contentStartX = barPos.x + pad;
+    cap.contentRight = capX - pad;
+    cap.spacerCount = 0;
+    cap.flexAdded = 0.0f;
+
+    ctx->renderer.PushClipRect(Vec2(barPos.x, barPos.y),
+                               Vec2(std::max(0.0f, capX - barPos.x), barH));
     Vec2 savedCursor = ctx->cursorPos;
-    ctx->cursorPos = Vec2(cX, barPos.y + (barH - S(30.0f)) * 0.5f);
-    centerContent();
+    // Centrado vertical nominal (~30px de alto de control típico).
+    ctx->cursorPos = Vec2(cap.contentStartX, barPos.y + (barH - S(30.0f)) * 0.5f);
+    BeginHorizontal(TitleBarItemSpacing(ctx),
+                    Vec2(cap.contentRight - cap.contentStartX, barH),
+                    Vec2(0.0f, 0.0f));
+    content();
+    // Medir el ancho natural (contenido fijo + gaps, sin el flex de los spacers)
+    // para repartir bien el hueco en el próximo frame.
+    if (!ctx->layoutStack.empty()) {
+      LayoutStack& st = ctx->layoutStack.back();
+      float spacingTotal = (st.itemCount > 1)
+          ? TitleBarItemSpacing(ctx) * static_cast<float>(st.itemCount - 1) : 0.0f;
+      float natural = std::max(0.0f, st.contentSize.x - cap.flexAdded + spacingTotal);
+      ctx->titleBarSpacerCache[cap.id] = { natural, cap.spacerCount };
+    }
+    EndHorizontal(false);
     ctx->cursorPos = savedCursor;
     ctx->renderer.PopClipRect();
+    cap.active = false;
+  } else {
+    // ── Modo por defecto: icono + título a la izquierda ──
+    float lx = barPos.x + pad;
+    float iconSize = S(18.0f);
+    if (icon) {
+      ctx->renderer.DrawIconGlyph(
+          Vec2(lx, barPos.y + (barH - iconSize) * 0.5f), icon, body.color, iconSize);
+      lx += iconSize + S(8.0f);
+    }
+    if (!title.empty())
+      ctx->renderer.DrawText(Vec2(lx, barPos.y + (barH - fontSize) * 0.5f), title,
+                             body.color, fontSize);
   }
 
-  // Publicar las zonas de hit-test para el callback de SDL.
+  // Caption buttons (por encima del contenido, sin clip).
+  if (cfg.captionButtons)
+    DrawCaptionButtons(ctx, barPos, barSize, barH, maximized, res, captionButtonsRect);
+
+  // Publicar las zonas de hit-test para el callback de plataforma.
   {
     std::lock_guard<std::mutex> lk(ctx->titleBarHit.mutex);
     TitleBarHitRegions& tb = ctx->titleBarHit;
+    auto& cap = ctx->titleBarCapture;
     tb.active = true;
     tb.caption = Rect(barPos, barSize);
     tb.exclusions.clear();
-    tb.exclusions.push_back(captionButtonsRect);
-    if (hasCenter)
-      tb.exclusions.push_back(centerRect);
+    tb.forcedDrag.clear();
+    if (content) {
+      // Excluir del arrastre solo los widgets interactivos (id capturado que además
+      // esté en focusableWidgets[focusStart..]); labels/iconos/huecos → arrastrables.
+      for (const auto& item : cap.items) {
+        bool interactive = false;
+        for (size_t k = cap.focusStart; k < ctx->focusableWidgets.size(); ++k) {
+          if (ctx->focusableWidgets[k] == item.first) { interactive = true; break; }
+        }
+        if (interactive) tb.exclusions.push_back(item.second);
+      }
+      for (const Rect& r : cap.manualExclude) tb.exclusions.push_back(r);
+      for (const Rect& r : cap.manualDrag)    tb.forcedDrag.push_back(r);
+    }
+    if (cfg.captionButtons) tb.exclusions.push_back(captionButtonsRect);
     // Sin margen de redimensión cuando está maximizada (no hay borde que tirar).
-    tb.resizeBorder = maximized ? 0.0f : S(6.0f);
+    tb.resizeBorder = maximized ? 0.0f : S(cfg.resizeBorder);
     tb.resizable = true;
   }
 

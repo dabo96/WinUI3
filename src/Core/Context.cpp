@@ -947,6 +947,13 @@ namespace FluentUI {
 
         // Update prev-frame state for next frame
         ws.prevActive = active;
+
+        // brief 30: within a composable TitleBar's content(), record every item's
+        // bbox so EndTitleBar can auto-exclude the interactive ones from window
+        // drag. Guarded flag ⇒ zero cost outside a title bar.
+        if (g_ctx->titleBarCapture.active) {
+            g_ctx->titleBarCapture.items.push_back({id, Rect(bboxMin, bboxMax - bboxMin)});
+        }
     }
 
 } // namespace FluentUI

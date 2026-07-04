@@ -239,9 +239,12 @@ public:
                     const std::vector<CommandItem>& secondary = {});
     int breadcrumbBar(const std::string& id,
                       const std::vector<std::string>& crumbs);
+    // Atajo del window-chrome (brief 30). `content` nullptr = barra básica (título
+    // + caption buttons); si pasas un callback, compones la barra tú mismo. Para
+    // configurar altura / desactivar caption buttons usa la función libre TitleBar().
     TitleBarResult titleBar(const std::string& id, const std::string& title,
                             uint32_t icon = 0,
-                            std::function<void()> centerContent = nullptr);
+                            std::function<void()> content = nullptr);
     // ─── BRIEF 14: Signature controls (sugar) ───────────────────────────────
     bool toggleSwitch(const std::string& label, bool* value,
                       const std::string& onText = "", const std::string& offText = "");
