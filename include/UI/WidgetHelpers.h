@@ -165,6 +165,11 @@ inline void DrawFocusRing(UIContext *ctx, const Vec2 &pos, const Vec2 &size,
 // inmediato widget por widget; sin esta comprobación, el widget de debajo
 // procesaría el click destinado al overlay.
 inline bool IsMouseInputBlocked(UIContext *ctx) {
+  // Frame de apertura de un flyout: traga el mismo mouse-down que lo abrió para su
+  // propio contenido, de modo que un control del flyout dibujado bajo el cursor
+  // (p.ej. el botón "Got it" del TeachingTip, que se coloca sobre su ancla) no se
+  // dispare con ese click y lo cierre al instante. Solo dura ese frame.
+  if (ctx->insideFlyout && ctx->flyoutOpenedThisFrame) return true;
   // El propio contenido interactivo de un overlay (items de combo o de menú)
   // nunca se bloquea, esté donde esté (p.ej. un combo dentro de un modal cuyos
   // items se renderizan diferidos tras EndModal).

@@ -122,7 +122,13 @@
       "Bash(export MSDF_ATLAS_GEN=\"C:/Users/dbc_1/AppData/Local/Temp/claude/C--Users-dbc-1-Documents-WinUI3/fe434c4c-c1a2-445c-ab75-7f04daca8b12/scratchpad/mag/msdf-atlas-gen/msdf-atlas-gen.exe\")",
       "Bash(chmod +x tools/gen_text_atlas.sh)",
       "Bash(bash tools/gen_text_atlas.sh)",
-      "Bash(echo \"=== exit check \\($?\\) ===\")"
+      "Bash(echo \"=== exit check \\($?\\) ===\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\dbc_1\\\\Documents\\\\WinUI3\\\\WinUI3\" -Recurse -File)",
+      "Bash(Select-Object -ExpandProperty Extension)",
+      "Bash(Sort-Object)",
+      "Bash(Get-Unique)",
+      "Bash(cmake --build build --config Debug)",
+      "Bash(cmake --build out/build/x64-debug --target FluentUIExample)"
     ],
     "deny": [
       "Bash(git push:*)",

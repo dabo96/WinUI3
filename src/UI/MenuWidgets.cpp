@@ -19,8 +19,11 @@ bool BeginMenuBar() {
 
   Vec2 viewport = ctx->renderer.GetViewportSize();
 
+  // Top offset lets a host stack the menu bar below a custom TitleBar() (0 = top).
+  float offsetY = ctx->menuBarOffsetY;
+
   auto &menuBar = ctx->menuBarState;
-  menuBar.position = Vec2(0.0f, 0.0f);
+  menuBar.position = Vec2(0.0f, offsetY);
   menuBar.size = Vec2(viewport.x, MENUBAR_HEIGHT);
   menuBar.initialized = true;
 
@@ -32,13 +35,13 @@ bool BeginMenuBar() {
 
   // Subtle bottom border (--border-soft)
   ctx->renderer.DrawRectFilled(
-      Vec2(0.0f, MENUBAR_HEIGHT - 1.0f),
+      Vec2(0.0f, offsetY + MENUBAR_HEIGHT - 1.0f),
       Vec2(viewport.x, 1.0f),
       panelStyle.borderColor, 0.0f);
 
   // Cursor starts with left padding; horizontal layout uses auto width (not full viewport)
   float leftPad = 12.0f;
-  ctx->cursorPos = Vec2(leftPad, 0.0f);
+  ctx->cursorPos = Vec2(leftPad, offsetY);
   ctx->lastItemPos = ctx->cursorPos;
 
   BeginHorizontal(4.0f, Vec2(0.0f, MENUBAR_HEIGHT), Vec2(0.0f, 0.0f));
@@ -55,8 +58,8 @@ void EndMenuBar() {
 
   auto &menuBar = ctx->menuBarState;
 
-  // Advance cursor below the menu bar
-  ctx->cursorPos = Vec2(0.0f, menuBar.size.y);
+  // Advance cursor below the menu bar (respecting any top offset)
+  ctx->cursorPos = Vec2(0.0f, menuBar.position.y + menuBar.size.y);
   ctx->lastItemPos = ctx->cursorPos;
   ctx->lastItemSize = menuBar.size;
 }

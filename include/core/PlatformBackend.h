@@ -54,6 +54,12 @@ enum class UIHitTest {
 // `user` is the opaque pointer passed to SetWindowHitTest (the UIContext today).
 using HitTestFn = UIHitTest (*)(int x, int y, void* user);
 
+// Ready-made hit-test for a custom borderless title bar: reads the drag/resize
+// regions the TitleBar() widget publishes into the UIContext (passed as `user`).
+// SDL-free, so any host — FluentApp or a standalone SDL loop (examples/App) — can
+// install it via SetWindowHitTest to get the same drag/resize behavior.
+UIHitTest CustomTitleBarHitTest(int x, int y, void* user);
+
 class PlatformBackend {
 public:
   virtual ~PlatformBackend() = default;
@@ -96,6 +102,11 @@ public:
   // ── Window chrome / geometry (brief 25, Part 2). ──
   // Install a title-bar hit test (custom borderless chrome). fn/user are neutral.
   virtual void  SetWindowHitTest(WindowHandle window, HitTestFn fn, void* user) = 0;
+  // Apply the native "borderless custom chrome" look to a window: Windows 11
+  // rounded corners + a subtle 1px border, matching a normal window. No-op on
+  // non-Windows / null platforms. Called for windows created UIWindow_Borderless,
+  // and exposed so hosts that create their own borderless window can opt in too.
+  virtual void  ApplyBorderlessChrome(WindowHandle window) = 0;
   virtual void  GetWindowPosition(WindowHandle window, int& x, int& y) = 0;
   virtual void  SetWindowPosition(WindowHandle window, int x, int y) = 0;
   // Global (desktop) mouse position in logical pixels (panel detach / re-dock).

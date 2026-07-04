@@ -35,8 +35,11 @@ App::App(const char *titulo)
         }
     }
 
+    m_windowTitle = titulo ? titulo : "";
+
     std::cout << "Creating Window (" << (m_useVulkan ? "Vulkan" : "OpenGL") << ")..." << std::endl;
-    Uint32 winFlags = SDL_WINDOW_RESIZABLE | apiFlag;
+    // Borderless so our custom TitleBar() is the window chrome, not the OS one.
+    Uint32 winFlags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_BORDERLESS | apiFlag;
     window = SDL_CreateWindow(titulo, 1280, 720, winFlags);
 
     if (!window) {
@@ -60,6 +63,12 @@ App::App(const char *titulo)
     // Host mode = does NOT own SDL_Init/Quit (this example does that itself).
     platform_ = CreateHostPlatform();
     ctx->platform = platform_.get();
+
+    // Custom window chrome: Win11 rounded corners + border, and install the
+    // shared title-bar hit test so TitleBar() can drag/resize the window and the
+    // caption buttons (min/max/close) work. Requires BuildUI to draw a TitleBar().
+    platform_->ApplyBorderlessChrome(window);
+    platform_->SetWindowHitTest(window, &CustomTitleBarHitTest, ctx);
 
     ctx->style = GetDarkFluentStyle();
 
@@ -181,15 +190,47 @@ void App::Run() {
 }
 
 void App::BuildUI() {
+    // Custom window chrome: our TitleBar() drives drag/resize + min/max/close.
+    // (The window is borderless and the hit-test was installed in the ctor.)
+    ctx->cursorPos = Vec2(0.0f, 0.0f);
+    // 4º parámetro = contenido central editable (estilo titlebar de WinUI3): aquí un
+    // buscador. La TitleBar lo marca como exclusión de arrastre, así que sigue siendo
+    // interactivo (escribir / clic en sugerencias) sin mover la ventana.
+    TitleBar("app_titlebar", m_windowTitle, 0, [&] {
+        AutoSuggestBox("titlebar_search", &m_searchText,
+            [](const std::string& q) {
+                std::vector<std::string> all = {
+                    "Basic", "Input", "Containers", "Lists & Trees", "Overlays",
+                    "Theme", "Controls", "Feedback", "Collections", "Layout",
+                    "Navigation", "Rich Text"};
+                if (q.empty()) return all;
+                std::string ql;
+                for (char ch : q) ql += (char)std::tolower((unsigned char)ch);
+                std::vector<std::string> out;
+                for (const auto& s : all) {
+                    std::string sl;
+                    for (char ch : s) sl += (char)std::tolower((unsigned char)ch);
+                    if (sl.find(ql) != std::string::npos) out.push_back(s);
+                }
+                return out;
+            }, "Buscar sección...");
+    });
+    // Exact bar height (TitleBar advances the cursor by height + style.spacing, so
+    // reading cursorPos.y would leave a gap before the menu bar).
+    float titleBarH = ctx->lastItemSize.y;
+
+    // Menu bar stacks just below the title bar.
+    ctx->menuBarOffsetY = titleBarH;
     BuildMenuBar();
 
     Vec2 viewport = ctx->renderer.GetViewportSize();
 
-    // Main content area below menu bar
+    // Main content area below the title bar + menu bar
     float menuBarH = 32.0f;
-    Vec2 contentPos(ctx->style.padding, menuBarH + ctx->style.padding);
+    float topChrome = titleBarH + menuBarH;
+    Vec2 contentPos(ctx->style.padding, topChrome + ctx->style.padding);
     Vec2 contentSize(viewport.x - ctx->style.padding * 2.0f,
-                     viewport.y - menuBarH - ctx->style.padding * 2.0f);
+                     viewport.y - topChrome - ctx->style.padding * 2.0f);
 
     ctx->cursorPos = contentPos;
 

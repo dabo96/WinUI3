@@ -991,6 +991,11 @@ void OpenFlyout(const std::string &id) {
   if (!state.open) {
     state.open = true;
     state.measuredSize = Vec2(0.0f, 0.0f); // forzar re-medir/reposicionar
+    // Traga el mouse-down que abre el flyout para que no se filtre a un control
+    // suyo dibujado bajo el cursor (ver flyoutOpenedThisFrame en Context.h). Solo
+    // en la transición real: los callers que llaman OpenFlyout cada frame
+    // (AutoSuggestBox) no deben re-armar el swallow y bloquear la selección.
+    ctx->flyoutOpenedThisFrame = true;
   }
   ctx->activeFlyoutId = flyoutId;
 }

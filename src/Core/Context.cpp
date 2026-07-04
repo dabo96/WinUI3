@@ -673,6 +673,7 @@ namespace FluentUI {
         // frame is tinted by the active theme (light: black; dark: softer black).
         g_ctx->renderer.SetShadowColor(g_ctx->style.shadowColor);
         g_ctx->scrollConsumedThisFrame = false;
+        g_ctx->flyoutOpenedThisFrame = false; // swallow-de-apertura de flyout: solo el frame en que abre
         g_ctx->mouseOverAnyWidgetLastFrame = g_ctx->mouseOverAnyWidget;
         g_ctx->mouseOverAnyWidget = false;
 

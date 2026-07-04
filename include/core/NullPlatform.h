@@ -64,6 +64,7 @@ public:
   std::string GetBasePath() override { return {}; }
 
   void SetWindowHitTest(WindowHandle /*window*/, HitTestFn /*fn*/, void* /*user*/) override {}
+  void ApplyBorderlessChrome(WindowHandle /*window*/) override {}
   void GetWindowPosition(WindowHandle /*window*/, int& x, int& y) override { x = 0; y = 0; }
   void SetWindowPosition(WindowHandle /*window*/, int /*x*/, int /*y*/) override {}
   void GetGlobalMousePos(float& x, float& y) override { x = 0.0f; y = 0.0f; }

@@ -16,12 +16,12 @@
 
 namespace FluentUI {
 
-namespace {
 // brief 13/25: neutral hit-test callback for borderless windows with a custom
 // title bar. The platform installs it (SetWindowHitTest) and calls it during the
 // OS event pump with a point in window (logical) coordinates — the same space the
 // renderer viewport and widget rects use, so no DPI conversion is needed. This is
 // SDL-free: the platform translates the UIHitTest result to its native form.
+// Declared in PlatformBackend.h so standalone SDL hosts can install it too.
 UIHitTest CustomTitleBarHitTest(int px, int py, void* user) {
     UIContext* ctx = static_cast<UIContext*>(user);
     if (!ctx) return UIHitTest::Normal;
@@ -59,6 +59,8 @@ UIHitTest CustomTitleBarHitTest(int px, int py, void* user) {
     }
     return UIHitTest::Normal;
 }
+
+namespace {
 
 // brief 18.7: deliver positioned OS drops (files / text) to the context's sinks.
 // Each context owns its own InputState, so this routes per-window already; the

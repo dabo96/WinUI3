@@ -5,6 +5,25 @@
 #include <chrono>
 #include <cstdlib>
 
+#ifdef _WIN32
+  #define WIN32_LEAN_AND_MEAN
+  #define NOMINMAX
+  #include <windows.h>
+  #include <dwmapi.h>
+  #pragma comment(lib, "dwmapi.lib")
+  // Fallbacks for pre-Windows-11 SDK headers: the attribute/enum only exist in
+  // the 10.0.22000+ SDK, but the DWM call is a harmless no-op on Windows 10.
+  #ifndef DWMWA_WINDOW_CORNER_PREFERENCE
+    #define DWMWA_WINDOW_CORNER_PREFERENCE 33
+  #endif
+  #ifndef DWMWCP_ROUND
+    #define DWMWCP_ROUND 2
+  #endif
+  #ifndef DWMWA_BORDER_COLOR
+    #define DWMWA_BORDER_COLOR 34
+  #endif
+#endif
+
 namespace FluentUI {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -143,6 +162,12 @@ WindowHandle SDLPlatform::CreateWindowHandle(const char* title, int w, int h, ui
         Log(LogLevel::Error, "SDLPlatform: SDL_CreateWindow failed: %s", SDL_GetError());
         return nullptr;
     }
+
+    // Borderless custom-chrome windows get the native Win11 rounded corners +
+    // border so they look like a normal window (no-op off Windows).
+    if (flags & UIWindow_Borderless)
+        ApplyBorderlessChrome(static_cast<WindowHandle>(win));
+
     return static_cast<WindowHandle>(win);
 }
 
@@ -356,6 +381,24 @@ void* SDLPlatform::GetNativeWindowHandle(WindowHandle window) {
 #else
     (void)window;
     return nullptr;
+#endif
+}
+
+void SDLPlatform::ApplyBorderlessChrome(WindowHandle window) {
+#ifdef _WIN32
+    // Windows 11: round the corners and draw a subtle border so a borderless
+    // window matches a normal one. DWM masks the corners at composition time (no
+    // renderer change needed) and auto-squares them when the window is maximized.
+    HWND hwnd = static_cast<HWND>(GetNativeWindowHandle(window));
+    if (!hwnd) return;
+    DWORD pref = DWMWCP_ROUND;
+    DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &pref, sizeof(pref));
+    // COLORREF is 0x00BBGGRR; a neutral dark gray reads well against the dark
+    // chrome without standing out. (No-op on Windows 10 / older SDK headers.)
+    COLORREF border = RGB(0x48, 0x48, 0x48);
+    DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &border, sizeof(border));
+#else
+    (void)window;
 #endif
 }
 

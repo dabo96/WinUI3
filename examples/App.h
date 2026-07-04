@@ -31,6 +31,7 @@ private:
     void BuildRichText();    // brief 17: SelectableText, HyperlinkButton, AutoSuggestBox, TokenizingTextBox, PasswordBox, MarkdownView
 
     SDL_Window* window;
+    std::string m_windowTitle;   // shown in the custom TitleBar() chrome
     FluentUI::UIContext* ctx;
     // brief 26: this example owns its SDL loop, so it plugs a *host* SDLPlatform
     // (does NOT own SDL init/quit) into the context. Widgets reach OS services

@@ -626,6 +626,13 @@ struct UIContext {
   // este campo, no según activeFlyoutId, o si no la UI queda recortada a nada.
   uint32_t flyoutScopeId = 0;
   bool insideFlyout = false;     // true entre BeginFlyout/EndFlyout (contenido exento)
+  // Bugfix: un flyout que se abre (transición cerrado→abierto) puede colocarse BAJO
+  // el cursor (p.ej. el TeachingTip se recorta sobre su ancla). Como los botones
+  // disparan en el flanco de mouse-down (IsMousePressed), el MISMO click que lo abre
+  // se filtraría a un control del flyout dibujado bajo el ratón y lo cerraría al
+  // instante. Este flag (sólo el frame de apertura) traga ese click para el contenido
+  // del flyout. Se pone en OpenFlyout y se limpia al inicio de cada frame (NewFrame).
+  bool flyoutOpenedThisFrame = false;
 
   struct ListViewState {
     int selectedItem = -1;
@@ -744,6 +751,10 @@ struct UIContext {
   };
 
   MenuBarState menuBarState;
+  // Vertical offset for the top menu bar. Default 0 keeps it pinned to the top;
+  // hosts that draw a custom TitleBar() above the menu bar set this to the title
+  // bar height so BeginMenuBar() lays out just below it (see examples/App).
+  float menuBarOffsetY = 0.0f;
 
   struct MenuState {
     std::string id;
